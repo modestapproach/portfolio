@@ -22,3 +22,9 @@ dist-ssr
 *.njsproj
 *.sln
 *.sw?
+
+# font source clones (rebuilt by: npm run fonts)
+.fonts-src
+
+# Webstudio — the share link in here is a Build-access credential, never commit
+.webstudio/
