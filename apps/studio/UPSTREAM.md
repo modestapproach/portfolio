@@ -30,6 +30,8 @@ back to upstream localStorage mode). Cloud mode is untouched.
 
 **Ours (upstream has no such files — sync must never delete):**
 
+- `vite-plugins/access-gate.ts` — shared-secret gate for public hostnames
+
 - `UPSTREAM.md`, `scripts/sync-upstream.sh`
 - `vite-plugins/disk-project.ts` — dev-server endpoints + `/assets/*` static serving
 - `src/backend/disk-backend.ts` — `DiskBackend extends LocalBackend`

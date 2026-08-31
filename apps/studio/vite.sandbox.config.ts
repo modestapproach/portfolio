@@ -1,5 +1,6 @@
 import { defineConfig, type Plugin } from 'vite';
 import react from '@vitejs/plugin-react';
+import { accessGate } from './vite-plugins/access-gate'; // LOCAL FORK
 import { diskProjectAssets } from './vite-plugins/disk-project'; // LOCAL FORK
 import path from 'node:path';
 
@@ -70,7 +71,7 @@ export default defineConfig({
   // servers in one workspace stomp on `node_modules/.vite/deps/` if they
   // share it).
   cacheDir: path.resolve(__dirname, 'node_modules/.vite-sandbox'),
-  plugins: [react(), sandboxStubsPlugin(), runtimeBridgeImportmapPlugin(), diskProjectAssets()],
+  plugins: [accessGate(), react(), sandboxStubsPlugin(), runtimeBridgeImportmapPlugin(), diskProjectAssets()],
   server: {
     // LOCAL FORK: dev-server host allowlist + tunnel HMR. Upstream's
     // allowedHosts lives in the `preview` block (their nginx prod path);

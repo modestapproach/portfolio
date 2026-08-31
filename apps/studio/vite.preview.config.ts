@@ -15,6 +15,7 @@
 
 import { defineConfig, type Plugin } from 'vite';
 import react from '@vitejs/plugin-react';
+import { accessGate } from './vite-plugins/access-gate'; // LOCAL FORK
 import { diskProjectAssets } from './vite-plugins/disk-project'; // LOCAL FORK
 import path from 'node:path';
 
@@ -44,7 +45,7 @@ export default defineConfig({
   // restarts because each server boots, rebuilds, then the next server
   // invalidates again. Separate cacheDir per config keeps them disjoint.
   cacheDir: path.resolve(__dirname, 'node_modules/.vite-preview'),
-  plugins: [react(), runtimeBridgeImportmapPlugin(), diskProjectAssets()],
+  plugins: [accessGate(), react(), runtimeBridgeImportmapPlugin(), diskProjectAssets()],
   server: {
     // LOCAL FORK: dev-server host allowlist + tunnel HMR. Upstream's
     // allowedHosts lives in the `preview` block (their nginx prod path);

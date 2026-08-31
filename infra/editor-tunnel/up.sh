@@ -42,7 +42,8 @@ sed -e "s|^tunnel: .*|tunnel: ${TUNNEL_ID}|" \
     "$CONFIG" > "$RUNTIME_CONFIG"
 
 echo
-echo "Tunnel up. REMEMBER: hostnames must be behind Cloudflare Access policies"
-echo "(see README.md in this directory) BEFORE sharing any URL."
+echo "Tunnel up. Editor is protected by the shared-secret gate"
+echo "(REVYME_ACCESS_TOKEN in .env.studio). Unlock once at:"
+echo "  https://editor.teddessert.com"
 echo
 exec cloudflared tunnel --config "$RUNTIME_CONFIG" run "$TUNNEL_NAME"

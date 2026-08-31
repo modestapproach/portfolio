@@ -5,7 +5,7 @@ runs on whatever machine has the repo. Identity is enforced at Cloudflare's
 edge (Access), so the studio contains zero auth code.
 
 ```
-browser ──▶ Cloudflare Access (who are you?) ──▶ Tunnel ──▶ this machine
+browser ──▶ access gate (token) ──▶ Tunnel ──▶ this machine
               editor.teddessert.com   → localhost:3333  (editor)
               sandbox-editor.…        → localhost:5174  (canvas iframe)
               preview-editor.…        → localhost:5175  (preview iframe)
@@ -13,20 +13,18 @@ browser ──▶ Cloudflare Access (who are you?) ──▶ Tunnel ──▶ th
 
 ## One-time setup
 
-**1. Access policies — DO THIS FIRST** (dashboard → Zero Trust → Access →
-Applications → Add → Self-hosted):
+**Auth: shared-secret gate (active by default).** `vite-plugins/access-gate.ts`
+challenges every request arriving on a public hostname and only passes those
+carrying the token in `.env.studio` (gitignored, generated per machine). The
+raw token is never echoed back — the cookie holds a hash of it. Localhost is
+unaffected.
 
-- One application, add all three hostnames to it: `editor.teddessert.com`,
-  `sandbox-editor.teddessert.com`, `preview-editor.teddessert.com`.
-- Policy: Allow → Include → Emails → `theodoreyd@gmail.com`.
-- Login method: One-time PIN (zero config) and/or Google.
-- Do **NOT** use a `*.teddessert.com` wildcard app — it would put the public
-  site's `www` behind a login.
+Cloudflare Access is the better answer if you ever activate Zero Trust
+(identity at the edge, no secret to share); this gate exists so remote editing
+does not depend on accepting Zero Trust terms and billing authorization. If you
+adopt Access later, unset `REVYME_ACCESS_TOKEN` and the gate goes inert.
 
-Without this step the editor API (file writes + git push = publishing to
-teddessert.com) is open to the internet. `up.sh` reminds you.
-
-**2. Start everything** (two terminals, either computer):
+**Start everything** (two terminals, either computer):
 
 ```bash
 npm run studio:public        # studio with public-host envs
@@ -35,10 +33,10 @@ npm run studio:public        # studio with public-host envs
 
 ## Daily use
 
-Same two commands. Open https://editor.teddessert.com, pass the Access login,
+Same two commands. Open https://editor.teddessert.com, enter the token once,
 design. **Log in on the editor tab first** — the sandbox/preview iframes
-piggyback on the Access session created there; loading an iframe hostname cold
-can wedge inside the frame.
+piggyback on the cookie set there; loading an iframe hostname cold shows the
+unlock form inside the frame instead.
 
 ## Rules of the road
 
