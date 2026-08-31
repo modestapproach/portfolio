@@ -13,7 +13,7 @@
   // repo is the source of truth for infra, not dashboard clicks.
   // workers.dev stays enabled as a fallback mirror.
   "routes": [
-    { "pattern": "teddessert.com", "custom_domain": true },
-    { "pattern": "www.teddessert.com", "custom_domain": true }
+    { "pattern": "teddessert.com", "custom_domain": true, "zone_name": "teddessert.com" },
+    { "pattern": "www.teddessert.com", "custom_domain": true, "zone_name": "teddessert.com" }
   ]
 }
