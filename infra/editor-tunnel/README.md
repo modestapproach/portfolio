@@ -53,9 +53,8 @@ Logs: `~/Library/Logs/revyme/{studio,tunnel}.log`
 
 ## Daily use
 
-Open https://editor.teddessert.com, enter the token once, design. **Log in on the editor tab first** — the sandbox/preview iframes
-piggyback on the cookie set there; loading an iframe hostname cold shows the
-unlock form inside the frame instead.
+Open https://editor.teddessert.com, enter the token once — the gate then silently unlocks the sandbox and preview hostnames via a redirect chain, so one entry covers everything for 30 days per browser. design. **Log in on the editor tab first** — the sandbox/preview iframes
+are unlocked by the same chain.
 
 ## Rules of the road
 

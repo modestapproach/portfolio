@@ -26,6 +26,28 @@ import crypto from 'node:crypto';
 import type { ServerResponse } from 'node:http';
 
 const COOKIE = 'revyme_access';
+const UNLOCK_PATH = '/__revyme_unlock';
+
+/** All public hostnames (this server's own + its siblings). One unlock on any
+ *  of them chains 302s through the rest so each plants its cookie — the user
+ *  types the token exactly once. Cookies are per-host, and the hostnames
+ *  can't share a Domain= cookie without a second-level subdomain (which
+ *  Universal SSL doesn't cover), so a redirect chain is the clean fix. */
+const PUBLIC_HOSTS = (process.env.REVYME_PUBLIC_HOSTS ?? '')
+  .split(',')
+  .map((h) => h.trim())
+  .filter(Boolean);
+
+/** Open-redirect guard: chain destinations may only point at our own hosts. */
+function safeDest(dest: string | null): string | null {
+  if (!dest) return null;
+  try {
+    const u = new URL(dest);
+    return u.protocol === 'https:' && PUBLIC_HOSTS.includes(u.host) ? u.href : null;
+  } catch {
+    return null;
+  }
+}
 
 /** Constant-time compare that also tolerates length mismatch. */
 function safeEqual(a: string, b: string): boolean {
@@ -122,25 +144,49 @@ export function accessGate(): Plugin {
         const url = new URL(req.url ?? '/', `https://${host}`);
         const viaQuery = url.searchParams.get('access_token');
 
-        const grant = (redirectTo: string) => {
-          url.searchParams.delete('access_token');
+        /** Set this host's cookie, then either hop to the next sibling host
+         *  in the chain or land on the final destination. */
+        const grant = (finalDest: string) => {
+          const visited = (url.searchParams.get('visited') ?? '')
+            .split(',')
+            .filter(Boolean);
+          if (!visited.includes(host)) visited.push(host);
+          const next = PUBLIC_HOSTS.find((h) => !visited.includes(h));
+
+          let location: string;
+          if (next) {
+            const hop = new URL(`https://${next}${UNLOCK_PATH}`);
+            hop.searchParams.set('access_token', token);
+            hop.searchParams.set('visited', visited.join(','));
+            hop.searchParams.set('dest', finalDest);
+            location = hop.href;
+          } else {
+            location = finalDest;
+          }
           res.statusCode = 302;
           res.setHeader(
             'set-cookie',
             `${COOKIE}=${expected}; Path=/; HttpOnly; SameSite=Lax; Secure; Max-Age=${60 * 60 * 24 * 30}`,
           );
-          res.setHeader('location', redirectTo);
+          res.setHeader('cache-control', 'no-store');
+          res.setHeader('location', location);
           res.end();
         };
 
         if (viaQuery && safeEqual(viaQuery, token)) {
-          return grant(url.pathname + (url.searchParams.size ? `?${url.searchParams}` : ''));
+          if (url.pathname === UNLOCK_PATH) {
+            // Mid-chain hop: cookie for this host, continue the chain.
+            return grant(safeDest(url.searchParams.get('dest')) ?? `https://${PUBLIC_HOSTS[0] ?? host}/`);
+          }
+          // Direct tokened link: strip the token, start the chain, come back here.
+          url.searchParams.delete('access_token');
+          return grant(url.href);
         }
 
         if (req.method === 'POST') {
           void readBody(req).then((body) => {
             const submitted = new URLSearchParams(body).get('token') ?? '';
-            if (safeEqual(submitted, token)) return grant(url.pathname || '/');
+            if (safeEqual(submitted, token)) return grant(url.href);
             // eslint-disable-next-line no-console
             console.warn(
               `[access-gate] rejected token from ${req.socket.remoteAddress} for ${host}${url.pathname}`,
