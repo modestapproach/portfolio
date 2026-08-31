@@ -58,6 +58,13 @@ jobs:
           cache: npm
           cache-dependency-path: apps/web/package-lock.json
 
+      # Lockfiles here are authored by npm 11 (local machines); npm 10 (the
+      # runner default) sometimes rejects them with a spurious "Missing: X
+      # from lock file". Same major on both sides = deterministic installs.
+      - name: Pin npm to the lockfile-authoring major
+        if: steps.creds.outputs.have == 'true'
+        run: npm install -g npm@11 --no-audit --no-fund
+
       - name: Install
         if: steps.creds.outputs.have == 'true'
         run: npm ci --no-audit --no-fund
