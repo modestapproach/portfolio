@@ -52,6 +52,10 @@ export default defineConfig({
     // the Cloudflare Tunnel proxies the DEV server, so the same env must
     // apply here too.
     allowedHosts: (process.env.VITE_ALLOWED_HOSTS ?? 'localhost').split(','),
+    // LOCAL FORK: bind beyond loopback for tailnet access (Tailscale-only
+    // exposure is enforced by which hostnames are allowed above; 0.0.0.0
+    // also exposes on the LAN — acceptable on a home network).
+    ...(process.env.REVYME_BIND_HOST ? { host: process.env.REVYME_BIND_HOST } : {}),
     ...(process.env.REVYME_PREVIEW_HOST
       ? { hmr: { protocol: 'wss', host: process.env.REVYME_PREVIEW_HOST, clientPort: 443 } }
       : {}),

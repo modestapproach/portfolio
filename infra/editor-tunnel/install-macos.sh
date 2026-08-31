@@ -40,13 +40,11 @@ if [ "${1:-}" = "--stop" ]; then
 fi
 
 [ -n "$CLOUDFLARED" ] || { echo "cloudflared missing — brew install cloudflared"; exit 1; }
-[ -f "$RUNTIME_CONFIG" ] || {
-  echo "Tunnel not set up yet. Run this first (it opens a browser once):"
-  echo "  $REPO/infra/editor-tunnel/up.sh"
-  echo "…then Ctrl-C it and re-run this installer."
-  exit 1
-}
-[ -f "$REPO/.env.studio" ] || { echo "Missing $REPO/.env.studio (access token)"; exit 1; }
+if [ "${WITH_TUNNEL:-0}" = "1" ]; then
+  [ -f "$RUNTIME_CONFIG" ] || {
+    echo "Tunnel not set up yet. Run $REPO/infra/editor-tunnel/up.sh first."; exit 1; }
+  [ -f "$REPO/.env.studio" ] || { echo "Missing $REPO/.env.studio (access token)"; exit 1; }
+fi
 
 mkdir -p "$AGENTS" "$LOGS"
 unload  # idempotent reinstall
@@ -57,7 +55,7 @@ cat > "$AGENTS/$STUDIO_LABEL.plist" <<PLIST
 <plist version="1.0"><dict>
   <key>Label</key><string>$STUDIO_LABEL</string>
   <key>ProgramArguments</key>
-  <array><string>$NPM</string><string>run</string><string>studio:public</string></array>
+  <array><string>$NPM</string><string>run</string><string>${STUDIO_SCRIPT:-studio:tailnet}</string></array>
   <key>WorkingDirectory</key><string>$REPO</string>
   <key>EnvironmentVariables</key>
   <dict><key>PATH</key><string>$NODE_BIN:$BREW_BIN:/usr/bin:/bin:/usr/sbin:/sbin</string></dict>
@@ -90,11 +88,20 @@ cat > "$AGENTS/$TUNNEL_LABEL.plist" <<PLIST
 PLIST
 
 launchctl bootstrap "gui/$(id -u)" "$AGENTS/$STUDIO_LABEL.plist"
-launchctl bootstrap "gui/$(id -u)" "$AGENTS/$TUNNEL_LABEL.plist"
+# The public tunnel is opt-in (WITH_TUNNEL=1): daily editing rides the
+# tailnet (http://mini:3333 from any tailnet device) with no gate at all.
+if [ "${WITH_TUNNEL:-0}" = "1" ]; then
+  launchctl bootstrap "gui/$(id -u)" "$AGENTS/$TUNNEL_LABEL.plist"
+else
+  rm -f "$AGENTS/$TUNNEL_LABEL.plist"
+fi
 
 echo "Installed and started:"
 echo "  studio  → $LOGS/studio.log"
 echo "  tunnel  → $LOGS/tunnel.log"
 echo
-echo "Give it ~20s, then open https://editor.teddessert.com"
-echo "Token:  grep REVYME_ACCESS_TOKEN $REPO/.env.studio"
+if [ "${WITH_TUNNEL:-0}" = "1" ]; then
+  echo "Give it ~20s, then open https://editor.teddessert.com (token in .env.studio)"
+else
+  echo "Give it ~20s, then from any Tailscale device open:  http://mini:3333"
+fi

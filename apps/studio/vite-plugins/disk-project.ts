@@ -526,10 +526,19 @@ const PUBLIC_HOSTS = (process.env.REVYME_PUBLIC_HOSTS ?? '')
   .map((h) => h.trim())
   .filter(Boolean);
 
+/** Tailnet/LAN hosts (with port) that may use the disk API over plain http —
+ *  the network layer (WireGuard) is the auth. e.g. "mini:3333,mini.tailXXXX.ts.net:3333" */
+const TRUSTED_HOSTS = (process.env.REVYME_TRUSTED_HOSTS ?? '')
+  .split(',')
+  .map((h) => h.trim())
+  .filter(Boolean);
+
 function isTrustedRequest(req: Connect.IncomingMessage): boolean {
   const host = String(req.headers.host ?? '');
   const hostOk =
-    /^(localhost|127\.0\.0\.1)(:\d+)?$/.test(host) || PUBLIC_HOSTS.includes(host);
+    /^(localhost|127\.0\.0\.1)(:\d+)?$/.test(host) ||
+    PUBLIC_HOSTS.includes(host) ||
+    TRUSTED_HOSTS.includes(host);
   if (!hostOk) return false;
   const origin = req.headers.origin;
   if (origin === undefined) return true; // same-origin GET / non-browser client
@@ -538,7 +547,9 @@ function isTrustedRequest(req: Connect.IncomingMessage): boolean {
   // Public mode: only the tunnel hostnames, and only over https. Cloudflare
   // Access has already authenticated the request by the time it reaches us —
   // this remains the CSRF layer underneath it.
-  return PUBLIC_HOSTS.some((h) => o === `https://${h}`);
+  if (PUBLIC_HOSTS.some((h) => o === `https://${h}`)) return true;
+  // Tailnet mode: plain-http origins on explicitly trusted host:port pairs.
+  return TRUSTED_HOSTS.some((h) => o === `http://${h}`);
 }
 
 /** Editor-only API endpoints. */
@@ -607,7 +618,8 @@ export function diskProjectAssets(): Plugin {
           const origin = String(req.headers.origin ?? '');
           if (
             /^http:\/\/(localhost|127\.0\.0\.1):\d+$/.test(origin) ||
-            PUBLIC_HOSTS.some((h) => origin === `https://${h}`)
+            PUBLIC_HOSTS.some((h) => origin === `https://${h}`) ||
+            TRUSTED_HOSTS.some((h) => origin.startsWith(`http://${h.split(':')[0]}:`))
           ) {
             res.setHeader('access-control-allow-origin', origin);
             res.setHeader('vary', 'origin');

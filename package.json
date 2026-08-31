@@ -20,6 +20,7 @@
     "fonts": "npm run fonts --workspace @portfolio/experiments",
     "dev:studio": "npm --prefix apps/studio run dev",
     "build:web": "npm --prefix apps/web run build",
-    "studio:public": "set -a && . ./.env.studio && set +a && REVYME_EDITOR_HOST=editor.teddessert.com REVYME_SANDBOX_HOST=sandbox-editor.teddessert.com REVYME_PREVIEW_HOST=preview-editor.teddessert.com REVYME_PUBLIC_HOSTS=editor.teddessert.com,sandbox-editor.teddessert.com,preview-editor.teddessert.com VITE_ALLOWED_HOSTS=localhost,editor.teddessert.com,sandbox-editor.teddessert.com,preview-editor.teddessert.com VITE_SANDBOX_ORIGIN=https://sandbox-editor.teddessert.com VITE_PREVIEW_ORIGIN=https://preview-editor.teddessert.com npm --prefix apps/studio run dev"
+    "studio:public": "set -a && . ./.env.studio && set +a && REVYME_EDITOR_HOST=editor.teddessert.com REVYME_SANDBOX_HOST=sandbox-editor.teddessert.com REVYME_PREVIEW_HOST=preview-editor.teddessert.com REVYME_PUBLIC_HOSTS=editor.teddessert.com,sandbox-editor.teddessert.com,preview-editor.teddessert.com VITE_ALLOWED_HOSTS=localhost,editor.teddessert.com,sandbox-editor.teddessert.com,preview-editor.teddessert.com VITE_SANDBOX_ORIGIN=https://sandbox-editor.teddessert.com VITE_PREVIEW_ORIGIN=https://preview-editor.teddessert.com npm --prefix apps/studio run dev",
+    "studio:tailnet": "REVYME_BIND_HOST=0.0.0.0 VITE_ALLOWED_HOSTS=localhost,mini,mini.tail1292c9.ts.net,100.125.36.17 REVYME_TRUSTED_HOSTS=mini:3333,mini.tail1292c9.ts.net:3333,100.125.36.17:3333 npm --prefix apps/studio run dev"
   }
 }
