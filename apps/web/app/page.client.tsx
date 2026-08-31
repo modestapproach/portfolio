@@ -92,3 +92,10 @@ export default function Page() {
 </div>
   );
 }
+
+const canvasNodes = (<>
+  <p data-id="p-mthrpcmm-2" data-name="Text" data-canvas-node="true" style={{fontSize: '16px', color: '#000000', fontFamily: 'Inter, sans-serif', fontWeight: '400', lineHeight: '1.2', overflowWrap: 'break-word', width: 'max-content', height: 'auto', position: 'absolute', left: '1402px', top: '718px'}}>
+    {"f0b2535b4de6a9c5fa1e1c8c9c9b8726de5fb48d452c09de"}
+  </p>
+</>);
+

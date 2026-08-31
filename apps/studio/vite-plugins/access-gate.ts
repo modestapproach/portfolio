@@ -139,10 +139,16 @@ export function accessGate(): Plugin {
         // already routed a public request — which carries a public Host).
         if (/^(localhost|127\.0\.0\.1)(:\d+)?$/.test(host)) return next();
 
-        if (readCookie(req.headers.cookie, COOKIE) === expected) return next();
-
         const url = new URL(req.url ?? '/', `https://${host}`);
         const viaQuery = url.searchParams.get('access_token');
+
+        // A valid tokened link ALWAYS re-runs the grant chain — even when this
+        // host's cookie is already valid. Heals browsers left half-unlocked
+        // (editor cookie set, iframe hosts not) from before the chain existed,
+        // and doubles as the recovery path after a token rotation.
+        if (readCookie(req.headers.cookie, COOKIE) === expected && !(viaQuery && safeEqual(viaQuery, token))) {
+          return next();
+        }
 
         /** Set this host's cookie, then either hop to the next sibling host
          *  in the chain or land on the final destination. */
