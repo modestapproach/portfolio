@@ -32,7 +32,11 @@ import path from 'node:path';
 import fs from 'node:fs';
 import fsp from 'node:fs/promises';
 import crypto from 'node:crypto';
+import { execFile } from 'node:child_process';
+import { promisify } from 'node:util';
 import type { ServerResponse } from 'node:http';
+
+const execFileP = promisify(execFile);
 
 const API_PREFIX = '/__revyme_disk';
 const ASSETS_URL_PREFIX = '/assets/';
@@ -430,6 +434,79 @@ const MIME: Record<string, string> = {
   '.txt': 'text/plain',
 };
 
+/** POST /__revyme_disk/publish ← { message? } → { sha, branch, committed, actionsUrl }
+ *
+ * Publish = commit the project directory and push. Deployment itself is the
+ *  CI pipeline's job (.github/workflows/deploy-web.yml): pushing main deploys
+ *  production, pushing any other branch uploads a preview. The plugin
+ *  deliberately holds NO cloud credentials — the only secret-bearing system
+ *  is GitHub Actions, so a compromised dev server can at worst make commits,
+ *  which are visible, attributable, and revertible. */
+async function handlePublish(req: Connect.IncomingMessage, res: ServerResponse): Promise<void> {
+  const body = await readBody(req, 64 * 1024);
+  let message = '';
+  try {
+    message = String((JSON.parse(body?.toString('utf8') || '{}') as { message?: string }).message ?? '');
+  } catch {
+    /* empty body is fine */
+  }
+  const root = projectRoot();
+  const git = (...args: string[]) => execFileP('git', ['-C', root, ...args]);
+
+  try {
+    await git('rev-parse', '--show-toplevel');
+  } catch {
+    sendJson(res, 400, { error: 'project directory is not inside a git repository' });
+    return;
+  }
+
+  // Stage ONLY the project directory — a publish must never sweep up
+  // unrelated monorepo changes sitting in the working tree.
+  await git('add', '-A', '--', root);
+  const staged = await git('diff', '--cached', '--quiet', '--', root).then(
+    () => false,
+    () => true,
+  );
+
+  let committed = false;
+  if (staged) {
+    const stamp = new Date().toISOString().replace('T', ' ').slice(0, 16);
+    const subject = message.trim() ? `Publish: ${message.trim()}` : `Publish: ${stamp}`;
+    await git('commit', '-m', subject, '-m', 'Published from the studio.');
+    committed = true;
+  }
+
+  const { stdout: shaOut } = await git('rev-parse', 'HEAD');
+  const { stdout: branchOut } = await git('rev-parse', '--abbrev-ref', 'HEAD');
+
+  try {
+    await git('push', 'origin', 'HEAD');
+  } catch (err: any) {
+    sendJson(res, 502, {
+      error: `commit ${committed ? 'created' : 'not needed'}, but push failed: ${String(
+        err?.stderr ?? err?.message ?? err,
+      ).slice(0, 400)}`,
+    });
+    return;
+  }
+
+  let actionsUrl: string | null = null;
+  try {
+    const { stdout } = await git('remote', 'get-url', 'origin');
+    const m = stdout.trim().match(/github\.com[:/](.+?)(?:\.git)?$/);
+    if (m) actionsUrl = `https://github.com/${m[1]}/actions`;
+  } catch {
+    /* non-github remote — no actions link */
+  }
+
+  sendJson(res, 200, {
+    sha: shaOut.trim(),
+    branch: branchOut.trim(),
+    committed,
+    actionsUrl,
+  });
+}
+
 /** GET /__revyme_disk/website-name → { websiteName } (manifest only — never
  *  the full file map; getWebsiteName runs on every boot in parallel with the
  *  real load). */
@@ -476,6 +553,7 @@ export function diskProjectApi(): Plugin {
           [`POST /asset`]: () => withWriteLock(() => handleAssetUpload(req, res)),
           [`POST /assets-delete`]: () => withWriteLock(() => handleAssetDelete(req, res)),
           [`PUT /website-name`]: () => withWriteLock(() => handleRename(req, res)),
+          [`POST /publish`]: () => withWriteLock(() => handlePublish(req, res)),
         };
         const handler = dispatch[`${m} ${route}`];
         if (!handler) {

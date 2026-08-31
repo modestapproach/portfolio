@@ -44,6 +44,8 @@ back to upstream localStorage mode). Cloud mode is untouched.
 - `vite.config.ts` — `diskProjectApi()` + `diskProjectAssets()` in plugins
 - `vite.sandbox.config.ts` — `diskProjectAssets()` in plugins
 - `vite.preview.config.ts` — `diskProjectAssets()` in plugins
+- `src/editor/header/RightHeader.tsx` — Publish button: disk-mode publish
+  (flush save → POST /__revyme_disk/publish → commit+push; CI deploys)
 
 Every patch line carries a `// LOCAL FORK` comment — `grep -rn "LOCAL FORK"`
 lists the full surface area of the fork.

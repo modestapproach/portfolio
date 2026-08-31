@@ -12,6 +12,9 @@
 
 import { useCallback, useEffect, useState } from 'react';
 import { CLOUD_ENABLED } from '@/shared/cloud-flag';
+import { DISK_ENABLED } from '@/shared/disk-flag'; // LOCAL FORK
+import { flushSaveNow } from '@/backend/autosave'; // LOCAL FORK
+import { toast } from 'sonner'; // LOCAL FORK
 import { useSetAtom, useAtomValue, useAtom } from 'jotai';
 import { exportDropdownOpenAtom } from '@/code/stores/editor-store';
 import { PlayIcon } from '@/shared/icons';
@@ -160,6 +163,49 @@ export default function RightHeader({ previewMode, onTogglePreview }: Props) {
 
   // ─── Publish ─────────────────────────────────────────────────────────
   const handlePublish = useCallback(async () => {
+    // LOCAL FORK: disk-mode publish = flush the autosave, then ask the dev
+    // server to commit apps/web and push. The CI pipeline does the deploy —
+    // the browser and the plugin never hold cloud credentials. Failures land
+    // in the existing publishError dialog, whose "Try again" re-invokes us.
+    if (DISK_ENABLED) {
+      if (publishing) return;
+      setPublishing(true);
+      setPublishSuccess(false);
+      startProgress();
+      try {
+        await flushSaveNow();
+        const res = await fetch('/__revyme_disk/publish', {
+          method: 'POST',
+          headers: { 'content-type': 'application/json' },
+          body: JSON.stringify({}),
+        });
+        const data = (await res.json().catch(() => null)) as
+          | { sha?: string; branch?: string; committed?: boolean; actionsUrl?: string | null; error?: string }
+          | null;
+        if (!res.ok) throw new Error(data?.error ?? `publish failed (${res.status})`);
+        setProgress(1);
+        setPublishSuccess(true);
+        setTimeout(() => setPublishSuccess(false), 2500);
+        const sha = (data?.sha ?? '').slice(0, 7);
+        toast.success(
+          data?.committed
+            ? `Published ${sha} on ${data?.branch} — deploy pipeline started.`
+            : `Nothing new to publish — ${data?.branch} is already pushed (${sha}).`,
+          data?.actionsUrl
+            ? { description: `Track the deploy: ${data.actionsUrl}`, duration: 9000 }
+            : { duration: 6000 },
+        );
+        trace.action('header:disk-publish', { sha, committed: data?.committed });
+      } catch (err: any) {
+        setProgress(0);
+        setPublishError({ message: String(err?.message ?? err), upgradable: false });
+        trace.error('header:disk-publish-failed', { error: String(err?.message ?? err) });
+      } finally {
+        stopProgress();
+        setPublishing(false);
+      }
+      return;
+    }
     if (!CLOUD_ENABLED || publishing) return;
     const id = (await import('@/backend/project-id')).getProjectId();
     setPublishing(true);
@@ -212,10 +258,15 @@ export default function RightHeader({ previewMode, onTogglePreview }: Props) {
   // The dropdown's outside-click handler skips clicks on
   // `[data-live-trigger]` so this toggle wins cleanly.
   const handleLiveClick = useCallback(() => {
+    // LOCAL FORK: no cloud dropdown in disk mode — the button IS publish.
+    if (DISK_ENABLED) {
+      void handlePublish();
+      return;
+    }
     if (!CLOUD_ENABLED) return;
     setOpen((prev) => !prev);
     trace.action('header:live-toggle');
-  }, []);
+  }, [handlePublish]);
 
   return (
     <div

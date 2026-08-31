@@ -1,0 +1,90 @@
+# Deploys apps/web (the portfolio) to Cloudflare Workers.
+#
+# The contract that makes "Publish" reliable (see VERSIONING.md):
+#   push to main            → PRODUCTION deploy
+#   push to any other branch → PREVIEW upload (its own versioned URL)
+# Live is therefore always a pushed SHA — rollback = re-run this workflow
+# from any older commit (Actions → this workflow → Run workflow), or
+# `wrangler rollback` for an instant flip on Cloudflare's side.
+#
+# One-time setup (repo → Settings → Secrets and variables → Actions):
+#   CLOUDFLARE_API_TOKEN   token with the "Edit Cloudflare Workers" template
+#   CLOUDFLARE_ACCOUNT_ID  dashboard → Workers & Pages → account ID
+# Until those exist, the workflow no-ops with a notice instead of failing —
+# publishes from the studio stay green and start deploying the moment
+# credentials land.
+
+name: deploy-web
+
+on:
+  push:
+    branches: [main, monorepo]
+    paths:
+      - 'apps/web/**'
+      - '.github/workflows/deploy-web.yml'
+  workflow_dispatch: {}
+
+# One deploy at a time per branch; a newer push supersedes a queued build.
+concurrency:
+  group: deploy-web-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: apps/web
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Check Cloudflare credentials
+        id: creds
+        env:
+          TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          ACCOUNT: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+        run: |
+          if [ -z "$TOKEN" ] || [ -z "$ACCOUNT" ]; then
+            echo "have=false" >> "$GITHUB_OUTPUT"
+            echo "::notice::CLOUDFLARE_API_TOKEN / CLOUDFLARE_ACCOUNT_ID not set — skipping deploy. Add them in repo Settings → Secrets to go live."
+          else
+            echo "have=true" >> "$GITHUB_OUTPUT"
+          fi
+
+      - uses: actions/setup-node@v4
+        if: steps.creds.outputs.have == 'true'
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: apps/web/package-lock.json
+
+      - name: Install
+        if: steps.creds.outputs.have == 'true'
+        run: npm ci --no-audit --no-fund
+
+      - name: Build (OpenNext → Workers)
+        if: steps.creds.outputs.have == 'true'
+        run: npx opennextjs-cloudflare build
+
+      - name: Deploy production
+        if: steps.creds.outputs.have == 'true' && github.ref == 'refs/heads/main'
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+        run: npx wrangler deploy
+
+      - name: Upload preview version
+        if: steps.creds.outputs.have == 'true' && github.ref != 'refs/heads/main'
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+        run: npx wrangler versions upload
+
+      - name: Smoke test production
+        if: steps.creds.outputs.have == 'true' && github.ref == 'refs/heads/main' && vars.SITE_URL != ''
+        working-directory: .
+        run: |
+          sleep 5
+          code=$(curl -s -o /dev/null -w "%{http_code}" "${{ vars.SITE_URL }}")
+          echo "GET ${{ vars.SITE_URL }} → $code"
+          [ "$code" = "200" ] || { echo "::error::Smoke test failed ($code) — consider 'npx wrangler rollback'"; exit 1; }
