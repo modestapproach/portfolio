@@ -1,0 +1,533 @@
+body {
+  overflow: hidden;
+}
+
+/* Junicode: variable, and crucially carries a wdth axis — declaring the
+   font-stretch range is what lets Justif's per-line font-stretch reach it. */
+@font-face {
+  font-family: 'Junicode';
+  src: url('/fonts/Junicode-Roman.woff2') format('woff2');
+  font-weight: 300 700;
+  font-stretch: 75% 125%;
+  font-style: normal;
+  font-display: block;
+}
+@font-face {
+  font-family: 'Junicode';
+  src: url('/fonts/Junicode-Italic.woff2') format('woff2');
+  font-weight: 300 700;
+  font-stretch: 75% 125%;
+  font-style: italic;
+  font-display: block;
+}
+
+.flow-shell {
+  height: 100dvh;
+  display: grid;
+  grid-template-rows: auto minmax(0, 1fr);
+  grid-template-columns: minmax(0, 1fr) var(--panel-w);
+  grid-template-areas:
+    'head head'
+    'paper side';
+}
+
+/* ------------------------------------------------------------------- head */
+.flow-head {
+  grid-area: head;
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  padding: 0 16px;
+  height: 52px;
+  background: var(--chrome-panel);
+  border-bottom: 1px solid var(--chrome-line);
+}
+.flow-head .brand {
+  font-size: 13px;
+  font-variation-settings: 'opsz' 14, 'wght' 620;
+  white-space: nowrap;
+}
+.flow-head .brand span {
+  color: var(--chrome-dim);
+  font-variation-settings: 'opsz' 14, 'wght' 400;
+}
+.flow-head .spacer {
+  flex: 1;
+}
+.btn {
+  padding: 7px 13px;
+  border-radius: 8px;
+  border: 1px solid var(--chrome-line);
+  background: var(--chrome-elev);
+  font-size: 12.5px;
+  font-variation-settings: 'opsz' 14, 'wght' 500;
+  white-space: nowrap;
+  transition: border-color 0.12s, background 0.12s;
+}
+.btn:hover {
+  border-color: var(--chrome-dim);
+}
+.btn.primary {
+  background: var(--chrome-accent);
+  border-color: var(--chrome-accent);
+  color: #fff;
+}
+.btn.primary:hover {
+  filter: brightness(1.08);
+}
+.btn.icon {
+  width: 30px;
+  padding: 0;
+  font-size: 17px;
+  line-height: 1;
+  display: grid;
+  place-items: center;
+}
+.pager {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+.pager-label {
+  font-family: 'Index', ui-monospace, monospace;
+  font-size: 11px;
+  color: var(--chrome-dim);
+  min-width: 74px;
+  text-align: center;
+  white-space: nowrap;
+}
+
+select {
+  width: 100%;
+  padding: 6px 8px;
+  border-radius: 7px;
+  border: 1px solid var(--chrome-line);
+  background: var(--chrome-bg);
+  color: var(--chrome-fg);
+  font-size: 12.5px;
+}
+select:disabled {
+  opacity: 0.45;
+}
+
+/* ------------------------------------------------------------------ paper */
+.paper {
+  grid-area: paper;
+  background: var(--paper-bg);
+  color: var(--paper-fg);
+  padding: clamp(18px, 3vw, 40px);
+  overflow: hidden;
+  transition: background 0.2s, color 0.2s;
+}
+.page {
+  position: relative;
+  height: 100%;
+  width: 100%;
+  font-family: 'Junicode', Georgia, serif;
+  font-optical-sizing: none;
+  /* The shell sets font-variation-settings on <body> for the UI font. It
+     inherits, and both Pretext and Justif refuse runs that carry it — the
+     canvas font shorthand cannot express it, so their measurements would not
+     match what the browser paints. Weight travels via font-weight instead. */
+  font-variation-settings: normal;
+}
+
+/* The rail is wider than the page on purpose; the strip is the window onto
+   it, and scrolling is a transform so nothing re-lays-out. */
+.strip {
+  position: absolute;
+  overflow: hidden;
+}
+.rail {
+  position: relative;
+  will-change: transform;
+  /* Damped spring (zeta 0.75), sampled: ~3% overshoot, settled by 0.85s.
+     Enough to read as a soft landing, not a bounce. cubic-bezier is the
+     fallback for engines without linear(). */
+  transition: transform 0.85s cubic-bezier(0.22, 0.72, 0.24, 1);
+  transition-timing-function: linear(
+    0, 0.0229, 0.0816, 0.1632, 0.2576, 0.3569, 0.4556, 0.5494, 0.6357, 0.7129,
+    0.7803, 0.8378, 0.8858, 0.9249, 0.956, 0.98, 0.998, 1.0109, 1.0196, 1.0249,
+    1.0276, 1.0284, 1.0277, 1.026, 1.0236, 1.0209, 1.0181, 1.0153, 1.0127,
+    1.0102, 1
+  );
+}
+@media (prefers-reduced-motion: reduce) {
+  .rail {
+    transition: none;
+  }
+}
+
+/* Everything on the paper uses font-weight, never font-variation-settings:
+   weight is the one axis the canvas font shorthand carries, so CSS and
+   Pretext stay in agreement. */
+.headline,
+.standfirst,
+.col,
+.quote blockquote {
+  position: absolute;
+  margin: 0;
+}
+.headline {
+  font-weight: 600;
+  letter-spacing: -0.02em;
+}
+.standfirst {
+  font-weight: 400;
+  color: var(--paper-muted);
+}
+
+.col {
+  position: absolute;
+  white-space: pre-wrap;
+  font-size: var(--fs);
+  line-height: var(--lh);
+  font-weight: var(--wght);
+}
+/* Justif needs a normally-wrapping justified paragraph to enhance, and it
+   declines any run carrying font-variation-settings — hence font-weight
+   everywhere on the paper. */
+.col.native,
+.col.justif {
+  white-space: normal;
+  text-align: justify;
+  hyphens: auto;
+  -webkit-hyphens: auto;
+}
+
+.modes {
+  display: flex;
+  gap: 2px;
+  padding: 2px;
+  background: var(--chrome-bg);
+  border: 1px solid var(--chrome-line);
+  border-radius: 8px;
+}
+.modes button {
+  flex: 1;
+  padding: 5px 8px;
+  border-radius: 6px;
+  font-size: 12px;
+  color: var(--chrome-dim);
+  transition: color 0.12s, background 0.12s;
+}
+.modes button:hover {
+  color: var(--chrome-fg);
+}
+.modes button[aria-pressed='true'] {
+  background: var(--chrome-elev);
+  color: var(--chrome-fg);
+  box-shadow: inset 0 0 0 1px var(--chrome-line);
+}
+.colbox {
+  position: absolute;
+  outline: 1px solid color-mix(in srgb, var(--paper-muted) 40%, transparent);
+  background: color-mix(in srgb, var(--paper-muted) 6%, transparent);
+  pointer-events: none;
+}
+.colbox::after {
+  content: attr(data-col);
+  position: absolute;
+  top: -1.5em;
+  left: 0;
+  font-size: 9px;
+  letter-spacing: 0.1em;
+  color: var(--paper-muted);
+}
+
+/* rail navigation — its own row in the LayoutSans frame, so it never sits on
+   top of the text */
+.railnav {
+  position: absolute;
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  border-top: 1px solid color-mix(in srgb, var(--paper-muted) 28%, transparent);
+}
+.railbtn {
+  width: 32px;
+  height: 32px;
+  flex: none;
+  border-radius: 50%;
+  border: 1px solid color-mix(in srgb, var(--paper-muted) 42%, transparent);
+  color: var(--paper-muted);
+  font-size: 18px;
+  line-height: 1;
+  display: grid;
+  place-items: center;
+  transition: background 0.12s, opacity 0.12s;
+}
+.railbtn:hover:not(:disabled) {
+  background: color-mix(in srgb, var(--paper-muted) 16%, transparent);
+  color: var(--paper-fg);
+}
+.railbtn:disabled {
+  opacity: 0.25;
+  cursor: default;
+}
+.railtrack {
+  flex: 1;
+  display: flex;
+  gap: 4px;
+  align-items: center;
+  min-width: 0;
+}
+.railtick {
+  flex: 1;
+  height: 4px;
+  border-radius: 2px;
+  background: color-mix(in srgb, var(--paper-muted) 30%, transparent);
+  transition: background 0.15s;
+  min-width: 6px;
+}
+.railtick:hover {
+  background: color-mix(in srgb, var(--paper-muted) 70%, transparent);
+}
+.railtick.on {
+  background: var(--paper-fg);
+}
+.railcount {
+  flex: none;
+  font-size: 10px;
+  letter-spacing: 0.06em;
+  color: var(--paper-muted);
+  min-width: 44px;
+  text-align: right;
+}
+
+/* shrink-wrapped pull quote */
+.quote {
+  position: absolute;
+  margin: 0;
+  padding: 0;
+}
+.quote::before {
+  content: '';
+  position: absolute;
+  left: -12px;
+  top: -12px;
+  bottom: -12px;
+  width: calc(var(--avail) + 24px);
+  border: 1px dashed color-mix(in srgb, var(--paper-muted) 45%, transparent);
+  border-radius: 6px;
+  pointer-events: none;
+}
+.quote blockquote {
+  position: relative;
+  font-weight: 500;
+  letter-spacing: -0.01em;
+}
+.quote figcaption {
+  position: absolute;
+  top: 100%;
+  left: 0;
+  margin-top: 0.9em;
+  font-size: 10px;
+  letter-spacing: 0.02em;
+  color: var(--paper-muted);
+  width: var(--avail);
+  line-height: 1.5;
+}
+
+/* ------------------------------------------------------------------- side */
+.side {
+  grid-area: side;
+  background: var(--chrome-panel);
+  border-left: 1px solid var(--chrome-line);
+  overflow-y: auto;
+  scrollbar-color: var(--chrome-line) transparent;
+}
+.side-inner {
+  padding: 16px;
+  display: flex;
+  flex-direction: column;
+  gap: 20px;
+}
+
+.hud {
+  border: 1px solid var(--chrome-line);
+  border-radius: var(--radius);
+  padding: 4px 12px;
+  background: var(--chrome-bg);
+}
+.hud-row,
+.check-row {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 10px;
+  padding: 7px 0;
+  font-size: 12px;
+  color: var(--chrome-dim);
+  border-bottom: 1px solid color-mix(in srgb, var(--chrome-line) 60%, transparent);
+}
+.hud-row:last-child,
+.check-row:last-child {
+  border-bottom: 0;
+}
+.hud-row b,
+.check-row b {
+  font-family: 'Index', ui-monospace, monospace;
+  font-size: 12.5px;
+  color: var(--chrome-fg);
+  font-variation-settings: 'wght' 500;
+}
+.hud-row.big {
+  padding: 11px 0;
+}
+.hud-row.big b {
+  font-size: 20px;
+}
+.hud-row.zero b,
+.check-row.ok b {
+  color: #39ff88;
+}
+.hud-row.bad b,
+.check-row.bad b {
+  color: var(--chrome-accent);
+}
+
+.group h3 {
+  margin: 0 0 10px;
+  font-size: 10.5px;
+  letter-spacing: 0.09em;
+  text-transform: uppercase;
+  color: var(--chrome-dim);
+  font-variation-settings: 'opsz' 14, 'wght' 560;
+}
+.note {
+  font-size: 11.5px;
+  line-height: 1.55;
+  color: var(--chrome-dim);
+  margin: 8px 0 0;
+}
+.note b {
+  color: var(--chrome-fg);
+  font-variation-settings: 'wght' 500;
+}
+.note code {
+  font-family: 'Index', ui-monospace, monospace;
+  font-size: 11px;
+  color: var(--chrome-fg);
+}
+
+.ctl {
+  margin-bottom: 12px;
+}
+.ctl-head {
+  display: flex;
+  justify-content: space-between;
+  align-items: baseline;
+  font-size: 12.5px;
+  margin-bottom: 4px;
+}
+.ctl-head b {
+  font-family: 'Index', ui-monospace, monospace;
+  font-size: 11.5px;
+  color: var(--chrome-dim);
+  font-variation-settings: 'wght' 400;
+}
+input[type='range'] {
+  -webkit-appearance: none;
+  appearance: none;
+  width: 100%;
+  height: 20px;
+  background: none;
+  display: block;
+}
+input[type='range']::-webkit-slider-runnable-track {
+  height: 3px;
+  border-radius: 2px;
+  background: var(--chrome-line);
+}
+input[type='range']::-webkit-slider-thumb {
+  -webkit-appearance: none;
+  width: 13px;
+  height: 13px;
+  margin-top: -5px;
+  border-radius: 50%;
+  background: var(--chrome-fg);
+}
+input[type='range']:active::-webkit-slider-thumb {
+  background: var(--chrome-accent);
+}
+
+.toggle {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  font-size: 12.5px;
+  cursor: pointer;
+  margin-top: 4px;
+}
+.toggle input {
+  appearance: none;
+  -webkit-appearance: none;
+  width: 30px;
+  height: 17px;
+  border-radius: 999px;
+  background: var(--chrome-elev);
+  box-shadow: inset 0 0 0 1px var(--chrome-line);
+  position: relative;
+  cursor: pointer;
+  flex: none;
+}
+.toggle input::after {
+  content: '';
+  position: absolute;
+  top: 3px;
+  left: 3px;
+  width: 11px;
+  height: 11px;
+  border-radius: 50%;
+  background: var(--chrome-dim);
+  transition: transform 0.14s, background 0.14s;
+}
+.toggle input:checked {
+  background: var(--chrome-accent);
+  box-shadow: none;
+}
+.toggle input:checked::after {
+  transform: translateX(13px);
+  background: #fff;
+}
+
+.swatches {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+.swatch {
+  width: 26px;
+  height: 26px;
+  border-radius: 6px;
+  border: 1px solid var(--chrome-line);
+  position: relative;
+  overflow: hidden;
+}
+.swatch::after {
+  content: '';
+  position: absolute;
+  inset: 0;
+  background: linear-gradient(135deg, var(--sw-bg) 0 50%, var(--sw-fg) 50% 100%);
+}
+.swatch.on {
+  border-color: var(--chrome-fg);
+}
+
+@media (max-width: 900px) {
+  .flow-shell {
+    grid-template-columns: minmax(0, 1fr);
+    grid-template-rows: auto minmax(220px, 1fr) minmax(0, 46vh);
+    grid-template-areas:
+      'head'
+      'paper'
+      'side';
+  }
+  .side {
+    border-left: 0;
+    border-top: 1px solid var(--chrome-line);
+  }
+}
+
+.crash{white-space:pre-wrap;font-family:ui-monospace,monospace;font-size:11px;color:#c0392b;padding:12px}

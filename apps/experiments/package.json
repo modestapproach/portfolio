@@ -1,0 +1,20 @@
+{
+  "name": "@portfolio/experiments",
+  "private": true,
+  "version": "0.1.0",
+  "type": "module",
+  "scripts": {
+    "dev": "vite",
+    "build": "vite build",
+    "preview": "vite preview",
+    "fonts": "node scripts/sync-fonts.mjs"
+  },
+  "devDependencies": {
+    "vite": "^8.2.2"
+  },
+  "dependencies": {
+    "@chenglou/pretext": "^0.0.8",
+    "justif": "^0.7.1",
+    "layout-sans": "^0.2.2"
+  }
+}
