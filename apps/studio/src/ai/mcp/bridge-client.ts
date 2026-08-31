@@ -935,6 +935,12 @@ async function postResult(body: { id: number; result?: unknown; error?: string }
  *  generation connects. */
 const BRIDGE_WINDOW_KEY = '__revymeMcpBridgeSource';
 export function startMcpBridge(): void {
+  // LOCAL FORK: the bridge talks to Revyme's ai-generator dev server, which
+  // does not exist in this self-hosted setup — without this gate the
+  // EventSource retries localhost:8082 forever (console spam + wasted
+  // network, painful on cellular links). Opt back in with
+  // VITE_AI_SERVICE_URL when a bridge server actually runs.
+  if (!import.meta.env.VITE_AI_SERVICE_URL) return;
   if (source) return;
   const prev = (window as any)[BRIDGE_WINDOW_KEY] as EventSource | undefined;
   if (prev) {
