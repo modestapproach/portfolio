@@ -1,0 +1,20 @@
+# Cloudflare Tunnel — remote access to the Revyme studio.
+#
+# Maps three public hostnames onto the studio's three local dev servers.
+# Auth is enforced by Cloudflare Access IN FRONT of these hostnames (see
+# infra/editor-tunnel/README.md) — the tunnel itself must never be exposed
+# without the Access policies in place.
+#
+# `tunnel` and `credentials-file` are stamped in by up.sh on first run.
+
+tunnel: REPLACED_BY_UP_SH
+credentials-file: REPLACED_BY_UP_SH
+
+ingress:
+  - hostname: editor.teddessert.com
+    service: http://localhost:3333
+  - hostname: sandbox-editor.teddessert.com
+    service: http://localhost:5174
+  - hostname: preview-editor.teddessert.com
+    service: http://localhost:5175
+  - service: http_status:404

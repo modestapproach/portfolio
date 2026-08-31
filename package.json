@@ -19,6 +19,7 @@
     "lint": "npm run lint --workspaces --if-present",
     "fonts": "npm run fonts --workspace @portfolio/experiments",
     "dev:studio": "npm --prefix apps/studio run dev",
-    "build:web": "npm --prefix apps/web run build"
+    "build:web": "npm --prefix apps/web run build",
+    "studio:public": "REVYME_EDITOR_HOST=editor.teddessert.com REVYME_SANDBOX_HOST=sandbox-editor.teddessert.com REVYME_PREVIEW_HOST=preview-editor.teddessert.com REVYME_PUBLIC_HOSTS=editor.teddessert.com,sandbox-editor.teddessert.com,preview-editor.teddessert.com VITE_ALLOWED_HOSTS=localhost,editor.teddessert.com,sandbox-editor.teddessert.com,preview-editor.teddessert.com VITE_SANDBOX_ORIGIN=https://sandbox-editor.teddessert.com VITE_PREVIEW_ORIGIN=https://preview-editor.teddessert.com npm --prefix apps/studio run dev"
   }
 }

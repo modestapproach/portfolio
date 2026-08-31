@@ -46,6 +46,15 @@ export default defineConfig({
   cacheDir: path.resolve(__dirname, 'node_modules/.vite-preview'),
   plugins: [react(), runtimeBridgeImportmapPlugin(), diskProjectAssets()],
   server: {
+    // LOCAL FORK: dev-server host allowlist + tunnel HMR. Upstream's
+    // allowedHosts lives in the `preview` block (their nginx prod path);
+    // the Cloudflare Tunnel proxies the DEV server, so the same env must
+    // apply here too.
+    allowedHosts: (process.env.VITE_ALLOWED_HOSTS ?? 'localhost').split(','),
+    ...(process.env.REVYME_PREVIEW_HOST
+      ? { hmr: { protocol: 'wss', host: process.env.REVYME_PREVIEW_HOST, clientPort: 443 } }
+      : {}),
+
     port: 5175,
     strictPort: true,
     cors: true,

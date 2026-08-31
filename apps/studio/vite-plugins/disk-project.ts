@@ -521,12 +521,24 @@ async function handleGetName(res: ServerResponse): Promise<void> {
  *  preflight. Same-origin editor requests carry either no Origin (GET) or an
  *  allowlisted one; anything else is refused. Host pinning blunts DNS
  *  rebinding, where an attacker's hostname resolves to 127.0.0.1. */
+const PUBLIC_HOSTS = (process.env.REVYME_PUBLIC_HOSTS ?? '')
+  .split(',')
+  .map((h) => h.trim())
+  .filter(Boolean);
+
 function isTrustedRequest(req: Connect.IncomingMessage): boolean {
   const host = String(req.headers.host ?? '');
-  if (!/^(localhost|127\.0\.0\.1)(:\d+)?$/.test(host)) return false;
+  const hostOk =
+    /^(localhost|127\.0\.0\.1)(:\d+)?$/.test(host) || PUBLIC_HOSTS.includes(host);
+  if (!hostOk) return false;
   const origin = req.headers.origin;
   if (origin === undefined) return true; // same-origin GET / non-browser client
-  return /^http:\/\/(localhost|127\.0\.0\.1):\d+$/.test(String(origin));
+  const o = String(origin);
+  if (/^http:\/\/(localhost|127\.0\.0\.1):\d+$/.test(o)) return true;
+  // Public mode: only the tunnel hostnames, and only over https. Cloudflare
+  // Access has already authenticated the request by the time it reaches us —
+  // this remains the CSRF layer underneath it.
+  return PUBLIC_HOSTS.some((h) => o === `https://${h}`);
 }
 
 /** Editor-only API endpoints. */
@@ -593,7 +605,10 @@ export function diskProjectAssets(): Plugin {
           // Scope CORS to local dev origins (vite's default is *): the three
           // dev servers may fetch each other's assets, nothing else should.
           const origin = String(req.headers.origin ?? '');
-          if (/^http:\/\/(localhost|127\.0\.0\.1):\d+$/.test(origin)) {
+          if (
+            /^http:\/\/(localhost|127\.0\.0\.1):\d+$/.test(origin) ||
+            PUBLIC_HOSTS.some((h) => origin === `https://${h}`)
+          ) {
             res.setHeader('access-control-allow-origin', origin);
             res.setHeader('vary', 'origin');
           }

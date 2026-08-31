@@ -72,6 +72,15 @@ export default defineConfig({
   cacheDir: path.resolve(__dirname, 'node_modules/.vite-sandbox'),
   plugins: [react(), sandboxStubsPlugin(), runtimeBridgeImportmapPlugin(), diskProjectAssets()],
   server: {
+    // LOCAL FORK: dev-server host allowlist + tunnel HMR. Upstream's
+    // allowedHosts lives in the `preview` block (their nginx prod path);
+    // the Cloudflare Tunnel proxies the DEV server, so the same env must
+    // apply here too.
+    allowedHosts: (process.env.VITE_ALLOWED_HOSTS ?? 'localhost').split(','),
+    ...(process.env.REVYME_SANDBOX_HOST
+      ? { hmr: { protocol: 'wss', host: process.env.REVYME_SANDBOX_HOST, clientPort: 443 } }
+      : {}),
+
     port: 5174,
     strictPort: true,
     cors: true,

@@ -256,6 +256,9 @@ export function isSandboxEvent(data: any): data is SandboxEventMessage {
  *  Derived from the editor's own location so it works on localhost, a bare
  *  server IP, or a domain without per-environment config. */
 export const SANDBOX_ORIGIN =
-  typeof window !== 'undefined'
+  // LOCAL FORK: behind Cloudflare Tunnel the sandbox is a separate public
+  // hostname (ports 5174/5175 don't traverse the proxy) — env wins.
+  (import.meta.env.VITE_SANDBOX_ORIGIN as string | undefined) ||
+  (typeof window !== 'undefined'
     ? `${window.location.protocol}//${window.location.hostname}:5174`
-    : 'http://localhost:5174';
+    : 'http://localhost:5174');

@@ -379,6 +379,15 @@ export default defineConfig(({ mode }) => {
   base: cloudMode ? '/builder/' : '/',
   server: {
     port: 3333,
+    // LOCAL FORK: dev-server host allowlist + tunnel HMR. Upstream's
+    // allowedHosts lives in the `preview` block (their nginx prod path);
+    // the Cloudflare Tunnel proxies the DEV server, so the same env must
+    // apply here too.
+    allowedHosts: (process.env.VITE_ALLOWED_HOSTS ?? 'localhost').split(','),
+    ...(process.env.REVYME_EDITOR_HOST
+      ? { hmr: { protocol: 'wss', host: process.env.REVYME_EDITOR_HOST, clientPort: 443 } }
+      : {}),
+
     watch: {
       ignored: ['**/debug_output/**', '**/debug-code*.jsx'],
     },
