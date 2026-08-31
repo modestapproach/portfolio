@@ -554,9 +554,9 @@ function isTrustedRequest(req: Connect.IncomingMessage): boolean {
 
 /** Editor-only API endpoints. */
 export function diskProjectApi(): Plugin {
-  return {
-    name: 'revyme-disk-project-api',
-    configureServer(server) {
+  // Same middleware for dev (`vite`) and production-serve (`vite preview`) —
+  // the bundled studio still needs its project API.
+  const mount = (server: { middlewares: Connect.Server }) => {
       server.middlewares.use((req, res, next) => {
         const url = (req.url ?? '').split('?')[0];
         if (!url.startsWith(API_PREFIX)) return next();
@@ -587,15 +587,17 @@ export function diskProjectApi(): Plugin {
           sendJson(res, 500, { error: String(err?.message ?? err) });
         });
       });
-    },
+  };
+  return {
+    name: 'revyme-disk-project-api',
+    configureServer(server) { mount(server); },
+    configurePreviewServer(server) { mount(server); },
   };
 }
 
 /** Static /assets/* server — mount on editor, sandbox, and preview alike. */
 export function diskProjectAssets(): Plugin {
-  return {
-    name: 'revyme-disk-project-assets',
-    configureServer(server) {
+  const mount = (server: { middlewares: Connect.Server }) => {
       server.middlewares.use((req, res, next) => {
         const url = (req.url ?? '').split('?')[0];
         if (!url.startsWith(ASSETS_URL_PREFIX) || (req.method !== 'GET' && req.method !== 'HEAD')) {
@@ -628,6 +630,10 @@ export function diskProjectAssets(): Plugin {
           fs.createReadStream(abs).pipe(res);
         });
       });
-    },
+  };
+  return {
+    name: 'revyme-disk-project-assets',
+    configureServer(server) { mount(server); },
+    configurePreviewServer(server) { mount(server); },
   };
 }

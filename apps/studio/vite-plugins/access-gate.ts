@@ -141,7 +141,11 @@ export function accessGate(): Plugin {
     name: 'revyme-access-gate',
     // `pre` so the gate runs before the disk API and before Vite serves any
     // module — an unauthenticated request must not reach project source.
-    configureServer(server) {
+    configureServer(server) { mountGate(server); },
+    configurePreviewServer(server) { mountGate(server); },
+  };
+
+  function mountGate(server: { middlewares: import('vite').Connect.Server }) {
       if (!token) return; // inert on localhost
       const expected = cookieValueFor(token);
 
@@ -246,6 +250,5 @@ export function accessGate(): Plugin {
         const dest = String(req.headers['sec-fetch-dest'] ?? '');
         deny(res, 401, dest === 'iframe' || dest === 'frame');
       });
-    },
-  };
+  }
 }

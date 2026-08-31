@@ -55,7 +55,7 @@ cat > "$AGENTS/$STUDIO_LABEL.plist" <<PLIST
 <plist version="1.0"><dict>
   <key>Label</key><string>$STUDIO_LABEL</string>
   <key>ProgramArguments</key>
-  <array><string>$NPM</string><string>run</string><string>${STUDIO_SCRIPT:-studio:tailnet}</string></array>
+  <array><string>$NPM</string><string>run</string><string>${STUDIO_SCRIPT:-studio:serve}</string></array>
   <key>WorkingDirectory</key><string>$REPO</string>
   <key>EnvironmentVariables</key>
   <dict><key>PATH</key><string>$NODE_BIN:$BREW_BIN:/usr/bin:/bin:/usr/sbin:/sbin</string></dict>

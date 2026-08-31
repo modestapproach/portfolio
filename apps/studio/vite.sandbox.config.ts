@@ -116,6 +116,9 @@ export default defineConfig({
     // domain: VITE_ALLOWED_HOSTS="example.com,.example.com". Localhost/IPs
     // are always allowed by Vite regardless.
     allowedHosts: (process.env.VITE_ALLOWED_HOSTS ?? 'revyme.com,.revyme.com').split(','),
+    // LOCAL FORK: bind beyond loopback for tailnet serving (mirrors the dev
+    // server's REVYME_BIND_HOST).
+    ...(process.env.REVYME_BIND_HOST ? { host: process.env.REVYME_BIND_HOST } : {}),
     // Same process-isolation trio as the dev server above — without
     // Origin-Agent-Cluster a same-site deployment shares one renderer
     // process between editor and canvas (see server.headers rationale).

@@ -421,6 +421,9 @@ export default defineConfig(({ mode }) => {
     // domain: VITE_ALLOWED_HOSTS="example.com,.example.com". Localhost/IPs
     // are always allowed by Vite regardless.
     allowedHosts: (process.env.VITE_ALLOWED_HOSTS ?? 'revyme.com,.revyme.com').split(','),
+    // LOCAL FORK: bind beyond loopback for tailnet serving (mirrors the dev
+    // server's REVYME_BIND_HOST).
+    ...(process.env.REVYME_BIND_HOST ? { host: process.env.REVYME_BIND_HOST } : {}),
   },
   resolve: {
     alias: {
