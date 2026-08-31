@@ -159,6 +159,18 @@ export function accessGate(): Plugin {
         // host's cookie is already valid. Heals browsers left half-unlocked
         // (editor cookie set, iframe hosts not) from before the chain existed,
         // and doubles as the recovery path after a token rotation.
+        // EMBED HOSTS (sandbox/preview — everything except the first entry,
+        // which is the editor) admit same-site subresource loads WITHOUT a
+        // cookie. Sec-Fetch-Site is set by the browser and unforgeable from
+        // web content: the only same-site pages that can embed these hosts
+        // live on *.teddessert.com — i.e. our own editor. This sidesteps
+        // per-hostname cookie storage entirely, which privacy extensions
+        // routinely block for iframes. The editor host (and with it the
+        // /__revyme_disk API) never takes this path — full gate always.
+        const isEmbedHost = PUBLIC_HOSTS.length > 0 && host !== PUBLIC_HOSTS[0] && PUBLIC_HOSTS.includes(host);
+        const sfs = String(req.headers['sec-fetch-site'] ?? '');
+        if (isEmbedHost && sfs === 'same-site') return next();
+
         const cookieOk = readCookie(req.headers.cookie, COOKIE) === expected;
         if (cookieOk && !(viaQuery && safeEqual(viaQuery, token))) {
           // Self-heal: a top-level page load whose browser never completed a
