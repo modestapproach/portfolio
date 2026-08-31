@@ -26,6 +26,11 @@ import crypto from 'node:crypto';
 import type { ServerResponse } from 'node:http';
 
 const COOKIE = 'revyme_access';
+/** Set alongside COOKIE by every grant. Its absence on a top-level document
+ *  request means this browser never completed a full unlock chain (legacy
+ *  session, token rotation, cleared sibling cookies) — the gate then re-runs
+ *  the chain automatically instead of letting iframes strand at 401. */
+const CHAINED = 'revyme_chain_ok';
 const UNLOCK_PATH = '/__revyme_unlock';
 
 /** All public hostnames (this server's own + its siblings). One unlock on any
@@ -100,11 +105,19 @@ const SIGN_IN_PAGE = `<!doctype html>
   <button type="submit">Unlock</button>
 </form>`;
 
-function deny(res: ServerResponse, status = 401): void {
+const FRAMED_PAGE = `<!doctype html>
+<meta charset="utf-8">
+<title>Studio access</title>
+<style>body{margin:0;min-height:100vh;display:grid;place-items:center;background:#0a0a0b;color:#8b8b96;font:14px/1.6 ui-sans-serif,system-ui,sans-serif;text-align:center}b{color:#ededf0}</style>
+<div><b>Studio session needs a refresh.</b><br>Reload the editor tab (⌘R) — it will unlock this panel automatically.</div>`;
+
+function deny(res: ServerResponse, status = 401, framed = false): void {
   res.statusCode = status;
   res.setHeader('content-type', 'text/html; charset=utf-8');
   res.setHeader('cache-control', 'no-store');
-  res.end(SIGN_IN_PAGE);
+  // Inside an iframe the editor's canvas overlay eats pointer events, so a
+  // form would render but never be clickable — show instructions instead.
+  res.end(framed ? FRAMED_PAGE : SIGN_IN_PAGE);
 }
 
 function readBody(req: Connect.IncomingMessage, limit = 8 * 1024): Promise<string> {
@@ -146,13 +159,28 @@ export function accessGate(): Plugin {
         // host's cookie is already valid. Heals browsers left half-unlocked
         // (editor cookie set, iframe hosts not) from before the chain existed,
         // and doubles as the recovery path after a token rotation.
-        if (readCookie(req.headers.cookie, COOKIE) === expected && !(viaQuery && safeEqual(viaQuery, token))) {
+        const cookieOk = readCookie(req.headers.cookie, COOKIE) === expected;
+        if (cookieOk && !(viaQuery && safeEqual(viaQuery, token))) {
+          // Self-heal: a top-level page load whose browser never completed a
+          // full chain gets one now, so the canvas/preview iframes can never
+          // strand at 401. Marker-guarded — one extra pair of 302s per fresh
+          // browser, then never again.
+          const fetchDest = String(req.headers['sec-fetch-dest'] ?? 'document');
+          if (
+            fetchDest === 'document' &&
+            req.method === 'GET' &&
+            url.pathname !== UNLOCK_PATH &&
+            readCookie(req.headers.cookie, CHAINED) !== '1'
+          ) {
+            return grant(url.href);
+          }
           return next();
         }
 
         /** Set this host's cookie, then either hop to the next sibling host
-         *  in the chain or land on the final destination. */
-        const grant = (finalDest: string) => {
+         *  in the chain or land on the final destination. Function declaration
+         *  (hoisted): the self-heal branch above its textual position calls it. */
+        function grant(finalDest: string) {
           const visited = (url.searchParams.get('visited') ?? '')
             .split(',')
             .filter(Boolean);
@@ -170,14 +198,15 @@ export function accessGate(): Plugin {
             location = finalDest;
           }
           res.statusCode = 302;
-          res.setHeader(
-            'set-cookie',
-            `${COOKIE}=${expected}; Path=/; HttpOnly; SameSite=Lax; Secure; Max-Age=${60 * 60 * 24 * 30}`,
-          );
+          const attrs = `Path=/; HttpOnly; SameSite=Lax; Secure; Max-Age=${60 * 60 * 24 * 30}`;
+          res.setHeader('set-cookie', [
+            `${COOKIE}=${expected}; ${attrs}`,
+            `${CHAINED}=1; ${attrs}`,
+          ]);
           res.setHeader('cache-control', 'no-store');
           res.setHeader('location', location);
           res.end();
-        };
+        }
 
         if (viaQuery && safeEqual(viaQuery, token)) {
           if (url.pathname === UNLOCK_PATH) {
@@ -202,7 +231,8 @@ export function accessGate(): Plugin {
           return;
         }
 
-        deny(res);
+        const dest = String(req.headers['sec-fetch-dest'] ?? '');
+        deny(res, 401, dest === 'iframe' || dest === 'frame');
       });
     },
   };
