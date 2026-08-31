@@ -1,0 +1,34 @@
+{
+  "format": "revyme-v1",
+  "files": [
+    "_meta/page-camera.json",
+    "app/globals.css",
+    "app/layout.tsx",
+    "app/page.client.tsx",
+    "app/page.tsx",
+    "app/providers.tsx",
+    "app/work/dibslist/page.client.tsx",
+    "app/work/dibslist/page.tsx",
+    "components/VariableName.tsx",
+    "i18n/config.json",
+    "messages/en.json",
+    "messages/es.json",
+    "messages/fr.json"
+  ],
+  "savedAt": "2026-08-31T18:32:46.531Z",
+  "hashes": {
+    "_meta/page-camera.json": "f9c8ecbe85e5949900d2747afa29b91e19682230",
+    "app/globals.css": "7edeef51597e9a6ec07c8c6feb30f51c84e61640",
+    "app/layout.tsx": "0d0bca1e8b709cde9fbe908db8d6349bbb611193",
+    "app/page.client.tsx": "f21af802d114e6c00d982c2e552ace20ebf893dc",
+    "app/page.tsx": "6b8246d8042620af1ab4a867b78f45ff612f7a53",
+    "app/providers.tsx": "ed703d8e48a61cbcf04b5921742155cf6634209d",
+    "app/work/dibslist/page.client.tsx": "0d849f3e30761064c12db8cbe8bf84f1177d4786",
+    "app/work/dibslist/page.tsx": "591a7b4637c786af3d490ed06d73fdf8b1f524d9",
+    "components/VariableName.tsx": "377b30063a3adfb1de63b9a8d40d117c59b389e1",
+    "i18n/config.json": "9776a70d3ab8ce0ef47795cffd98cf3ec04aa1c5",
+    "messages/en.json": "bf21a9e8fbc5a3846fb05b4fa0859e0917b2202f",
+    "messages/es.json": "bf21a9e8fbc5a3846fb05b4fa0859e0917b2202f",
+    "messages/fr.json": "bf21a9e8fbc5a3846fb05b4fa0859e0917b2202f"
+  }
+}

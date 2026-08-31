@@ -1,0 +1,31 @@
+{
+  "name": "@portfolio/web",
+  "private": true,
+  "version": "0.1.0",
+  "description": "The portfolio site — a real Next.js app that is ALSO the Revyme studio's live document. apps/studio edits these files; next build ships them.",
+  "scripts": {
+    "dev": "next dev -p 3100",
+    "build": "next build",
+    "start": "next start -p 3100",
+    "build:cf": "opennextjs-cloudflare build",
+    "preview:cf": "opennextjs-cloudflare build && opennextjs-cloudflare preview",
+    "deploy:cf": "opennextjs-cloudflare build && opennextjs-cloudflare deploy"
+  },
+  "dependencies": {
+    "@revyme/runtime": "^0.0.15",
+    "framer-motion": "^12.23.0",
+    "next": "^15.5.24",
+    "next-intl": "^4.11.0",
+    "next-themes": "^0.4.6",
+    "react": "^19.1.0",
+    "react-dom": "^19.1.0",
+    "perfect-freehand": "^1.2.2"
+  },
+  "devDependencies": {
+    "@opennextjs/cloudflare": "~1.20.4",
+    "@types/node": "^24.0.0",
+    "@types/react": "^19.1.0",
+    "typescript": "^5.9.0",
+    "wrangler": "^4.125.0"
+  }
+}

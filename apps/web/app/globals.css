@@ -1,0 +1,115 @@
+@import url('https://fonts.googleapis.com/css2?family=Geist+Sans:wght@300;400;500;600;700&display=swap');
+@import url('https://fonts.googleapis.com/css2?family=Index+Variable:wght@300;400;500;600;700&display=swap');
+/* Modern reset — without this, `width: 100%` + horizontal padding
+   blows out the layout because the browser's default box-sizing is
+   content-box. Most Next.js starters ship this (or Tailwind preflight).
+   margin/padding are reset UNIVERSALLY (not just html/body) to match the
+   editor sandboxes (public/preview.html) EXACTLY — the sandboxes zero UA
+   margins on every element, so a <p> without an inline margin looked
+   compact in the builder but gained 1em top+bottom (120px at a 120px
+   font!) on the PUBLISHED site (live find 2026-07-14: nav menu links with
+   huge gaps live, compact in the editor). The reset ships natively in the
+   project so publish needs no post-build normalization. */
+*, *::before, *::after {
+  margin: 0;
+  padding: 0;
+  box-sizing: border-box;
+}
+body {
+  /* Global default font — content that doesn't set its own font-family (e.g.
+     text inside component instances / layout templates) inherits this instead
+     of the browser's serif default. Matches the canvas + preview sandboxes so
+     the published site renders identically to the builder. */
+  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+  -webkit-font-smoothing: antialiased;
+  text-rendering: optimizeLegibility;
+}
+/* Links inherit their surroundings — no browser-default underline or blue/visited-purple. Matches the
+   editor preview (ServerPreview) + the deploy reset so a link without inline textDecoration:'none' (e.g. a
+   logo link) looks the same live as in the builder. NOT applied to the editor canvas (refreshCanvasTokens
+   extracts only :root/@keyframes from this CSS, so global element selectors never leak into the editor UI). */
+a {
+  color: inherit;
+  text-decoration: inherit;
+}
+
+/* Design Tokens */
+:root {
+  /* Colors */
+  --color-brand: #6366f1;
+  --color-brand-light: #818cf8;
+  --color-surface: #ffffff;
+  --color-surface-dark: #0f0f1a;
+  --color-text: #111111;
+  --color-text-muted: #666666;
+  --color-text-light: #888888;
+  --color-accent: #6366f1;
+  --color-success: #22c55e;
+  --color-error: #ef4444;
+
+  /* Typography */
+  --typo-heading-font: 'Inter', sans-serif;
+  --typo-heading-weight: 700;
+  --typo-heading-color: #111111;
+  --typo-heading-transform: none;
+  --typo-heading-decoration: none;
+  --typo-heading-shadow: none;
+  --typo-heading-size: 56px;
+  --typo-heading-spacing: -1.5px;
+  --typo-heading-line-height: 1.1;
+  --typo-heading-size-md: 40px;
+  --typo-heading-spacing-md: -1px;
+  --typo-heading-line-height-md: 1.15;
+  --typo-heading-size-sm: 32px;
+  --typo-heading-spacing-sm: -0.5px;
+  --typo-heading-line-height-sm: 1.2;
+  --typo-heading-min-default: 1200;
+  --typo-heading-min-md: 600;
+  --typo-body-font: 'Inter', sans-serif;
+  --typo-body-weight: 400;
+  --typo-body-color: #333333;
+  --typo-body-transform: none;
+  --typo-body-decoration: none;
+  --typo-body-shadow: none;
+  --typo-body-size: 16px;
+  --typo-body-spacing: 0px;
+  --typo-body-line-height: 1.7;
+  --typo-body-size-md: 15px;
+  --typo-body-line-height-md: 1.6;
+  --typo-body-size-sm: 14px;
+  --typo-body-line-height-sm: 1.5;
+  --typo-body-min-default: 1200;
+  --typo-body-min-md: 600;
+
+  /* Spacing */
+  --space-section-y: 80px;
+  --space-section-x: 60px;
+  --space-card-padding: 32px;
+  --space-gap: 24px;
+
+  /* Radius */
+  --radius-card: 16px;
+  --radius-button: 8px;
+  --radius-pill: 100px;
+
+  /* Shadows */
+  --shadow-card: 0 1px 3px rgba(0,0,0,0.06);
+  --shadow-elevated: 0 4px 12px rgba(0,0,0,0.1);
+}
+
+/* Dark theme — applied when next-themes adds the .dark class on <html>.
+   Override any token whose value should change in dark mode; tokens not
+   redefined here inherit from :root above. The canvas Renderer scopes
+   :root → [data-content-root] but skips :root.dark so the canvas always
+   shows light mode (the editor has its own theme switcher). */
+:root.dark {
+  --color-surface: #0f0f1a;
+  --color-surface-dark: #ffffff;
+  --color-text: #f5f5f5;
+  --color-text-muted: #a1a1aa;
+  --color-text-light: #71717a;
+  --typo-heading-color: #ffffff;
+  --typo-body-color: #d4d4d8;
+  --shadow-card: 0 1px 3px rgba(0,0,0,0.4);
+  --shadow-elevated: 0 4px 12px rgba(0,0,0,0.6);
+}
