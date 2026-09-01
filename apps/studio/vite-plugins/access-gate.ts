@@ -43,6 +43,18 @@ const PUBLIC_HOSTS = (process.env.REVYME_PUBLIC_HOSTS ?? '')
   .map((h) => h.trim())
   .filter(Boolean);
 
+/** Hostnames reachable only over the tailnet (Tailscale hostname/IP). The
+ *  WireGuard layer IS the auth there — every packet already proves a device
+ *  enrolled in the tailnet — so the token gate would only add a cookie that
+ *  plain-http hosts can't even store (the cookie is Secure). Treated exactly
+ *  like loopback. */
+const TAILNET_HOSTS = new Set(
+  (process.env.REVYME_TAILNET_HOSTS ?? '')
+    .split(',')
+    .map((h) => h.trim().replace(/:\d+$/, ''))
+    .filter(Boolean),
+);
+
 /** Open-redirect guard: chain destinations may only point at our own hosts. */
 function safeDest(dest: string | null): string | null {
   if (!dest) return null;
@@ -155,6 +167,7 @@ export function accessGate(): Plugin {
         // tunnel connects to us over loopback only after Cloudflare has
         // already routed a public request — which carries a public Host).
         if (/^(localhost|127\.0\.0\.1)(:\d+)?$/.test(host)) return next();
+        if (TAILNET_HOSTS.has(host.replace(/:\d+$/, ''))) return next();
 
         const url = new URL(req.url ?? '/', `https://${host}`);
         const viaQuery = url.searchParams.get('access_token');

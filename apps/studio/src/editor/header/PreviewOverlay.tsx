@@ -45,8 +45,13 @@ import Button from '@/design-system/Button';
  *  silently drop messages whenever the iframe ends up at a different port,
  *  which is exactly the bug we're fixing). */
 const PREVIEW_ORIGIN =
-  // LOCAL FORK: tunnel hostname override (see protocol.ts)
-  (import.meta.env.VITE_PREVIEW_ORIGIN as string | undefined) ||
+  // LOCAL FORK: tunnel hostname override, active only on the public
+  // hostname (see protocol.ts for the rationale)
+  (typeof window !== 'undefined' &&
+  import.meta.env.VITE_PUBLIC_EDITOR_HOST &&
+  window.location.hostname === import.meta.env.VITE_PUBLIC_EDITOR_HOST
+    ? (import.meta.env.VITE_PREVIEW_ORIGIN as string | undefined)
+    : undefined) ||
   (typeof window !== 'undefined'
     ? `${window.location.protocol}//${window.location.hostname}:5175`
     : 'http://localhost:5175');

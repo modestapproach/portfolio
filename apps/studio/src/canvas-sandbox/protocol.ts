@@ -257,8 +257,14 @@ export function isSandboxEvent(data: any): data is SandboxEventMessage {
  *  server IP, or a domain without per-environment config. */
 export const SANDBOX_ORIGIN =
   // LOCAL FORK: behind Cloudflare Tunnel the sandbox is a separate public
-  // hostname (ports 5174/5175 don't traverse the proxy) — env wins.
-  (import.meta.env.VITE_SANDBOX_ORIGIN as string | undefined) ||
+  // hostname (ports 5174/5175 don't traverse the proxy). The override only
+  // applies when the editor is actually being viewed on the public hostname,
+  // so one build serves localhost, the tailnet, and the tunnel.
+  (typeof window !== 'undefined' &&
+  import.meta.env.VITE_PUBLIC_EDITOR_HOST &&
+  window.location.hostname === import.meta.env.VITE_PUBLIC_EDITOR_HOST
+    ? (import.meta.env.VITE_SANDBOX_ORIGIN as string | undefined)
+    : undefined) ||
   (typeof window !== 'undefined'
     ? `${window.location.protocol}//${window.location.hostname}:5174`
     : 'http://localhost:5174');
