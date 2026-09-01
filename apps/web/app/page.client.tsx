@@ -2,10 +2,14 @@
 
 /** @canvas {
   "viewports": [
-    { "id": "desktop", "label": "Desktop", "width": 1440, "height": 900, "isPrimary": true, "order": 0 }
+    { "id": "desktop", "label": "Desktop", "width": 1440, "height": 900, "isPrimary": true, "order": 0 },
+    { "id": "tablet", "label": "Tablet", "width": 768, "height": "auto", "isPrimary": false, "order": 1 },
+    { "id": "mobile", "label": "Mobile", "width": 375, "height": "auto", "isPrimary": false, "order": 2 }
   ],
   "positions": {
-    "desktop": { "x": 0, "y": 0 }
+    "desktop": { "x": 0, "y": 0 },
+    "tablet": { "x": 1600, "y": 0 },
+    "mobile": { "x": 2528, "y": 0 }
   }
 } */
 import React from 'react';
@@ -20,6 +24,25 @@ export default function Page() {
     fontFamily: 'Geist Sans, -apple-system, BlinkMacSystemFont, sans-serif'
   }}>
 
+  <style>{`
+    @media (max-width: 768px) and (min-width: 375.02px) {
+      [data-id="hero"] { padding: 56px 40px 48px 40px !important; }
+      [data-id="hero-name"] span { font-size: 72px !important; }
+      [data-id="hero-title"] { font-size: 34px !important; }
+      [data-id="hero-sub"] { font-size: 17px !important; }
+      [data-id="work"] { padding: 16px 40px 64px 40px !important; }
+      [data-id="footer"] { padding: 24px 40px 32px 40px !important; }
+    }
+    @media (max-width: 375px) {
+      [data-id="hero"] { padding: 32px 24px 28px 24px !important; }
+      [data-id="hero-name"] span { font-size: 44px !important; }
+      [data-id="hero-title"] { font-size: 27px !important; }
+      [data-id="hero-sub"] { font-size: 16px !important; }
+      [data-id="work"] { padding: 8px 24px 40px 24px !important; }
+      [data-id="cards"] { gap: 16px !important; }
+      [data-id="footer"] { flex-direction: column !important; align-items: stretch !important; justify-content: flex-start !important; gap: 6px !important; padding: 20px 24px 28px 24px !important; }
+    }
+`}</style>
   <div data-id="hero" data-name="Hero" style={{
       position: 'relative',
       flex: '0 0 auto',

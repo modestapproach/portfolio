@@ -15,12 +15,12 @@
     "messages/es.json",
     "messages/fr.json"
   ],
-  "savedAt": "2026-09-01T08:50:58.559Z",
+  "savedAt": "2026-09-01T22:30:11.866Z",
   "hashes": {
-    "_meta/page-camera.json": "3e99e1c622a6538bbf82bc1afc9d48384ec07f64",
+    "_meta/page-camera.json": "ff98a4ce13a22fd53d7765862e76c214cb89ca79",
     "app/globals.css": "7edeef51597e9a6ec07c8c6feb30f51c84e61640",
-    "app/layout.tsx": "bade26c3780586cbdf11c15a1ba616cf1cc236d5",
-    "app/page.client.tsx": "59a5b51f1350aa5f64cf37c9612b1dd0d0687b8e",
+    "app/layout.tsx": "0d0bca1e8b709cde9fbe908db8d6349bbb611193",
+    "app/page.client.tsx": "dfa3b08fc7d08ceb55c51eb93111163b8050cd01",
     "app/page.tsx": "6b8246d8042620af1ab4a867b78f45ff612f7a53",
     "app/providers.tsx": "ed703d8e48a61cbcf04b5921742155cf6634209d",
     "app/work/dibslist/page.client.tsx": "0d849f3e30761064c12db8cbe8bf84f1177d4786",
