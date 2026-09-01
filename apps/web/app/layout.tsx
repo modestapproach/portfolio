@@ -2,8 +2,9 @@ import './globals.css';
 import { Providers } from './providers';
 
 export const metadata = {
-  title: '',
-  description: '',
+  title: 'Ted Dessert — Product Designer',
+  description:
+    'Product designer for ambitious software with weird edges and real constraints. Seven years helping new products become legible, lovable, and ready to ship.',
 };
 
 export const siteConfig: Record<string, string> = {

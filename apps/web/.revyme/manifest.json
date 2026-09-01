@@ -15,11 +15,11 @@
     "messages/es.json",
     "messages/fr.json"
   ],
-  "savedAt": "2026-09-01T22:30:11.866Z",
+  "savedAt": "2026-09-01T22:40:02.565Z",
   "hashes": {
     "_meta/page-camera.json": "ff98a4ce13a22fd53d7765862e76c214cb89ca79",
     "app/globals.css": "7edeef51597e9a6ec07c8c6feb30f51c84e61640",
-    "app/layout.tsx": "0d0bca1e8b709cde9fbe908db8d6349bbb611193",
+    "app/layout.tsx": "bade26c3780586cbdf11c15a1ba616cf1cc236d5",
     "app/page.client.tsx": "dfa3b08fc7d08ceb55c51eb93111163b8050cd01",
     "app/page.tsx": "6b8246d8042620af1ab4a867b78f45ff612f7a53",
     "app/providers.tsx": "ed703d8e48a61cbcf04b5921742155cf6634209d",
