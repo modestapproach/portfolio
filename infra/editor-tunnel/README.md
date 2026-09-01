@@ -29,9 +29,20 @@ adopt Access later, unset `REVYME_ACCESS_TOKEN` and the gate goes inert.
 | | Mac mini (always on) | Laptop |
 |---|---|---|
 | role | the always-on editor server | design + AI co-editing |
-| runs | studio:public + cloudflared, as launchd agents | `npm run dev:studio` on localhost |
-| URL | https://editor.teddessert.com | http://localhost:3333 |
-| setup | `up.sh` once, then `install-macos.sh` | nothing beyond `npm ci` |
+| runs | studio:serve (prod bundle) + cloudflared, as launchd agents | `npm run dev:studio` on localhost |
+| URL | https://editor.teddessert.com — or http://mini:3333 on Tailscale (no token) | http://localhost:3333 |
+| setup | `up.sh` once, then `WITH_TUNNEL=1 install-macos.sh` | nothing beyond `npm ci` |
+
+The mini serves ONE production bundle (`npm run studio:build`) that works on
+localhost, the tailnet, and the tunnel — the public sandbox/preview origins
+are baked in but only activate when the page is opened on
+editor.teddessert.com. After changing studio source, rebuild and restart:
+
+```bash
+npm run studio:build
+pkill -f "apps/studio/node_modules/.bin/vite"; pkill -f "apps/studio/node_modules/.bin/concurrently"
+launchctl kickstart -k "gui/$(id -u)/com.teddessert.revyme.studio"
+```
 
 The laptop never needs public mode or the token — it edits locally, where the
 Claude Code co-editing loop is fastest. The mini is what you reach from a
@@ -43,8 +54,11 @@ phone, an iPad, or anywhere you are not.
 ./infra/editor-tunnel/up.sh          # interactive: opens a browser, creates
                                      # the tunnel + DNS. Ctrl-C once it says
                                      # "Tunnel up".
-./infra/editor-tunnel/install-macos.sh   # installs launchd agents (permanent)
+WITH_TUNNEL=1 ./infra/editor-tunnel/install-macos.sh   # launchd agents (permanent)
 ```
+
+Without `WITH_TUNNEL=1` only the studio agent is installed and
+editor.teddessert.com answers 530 (tailnet access still works).
 
 After that the editor survives reboots and crashes with nothing left open.
 Uninstall with `./infra/editor-tunnel/install-macos.sh --stop`.
