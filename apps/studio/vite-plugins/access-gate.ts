@@ -184,9 +184,24 @@ export function accessGate(): Plugin {
         // per-hostname cookie storage entirely, which privacy extensions
         // routinely block for iframes. The editor host (and with it the
         // /__revyme_disk API) never takes this path — full gate always.
+        // `same-origin` is admitted alongside `same-site` because the two
+        // cover the two halves of ONE embed. The iframe DOCUMENT is fetched by
+        // the editor (a sibling host) and so is `same-site`; every script and
+        // asset that document then pulls is fetched by the sandbox page from
+        // its OWN origin and so is `same-origin`. Admitting only `same-site`
+        // served the HTML and then 401'd all of its JS — the sandbox never
+        // booted and the canvas sat empty for exactly the cookie-less browsers
+        // this exemption exists for (live find 2026-09-01).
+        // This does not widen the boundary: a `same-origin` request can only
+        // originate from a document already served by this host, and obtaining
+        // one requires either the same-site embed above or a valid cookie. A
+        // cross-site page framing us gets `cross-site` on the document and is
+        // refused, so it never reaches the point of issuing subresource loads.
+        // `none` (a typed URL) stays gated, and the editor host — which owns
+        // the /__revyme_disk API — is excluded from `isEmbedHost` entirely.
         const isEmbedHost = PUBLIC_HOSTS.length > 0 && host !== PUBLIC_HOSTS[0] && PUBLIC_HOSTS.includes(host);
         const sfs = String(req.headers['sec-fetch-site'] ?? '');
-        if (isEmbedHost && sfs === 'same-site') return next();
+        if (isEmbedHost && (sfs === 'same-site' || sfs === 'same-origin')) return next();
 
         const cookieOk = readCookie(req.headers.cookie, COOKIE) === expected;
         if (cookieOk && !(viaQuery && safeEqual(viaQuery, token))) {
