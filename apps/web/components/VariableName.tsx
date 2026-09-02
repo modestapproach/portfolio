@@ -69,8 +69,13 @@ function useFitFontSize(
 
     let frame = 0;
     const measure = () => {
+      // Both in layout px. clientWidth ignores ancestor transforms but
+      // getBoundingClientRect does not, and on the canvas every artboard sits
+      // under the zoom transform: a 588px row reported 250px at 43% zoom, the
+      // ratio came out 2.4× too small, and the fit solved to a size above the
+      // cap on every tile. offsetWidth is in the same space as clientWidth.
       const avail = wrap.clientWidth;
-      const rowW = row.getBoundingClientRect().width;
+      const rowW = row.offsetWidth;
       const first = row.firstElementChild as HTMLElement | null;
       const cur = first ? parseFloat(getComputedStyle(first).fontSize) : 0;
       if (!avail || !rowW || !cur) return;
