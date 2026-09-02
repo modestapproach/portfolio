@@ -12,8 +12,10 @@
     "mobile": { "x": 2528, "y": 0 }
   }
 } */
+
 import React from 'react';
 import VariableName from '../components/VariableName';
+
 export default function Page() {
   return <div data-id="root" data-name="Page" style={{
     position: 'relative',
@@ -27,7 +29,6 @@ export default function Page() {
   <style>{`
     @media (max-width: 768px) and (min-width: 375.02px) {
       [data-id="hero"] { padding: 56px 40px 48px 40px !important; }
-      [data-id="hero-name"] span { font-size: 72px !important; }
       [data-id="hero-title"] { font-size: 34px !important; }
       [data-id="hero-sub"] { font-size: 17px !important; }
       [data-id="work"] { padding: 16px 40px 64px 40px !important; }
@@ -35,7 +36,6 @@ export default function Page() {
     }
     @media (max-width: 375px) {
       [data-id="hero"] { padding: 32px 24px 28px 24px !important; }
-      [data-id="hero-name"] span { font-size: 44px !important; }
       [data-id="hero-title"] { font-size: 27px !important; }
       [data-id="hero-sub"] { font-size: 16px !important; }
       [data-id="work"] { padding: 8px 24px 40px 24px !important; }
@@ -466,19 +466,4 @@ export default function Page() {
 </div>;
 }
 const canvasNodes = <>
-  <p data-id="p-mthrpcmm-2" data-name="Text" data-canvas-node="true" style={{
-    fontSize: '16px',
-    color: '#000000',
-    fontFamily: 'Inter, sans-serif',
-    fontWeight: '400',
-    lineHeight: '1.2',
-    overflowWrap: 'break-word',
-    width: 'max-content',
-    height: 'auto',
-    position: 'absolute',
-    left: '1402px',
-    top: '718px'
-  }}>
-    {"f0b2535b4de6a9c5fa1e1c8c9c9b8726de5fb48d452c09de"}
-  </p>
-</>;
+  </>;
