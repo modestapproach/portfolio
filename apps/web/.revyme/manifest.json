@@ -20,7 +20,7 @@
     "_meta/page-camera.json": "29028ed3b0a836f474506e6146ce1718b4aa1414",
     "app/globals.css": "7edeef51597e9a6ec07c8c6feb30f51c84e61640",
     "app/layout.tsx": "bade26c3780586cbdf11c15a1ba616cf1cc236d5",
-    "app/page.client.tsx": "9a14a376817175ed929b1c4c5aafd24c07845df9",
+    "app/page.client.tsx": "d1818075a8920b5c67c893089b06a7922a6e250a",
     "app/page.tsx": "6b8246d8042620af1ab4a867b78f45ff612f7a53",
     "app/providers.tsx": "ed703d8e48a61cbcf04b5921742155cf6634209d",
     "app/work/dibslist/page.client.tsx": "0d849f3e30761064c12db8cbe8bf84f1177d4786",

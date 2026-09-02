@@ -33,6 +33,7 @@ export default function Page() {
       [data-id="hero-sub"] { font-size: 17px !important; }
       [data-id="work"] { padding: 16px 40px 64px 40px !important; }
       [data-id="footer"] { padding: 24px 40px 32px 40px !important; }
+      [data-id="footer-name"], [data-id="footer-note"] { flex: 0 1 auto !important; min-width: 0 !important; }
     }
     @media (max-width: 375px) {
       [data-id="hero"] { padding: 32px 24px 28px 24px !important; }
