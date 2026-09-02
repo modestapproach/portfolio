@@ -15,9 +15,9 @@
     "messages/es.json",
     "messages/fr.json"
   ],
-  "savedAt": "2026-09-02T05:48:03.398Z",
+  "savedAt": "2026-09-02T06:02:33.938Z",
   "hashes": {
-    "_meta/page-camera.json": "ef9376fbd18c3e0499200bc52bb426680089d140",
+    "_meta/page-camera.json": "74b632c5e0bd5ba78a70160aad8c8fe9a599e4fc",
     "app/globals.css": "7edeef51597e9a6ec07c8c6feb30f51c84e61640",
     "app/layout.tsx": "bade26c3780586cbdf11c15a1ba616cf1cc236d5",
     "app/page.client.tsx": "d1818075a8920b5c67c893089b06a7922a6e250a",
