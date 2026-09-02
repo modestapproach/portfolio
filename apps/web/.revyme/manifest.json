@@ -19,7 +19,7 @@
   "hashes": {
     "_meta/page-camera.json": "74b632c5e0bd5ba78a70160aad8c8fe9a599e4fc",
     "app/globals.css": "7edeef51597e9a6ec07c8c6feb30f51c84e61640",
-    "app/layout.tsx": "bade26c3780586cbdf11c15a1ba616cf1cc236d5",
+    "app/layout.tsx": "f12981144e004e153fe2be8126c1178128ada147",
     "app/page.client.tsx": "d1818075a8920b5c67c893089b06a7922a6e250a",
     "app/page.tsx": "6b8246d8042620af1ab4a867b78f45ff612f7a53",
     "app/providers.tsx": "ed703d8e48a61cbcf04b5921742155cf6634209d",
