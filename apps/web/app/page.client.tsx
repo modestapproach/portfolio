@@ -22,7 +22,7 @@ export default function Page() {
     width: '100%',
     display: 'flex',
     flexDirection: 'column',
-    backgroundColor: '#f6f0e5',
+    backgroundColor: '#ffffff',
     fontFamily: 'Geist Sans, -apple-system, BlinkMacSystemFont, sans-serif'
   }}>
 
@@ -175,7 +175,7 @@ export default function Page() {
             alignItems: 'center',
             justifyContent: 'center',
             height: '180px',
-            backgroundColor: '#4a6c56'
+            backgroundColor: '#ffffff'
           }}>
           <p data-id="dibs-art-word" data-name="Art word" style={{
               position: 'relative',
@@ -244,7 +244,7 @@ export default function Page() {
             alignItems: 'center',
             justifyContent: 'center',
             height: '180px',
-            backgroundColor: '#0c1f3f'
+            backgroundColor: '#ffffff'
           }}>
           <p data-id="reef-art-word" data-name="Art word" style={{
               position: 'relative',
@@ -313,7 +313,7 @@ export default function Page() {
             alignItems: 'center',
             justifyContent: 'center',
             height: '180px',
-            backgroundColor: '#e3b3ff'
+            backgroundColor: '#ffffff'
           }}>
           <p data-id="type-art-word" data-name="Art word" style={{
               position: 'relative',
@@ -383,7 +383,7 @@ export default function Page() {
             alignItems: 'center',
             justifyContent: 'center',
             height: '180px',
-            backgroundColor: '#111111'
+            backgroundColor: '#ffffff'
           }}>
           <p data-id="meta-art-word" data-name="Art word" style={{
               position: 'relative',

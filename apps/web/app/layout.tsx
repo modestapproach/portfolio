@@ -10,14 +10,7 @@ export const metadata = {
 export const siteConfig: Record<string, string> = {
   language: 'en',
   theme: 'light',
-  // next-themes stringifies its theme-init function into an inline script.
-  // The OpenNext/Cloudflare build runs esbuild with keepNames, which rewrites
-  // that function body to call a `__name` helper the inline script never
-  // defines, so the script threw on every page load and never applied the
-  // theme. Defining the helper before it runs is the smallest safe fix; this
-  // slot renders ahead of <Providers>, and it is the studio's own field, so a
-  // studio save keeps it.
-  customHead: '<script>globalThis.__name = globalThis.__name || function (t) { return t; };</script>',
+  customHead: '',
   customBody: '',
 };
 
