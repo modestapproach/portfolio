@@ -43,7 +43,11 @@ function CopyBlock({ label, value }: { label: string; value: string }) {
 export default function ConnectAiSection() {
   const [token, setToken] = useState('');
   const projectId = getProjectId();
-  const url = `${MCP_BASE}/mcp/${projectId}`;
+  // LOCAL FORK: a path-only base (`/__revyme_ai`) means "this editor's own
+  // server" — resolve it against whichever origin the tab is on, so the
+  // snippet is right on localhost, over the tailnet, and through the tunnel.
+  const base = MCP_BASE.startsWith('/') && typeof window !== 'undefined' ? `${window.location.origin}${MCP_BASE}` : MCP_BASE;
+  const url = `${base}/mcp/${projectId}`;
   const tok = token.trim() || TOKEN_PLACEHOLDER;
 
   const claudeCmd = `claude mcp add --transport http revyme ${url} --header "Authorization: Bearer ${tok}"`;

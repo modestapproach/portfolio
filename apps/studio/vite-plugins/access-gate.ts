@@ -161,7 +161,18 @@ export function isAuthorizedRequest(req: { headers: import('node:http').Incoming
   if (/^(localhost|127\.0\.0\.1)(:\d+)?$/.test(host)) return true;
   if (TAILNET_HOSTS.has(host.replace(/:\d+$/, ''))) return true;
   const cookie = readCookie(req.headers.cookie, COOKIE);
-  return cookie !== null && safeEqual(cookie, cookieValueFor(token));
+  if (cookie !== null && safeEqual(cookie, cookieValueFor(token))) return true;
+  return bearerOk(req.headers.authorization, token);
+}
+
+/** `Authorization: Bearer <access token>` — the credential a non-browser
+ *  client (an MCP client such as Claude Code) can present, since it has no
+ *  way to run the cookie unlock chain. The raw token is compared, timing-
+ *  safe; it only ever travels over the tunnel's TLS. */
+function bearerOk(header: string | string[] | undefined, token: string): boolean {
+  const h = Array.isArray(header) ? header[0] : header;
+  const m = h?.match(/^Bearer\s+(.+)$/i);
+  return !!m && safeEqual(m[1].trim(), token);
 }
 
 export function accessGate(): Plugin {
@@ -219,6 +230,9 @@ export function accessGate(): Plugin {
         const isEmbedHost = PUBLIC_HOSTS.length > 0 && host !== PUBLIC_HOSTS[0] && PUBLIC_HOSTS.includes(host);
         const sfs = String(req.headers['sec-fetch-site'] ?? '');
         if (isEmbedHost && (sfs === 'same-site' || sfs === 'same-origin')) return next();
+
+        // Non-browser clients (MCP) authenticate with the token as a bearer.
+        if (bearerOk(req.headers.authorization, token)) return next();
 
         const cookieOk = readCookie(req.headers.cookie, COOKIE) === expected;
         if (cookieOk && !(viaQuery && safeEqual(viaQuery, token))) {

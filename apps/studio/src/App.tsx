@@ -41,6 +41,8 @@ import { linkedComponentModalUrlAtom } from './cloud/components/linked-component
 import { usePrefetchCdnMetadataForActiveFile } from './cloud/components/cdn-metadata-hook';
 import { useSetAtom } from 'jotai';
 import { initCloudPlugin } from './cloud/cloud-plugin';
+import { initLocalPlugin } from './local/local-plugin'; // LOCAL FORK
+import { DISK_ENABLED } from './shared/disk-flag'; // LOCAL FORK
 import { CLOUD_ENABLED } from './shared/cloud-flag';
 import { previewModeAtom } from './code/stores/editor-store';
 import { CollaborationProvider } from './canvas/collab/CollaborationProvider';
@@ -58,6 +60,7 @@ import { suspendBuilderTheme, resumeBuilderTheme } from '@/editor/builder-theme'
 // cloud mode only. Standalone/OSS builds get just the core Website
 // settings section; the SettingsOverlay renders whatever is registered.
 if (CLOUD_ENABLED) initCloudPlugin();
+else if (DISK_ENABLED) initLocalPlugin(); // LOCAL FORK: the cloud sections that need no cloud
 
 export default function App() {
   // Lifted to atom so MenuTabs (View → Toggle preview) and the Ctrl+P

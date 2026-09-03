@@ -50,6 +50,7 @@ import type { SnapGuide, SpacingGuide } from '@/shared/types';
 import { DEFAULT_VIEWPORT_WIDTH } from '@/shared/constants';
 import { trace } from '@/shared/debug-trace';
 import { CLOUD_ENABLED } from '@/shared/cloud-flag';
+import { DISK_ENABLED } from '@/shared/disk-flag'; // LOCAL FORK
 import { preloadProjectFonts } from '@/code/project/font-preload';
 import { backfillCmsTimestamps } from '@/code/project/cms-ops';
 import { toolModeAtom, panHighlightAtom } from '@/code/stores/tool-store';
@@ -327,7 +328,7 @@ export default function Canvas() {
   // and, with REVYME_BRIDGE_AUTH=1 server-side, session-verified) — a plain
   // OSS production build stays off the bridge.
   useEffect(() => {
-    if (!import.meta.env.DEV && !CLOUD_ENABLED) return;
+    if (!import.meta.env.DEV && !CLOUD_ENABLED && !DISK_ENABLED) return; // LOCAL FORK: disk mode runs its own bridge
     void import('@/ai/mcp/bridge-client').then((m) => m.startMcpBridge());
   }, []);
 

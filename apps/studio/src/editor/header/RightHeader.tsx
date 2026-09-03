@@ -316,7 +316,7 @@ export default function RightHeader({ previewMode, onTogglePreview }: Props) {
             tabIndex={-1}
             className="w-full cut-corners"
             onClick={handleExportToggle}
-            disabled={!CLOUD_ENABLED || isViewer || isClosedSource}
+            disabled={!(CLOUD_ENABLED || DISK_ENABLED) || isViewer || isClosedSource}
             // `data-export-trigger` lets ExportDropdown's outside-click
             // listener ignore clicks on us so this toggle isn't fought
             // by a "close because outside" race.

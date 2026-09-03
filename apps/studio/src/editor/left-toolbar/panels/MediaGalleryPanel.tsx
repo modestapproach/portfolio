@@ -16,6 +16,7 @@
 
 import React, { useState, useEffect, useCallback, useRef } from 'react';
 import { CLOUD_ENABLED } from '@/shared/cloud-flag';
+import { DISK_ENABLED } from '@/shared/disk-flag'; // LOCAL FORK
 import { ToolSegmentedControl } from '@/editor/controls';
 import { trace } from '@/shared/debug-trace';
 import SectionLabel from '@/design-system/SectionLabel';
@@ -233,7 +234,8 @@ export default function MediaGalleryPanel() {
   const fileInputRef = useRef<HTMLInputElement>(null);
   const scrollRef = useRef<HTMLDivElement>(null);
   const projectId = getProjectId();
-  const isCloud = !!CLOUD_ENABLED;
+  // LOCAL FORK: disk mode lists public/assets through local-api.ts.
+  const isCloud = !!CLOUD_ENABLED || !!DISK_ENABLED;
   const noun: 'image' | 'video' = tab === 'images' ? 'image' : 'video';
 
   trace.fn('MediaGalleryPanel:render', { tab, count: uploads.length, selected: selectedKeys.size });

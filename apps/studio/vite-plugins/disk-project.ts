@@ -41,7 +41,7 @@ const execFileP = promisify(execFile);
 const API_PREFIX = '/__revyme_disk';
 const ASSETS_URL_PREFIX = '/assets/';
 
-function projectRoot(): string {
+export function projectRoot(): string {
   const fromEnv = process.env.REVYME_PROJECT_DIR;
   const root = fromEnv
     ? path.resolve(fromEnv)
@@ -540,22 +540,20 @@ const MIME: Record<string, string> = {
  *  deliberately holds NO cloud credentials — the only secret-bearing system
  *  is GitHub Actions, so a compromised dev server can at worst make commits,
  *  which are visible, attributable, and revertible. */
-async function handlePublish(req: Connect.IncomingMessage, res: ServerResponse): Promise<void> {
-  const body = await readBody(req, 64 * 1024);
-  let message = '';
-  try {
-    message = String((JSON.parse(body?.toString('utf8') || '{}') as { message?: string }).message ?? '');
-  } catch {
-    /* empty body is fine */
-  }
+export type PublishResult =
+  | { ok: true; sha: string; branch: string; committed: boolean; actionsUrl: string | null }
+  | { ok: false; status: number; error: string };
+
+/** Commit the project directory and push. Shared by the Publish button and
+ *  the Backups "restore to live" path (local-api.ts). */
+export async function publishProject(message: string): Promise<PublishResult> {
   const root = projectRoot();
   const git = (...args: string[]) => execFileP('git', ['-C', root, ...args]);
 
   try {
     await git('rev-parse', '--show-toplevel');
   } catch {
-    sendJson(res, 400, { error: 'project directory is not inside a git repository' });
-    return;
+    return { ok: false, status: 400, error: 'project directory is not inside a git repository' };
   }
 
   // Stage ONLY the project directory — a publish must never sweep up
@@ -580,12 +578,13 @@ async function handlePublish(req: Connect.IncomingMessage, res: ServerResponse):
   try {
     await git('push', 'origin', 'HEAD');
   } catch (err: any) {
-    sendJson(res, 502, {
+    return {
+      ok: false,
+      status: 502,
       error: `commit ${committed ? 'created' : 'not needed'}, but push failed: ${String(
         err?.stderr ?? err?.message ?? err,
       ).slice(0, 400)}`,
-    });
-    return;
+    };
   }
 
   let actionsUrl: string | null = null;
@@ -597,11 +596,55 @@ async function handlePublish(req: Connect.IncomingMessage, res: ServerResponse):
     /* non-github remote — no actions link */
   }
 
-  sendJson(res, 200, {
-    sha: shaOut.trim(),
-    branch: branchOut.trim(),
-    committed,
-    actionsUrl,
+  return { ok: true, sha: shaOut.trim(), branch: branchOut.trim(), committed, actionsUrl };
+}
+
+async function handlePublish(req: Connect.IncomingMessage, res: ServerResponse): Promise<void> {
+  const body = await readBody(req, 64 * 1024);
+  let message = '';
+  try {
+    message = String((JSON.parse(body?.toString('utf8') || '{}') as { message?: string }).message ?? '');
+  } catch {
+    /* empty body is fine */
+  }
+  const result = await publishProject(message);
+  if (!result.ok) {
+    sendJson(res, result.status, { error: result.error });
+    return;
+  }
+  const { sha, branch, committed, actionsUrl } = result;
+  sendJson(res, 200, { sha, branch, committed, actionsUrl });
+}
+
+/** Overwrite managed files from OUTSIDE a studio tab (a Backups restore):
+ *  write, refresh the manifest, and fan the changed files out to every
+ *  connected tab through the save broadcaster (no `deviceId`, so nobody is
+ *  skipped). Never deletes. Returns the files that actually changed. */
+export function overwriteProjectFiles(files: Record<string, string>): Promise<{ savedAt: string; changed: string[] }> {
+  return withWriteLock(async () => {
+    const root = projectRoot();
+    const prev = await readManifest(root);
+    if (!prev) throw new Error('no manifest — refusing to write into an unmanaged directory');
+    const nextFiles = new Set(prev.files);
+    const hashes = { ...(prev.hashes ?? {}) };
+    const changed: Record<string, string> = {};
+    for (const [rel, content] of Object.entries(files)) {
+      const abs = safeResolve(root, rel);
+      if (!abs) continue;
+      const h = sha1(content);
+      if (hashes[rel] === h) continue;
+      await fsp.mkdir(path.dirname(abs), { recursive: true });
+      await fsp.writeFile(abs, content, 'utf8');
+      hashes[rel] = h;
+      nextFiles.add(rel);
+      changed[rel] = content;
+    }
+    const savedAt = new Date().toISOString();
+    await writeManifest(root, { ...prev, files: [...nextFiles].sort(), hashes, savedAt });
+    if (saveBroadcaster && Object.keys(changed).length > 0) {
+      try { saveBroadcaster({ changed, deleted: [], savedAt, deviceId: null }); } catch { /* logged by relay */ }
+    }
+    return { savedAt, changed: Object.keys(changed) };
   });
 }
 

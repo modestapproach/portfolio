@@ -6,6 +6,7 @@
 
 import { useState, useCallback, useRef, useEffect, useMemo } from 'react';
 import { CLOUD_ENABLED } from '@/shared/cloud-flag';
+import { DISK_ENABLED } from '@/shared/disk-flag'; // LOCAL FORK
 import { trace } from '@/shared/debug-trace';
 import Modal from '@/design-system/Modal';
 import { backend } from '@/backend';
@@ -154,7 +155,7 @@ export default function ImageSearchModal({ isOpen, onClose, onSelect }: ImageSea
   // MediaGalleryPanel.fetchUploads — same endpoint + response shape, cloud-
   // gated). So the Upload tab shows the website's media, not just a drop zone.
   const fetchUploadedMedia = useCallback(async () => {
-    if (!CLOUD_ENABLED) return;
+    if (!CLOUD_ENABLED && !DISK_ENABLED) return; // LOCAL FORK: local-api.ts serves /api/upload
     try {
       const res = await fetch(`/api/upload?websiteId=${getProjectId()}&type=image`);
       if (res.ok) {

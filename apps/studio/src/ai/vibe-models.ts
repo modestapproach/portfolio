@@ -88,7 +88,24 @@ export function vibeModelLabel(id: string | undefined, models: VibeModel[]): str
 /** Group models by vendor in a stable vendor order for the select popup. */
 export function groupByVendor(models: VibeModel[]): Array<{ vendor: VibeModel['vendor']; label: string; models: VibeModel[] }> {
   const order: VibeModel['vendor'][] = ['anthropic', 'openai', 'google'];
-  return order
+  const known = order
     .map((vendor) => ({ vendor, label: VENDOR_LABELS[vendor], models: models.filter((m) => m.vendor === vendor) }))
     .filter((g) => g.models.length > 0);
+  // LOCAL FORK: a self-hosted service can route to any OpenRouter vendor
+  // (this fork's default is Z.ai's GLM). Unknown vendors used to be dropped
+  // from the picker entirely; group them after the three upstream ones,
+  // labelled by the vendor id, in first-seen order.
+  const extra: Array<{ vendor: VibeModel['vendor']; label: string; models: VibeModel[] }> = [];
+  for (const m of models) {
+    const v = m.vendor as string;
+    if ((order as string[]).includes(v)) continue;
+    let g = extra.find((e) => (e.vendor as string) === v);
+    if (!g) {
+      const label = v === 'zai' || v === 'z-ai' ? 'Z.ai' : v.charAt(0).toUpperCase() + v.slice(1);
+      g = { vendor: m.vendor, label, models: [] };
+      extra.push(g);
+    }
+    g.models.push(m);
+  }
+  return [...known, ...extra];
 }

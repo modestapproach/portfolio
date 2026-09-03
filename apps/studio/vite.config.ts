@@ -3,6 +3,8 @@ import react from '@vitejs/plugin-react';
 import { accessGate } from './vite-plugins/access-gate'; // LOCAL FORK
 import { diskProjectApi, diskProjectAssets } from './vite-plugins/disk-project'; // LOCAL FORK
 import { collabRelay } from './vite-plugins/collab-relay'; // LOCAL FORK
+import { localApi } from './vite-plugins/local-api'; // LOCAL FORK
+import { aiService } from './vite-plugins/ai-service'; // LOCAL FORK
 import tailwindcss from '@tailwindcss/vite';
 import fs from 'node:fs';
 import path from 'node:path';
@@ -375,7 +377,7 @@ export default defineConfig(({ mode }) => {
   const env = loadEnv(mode, process.cwd(), '');
   const cloudMode = env.VITE_REVYME_CLOUD === 'true';
   return {
-  plugins: [accessGate(), react(), tailwindcss(), debugTracePlugin(), diskProjectApi(), diskProjectAssets(), collabRelay()], // LOCAL FORK: disk-project + live sync relay
+  plugins: [accessGate(), react(), tailwindcss(), debugTracePlugin(), diskProjectApi(), diskProjectAssets(), collabRelay(), localApi(), aiService()], // LOCAL FORK: disk-project + live sync relay + local /api shims + AI service
   // In cloud mode assets must be served under /builder/ so Next.js rewrite proxy can forward them.
   // Standalone mode uses root path (no proxy).
   base: cloudMode ? '/builder/' : '/',

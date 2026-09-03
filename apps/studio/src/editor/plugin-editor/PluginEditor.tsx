@@ -37,7 +37,6 @@ import Breadcrumb from '@/design-system/Breadcrumb';
 import Button from '@/design-system/Button';
 import { useIsDark } from '@/shared/useIsDark';
 import { trace } from '@/shared/debug-trace';
-import VibeComingSoonGate from '@/editor/ui/VibeComingSoonGate';
 
 interface PluginEditorProps {
   filePath: string;
@@ -358,7 +357,6 @@ function PluginEditorBody({
             <PluginChat code={source} onCodeChange={onSourceChange} />
           </div>
           {/* Whole-pane gate while the in-house agent is offline. */}
-          <VibeComingSoonGate />
         </div>
       </div>
     </div>

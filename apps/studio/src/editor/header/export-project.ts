@@ -14,13 +14,15 @@
 import { toast } from 'sonner';
 import { trace } from '@/shared/debug-trace';
 import { CLOUD_ENABLED } from '@/shared/cloud-flag';
+import { DISK_ENABLED } from '@/shared/disk-flag'; // LOCAL FORK
 import type { ExportFormat } from './ExportDropdown';
 
 /** Whether export is reachable at all. Local mode has no backend to build
  *  the zip, so callers should hide the affordance entirely rather than
- *  offer one that always fails. */
+ *  offer one that always fails. LOCAL FORK: disk mode zips the project
+ *  directory itself (vite-plugins/local-api.ts serves /api/export). */
 export function canExport(): boolean {
-  return CLOUD_ENABLED;
+  return CLOUD_ENABLED || DISK_ENABLED;
 }
 
 /**
