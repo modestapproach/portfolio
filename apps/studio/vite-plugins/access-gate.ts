@@ -147,6 +147,23 @@ function readBody(req: Connect.IncomingMessage, limit = 8 * 1024): Promise<strin
   });
 }
 
+/** The gate's admission test for a request that is NOT an HTTP document
+ *  flow — the Socket.IO handshake. Mirrors the middleware's trust order:
+ *  inert without a token; loopback and tailnet trusted; otherwise the
+ *  cookie planted by the unlock chain must be present and valid. There is
+ *  deliberately no Sec-Fetch-Site path here — that exemption exists for
+ *  iframe subresources on the embed hosts, and the socket is a write
+ *  channel on the editor host. */
+export function isAuthorizedRequest(req: { headers: import('node:http').IncomingHttpHeaders }): boolean {
+  const token = process.env.REVYME_ACCESS_TOKEN ?? '';
+  if (!token) return true;
+  const host = String(req.headers.host ?? '');
+  if (/^(localhost|127\.0\.0\.1)(:\d+)?$/.test(host)) return true;
+  if (TAILNET_HOSTS.has(host.replace(/:\d+$/, ''))) return true;
+  const cookie = readCookie(req.headers.cookie, COOKIE);
+  return cookie !== null && safeEqual(cookie, cookieValueFor(token));
+}
+
 export function accessGate(): Plugin {
   const token = process.env.REVYME_ACCESS_TOKEN ?? '';
   return {

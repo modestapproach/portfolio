@@ -65,6 +65,24 @@ interface Manifest {
 
 const sha1 = (s: string) => crypto.createHash('sha1').update(s).digest('hex');
 
+/** Fan-out hook for the live-sync relay. A full-snapshot save is how canvas
+ *  edits reach the disk (the mutation queue does not route the active page
+ *  through projectFS.writeFile, so the client-side broadcast hook never sees
+ *  them). The server DOES see exactly which files a save changed — the
+ *  manifest hashes — so it tells the relay, which forwards them to every
+ *  other tab. `deviceId` is the saver (from the `x-revyme-device` header) so
+ *  it is not echoed its own write. */
+export interface SaveBroadcast {
+  changed: Record<string, string>;
+  deleted: string[];
+  savedAt: string;
+  deviceId: string | null;
+}
+let saveBroadcaster: ((b: SaveBroadcast) => void) | null = null;
+export function setSaveBroadcaster(fn: ((b: SaveBroadcast) => void) | null): void {
+  saveBroadcaster = fn;
+}
+
 /** Resolve a client-supplied relative path under root, or return null. */
 function safeResolve(root: string, rel: string): string | null {
   if (typeof rel !== 'string' || rel.length === 0 || rel.length > 4096) return null;
@@ -156,6 +174,43 @@ async function writeManifest(root: string, m: Manifest): Promise<void> {
   await fsp.rename(tmp, target);
 }
 
+/** Persist ONE file from the collab relay (a `file-sync` / `file-delete`
+ *  from any connected tab). The relay is the writer of record for live
+ *  edits: a tab that receives a remote write applies it to memory outside
+ *  the mutation queue, so nothing on that tab ever autosaves it — upstream's
+ *  cloud backend persisted these server-side for the same reason. Goes
+ *  through the same write lock and manifest bookkeeping as a full save, so
+ *  the next full-snapshot PUT sees hashes that match the disk and passes
+ *  the conflict check. Refuses when there is no manifest: a live edit must
+ *  never be the thing that seeds a project onto an unmanaged directory.
+ *  `content === null` deletes. Resolves to the new manifest `savedAt` (the
+ *  sync base every connected tab must carry), or null when refused/unsafe. */
+export function persistRemoteFile(rel: string, content: string | null): Promise<string | null> {
+  return withWriteLock(async () => {
+    const root = projectRoot();
+    const prev = await readManifest(root);
+    if (!prev) return null;
+    const abs = safeResolve(root, rel);
+    if (!abs) return null;
+    const files = new Set(prev.files);
+    const hashes = { ...(prev.hashes ?? {}) };
+    if (content === null) {
+      if (!files.has(rel)) return null; // only ever delete what the studio manages
+      try { await fsp.unlink(abs); } catch { /* already gone */ }
+      files.delete(rel);
+      delete hashes[rel];
+    } else {
+      await fsp.mkdir(path.dirname(abs), { recursive: true });
+      await fsp.writeFile(abs, content, 'utf8');
+      files.add(rel);
+      hashes[rel] = sha1(content);
+    }
+    const savedAt = new Date().toISOString();
+    await writeManifest(root, { ...prev, files: [...files].sort(), hashes, savedAt });
+    return savedAt;
+  });
+}
+
 /** GET /__revyme_disk/project → { format, files, settings } | 404 */
 async function handleLoad(res: ServerResponse): Promise<void> {
   const root = projectRoot();
@@ -199,6 +254,8 @@ async function handleLoad(res: ServerResponse): Promise<void> {
     files,
     settings: manifest.settings,
     websiteName: manifest.websiteName ?? null,
+    // The tab's sync base for the staleness gate in handleSave.
+    savedAt: manifest.savedAt ?? null,
   });
 }
 
@@ -209,7 +266,7 @@ async function handleSave(req: Connect.IncomingMessage, res: ServerResponse): Pr
     sendJson(res, 413, { error: 'body too large or unreadable' });
     return;
   }
-  let data: { format?: string; files?: Record<string, string>; settings?: unknown };
+  let data: { format?: string; files?: Record<string, string>; settings?: unknown; baseSavedAt?: string | null };
   try {
     data = JSON.parse(body.toString('utf8'));
   } catch {
@@ -223,6 +280,27 @@ async function handleSave(req: Connect.IncomingMessage, res: ServerResponse): Pr
   }
   const root = projectRoot();
   const prev = await readManifest(root);
+
+  // Staleness gate. A full-snapshot save puts the WHOLE project back on disk,
+  // so a tab that loaded (or last synced) before some other tab saved would
+  // silently revert that tab's work — the manifest-hash check below cannot
+  // see it, because the other tab's save updated the hashes too. Every tab
+  // therefore sends the `savedAt` it last synced to (from its load, its own
+  // last save, or the relay's file-sync broadcasts) and a save that is behind
+  // the disk is refused. A tab from before this check sends no base and is
+  // refused outright — it has to reload once to join the live-sync world.
+  // Real find: a laptop tab reverted a published change this way (2026-09-02).
+  if (prev?.savedAt && !/(?:\?|&)force=1(?:&|$)/.test(req.url ?? '')) {
+    const base = typeof data.baseSavedAt === 'string' ? data.baseSavedAt : null;
+    if (!base) {
+      sendJson(res, 409, { error: 'this studio tab predates live sync', stale: true, conflicts: ['this tab is out of date'] });
+      return;
+    }
+    if (prev.savedAt > base) {
+      sendJson(res, 409, { error: 'project saved elsewhere since this tab last synced', stale: true, conflicts: ['saved elsewhere'] });
+      return;
+    }
+  }
   const nextPaths: string[] = [];
   const hashes: Record<string, string> = {};
 
@@ -318,15 +396,35 @@ async function handleSave(req: Connect.IncomingMessage, res: ServerResponse): Pr
     }
   }
 
+  const savedAt = new Date().toISOString();
   await writeManifest(root, {
     format: data.format ?? 'revyme-v1',
     files: nextPaths.sort(),
     settings: data.settings,
     websiteName: prev?.websiteName,
-    savedAt: new Date().toISOString(),
+    savedAt,
     hashes,
   });
-  sendJson(res, 200, { ok: true, fileCount: nextPaths.length });
+  sendJson(res, 200, { ok: true, fileCount: nextPaths.length, savedAt });
+
+  // Tell the other tabs what this save changed (see SaveBroadcast).
+  if (saveBroadcaster) {
+    const changed: Record<string, string> = {};
+    for (const rel of nextPaths) {
+      if (prev?.hashes?.[rel] !== hashes[rel]) changed[rel] = files[rel];
+    }
+    const deleted = prev ? prev.files.filter((rel) => !(rel in files)) : [];
+    if (Object.keys(changed).length > 0 || deleted.length > 0) {
+      const deviceHeader = req.headers['x-revyme-device'];
+      const deviceId = typeof deviceHeader === 'string' && deviceHeader ? deviceHeader.slice(0, 64) : null;
+      try {
+        saveBroadcaster({ changed, deleted, savedAt, deviceId });
+      } catch (err) {
+        // eslint-disable-next-line no-console
+        console.warn('[disk-project] save broadcast failed', err);
+      }
+    }
+  }
 }
 
 /** POST /__revyme_disk/asset (raw bytes, x-revyme-filename header) → { url } */

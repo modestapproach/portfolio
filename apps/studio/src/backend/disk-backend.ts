@@ -17,6 +17,7 @@ import type { ProjectData } from './types';
 import { LocalBackend } from './local-backend';
 import { trace } from '@/shared/debug-trace';
 import { toast } from 'sonner';
+import { getBaseSavedAt, noteSavedAt, catchUpFromDisk, deviceIdentity } from './disk-sync';
 
 const API = '/__revyme_disk';
 
@@ -54,9 +55,10 @@ export class DiskBackend extends LocalBackend {
         const body = (await res.json().catch(() => null)) as { error?: string } | null;
         throw new Error(body?.error ?? `disk load failed (${res.status})`);
       }
-      const data = (await res.json()) as ProjectData & { websiteName?: string | null };
+      const data = (await res.json()) as ProjectData & { websiteName?: string | null; savedAt?: string | null };
       const fileCount = data?.files ? Object.keys(data.files).length : 0;
       this.loadSucceeded = true;
+      noteSavedAt(data.savedAt); // the base every save from this tab is measured against
       if (fileCount === 0) {
         return null;
       }
@@ -83,14 +85,30 @@ export class DiskBackend extends LocalBackend {
     }
     const res = await fetch(`${API}/project`, {
       method: 'PUT',
-      headers: { 'content-type': 'application/json' },
-      body: JSON.stringify(data),
+      // `x-revyme-device`: who is saving, so the relay's fan-out of this
+      // save skips this tab.
+      headers: { 'content-type': 'application/json', 'x-revyme-device': deviceIdentity().id },
+      // `baseSavedAt`: what this tab last synced to. The server refuses a
+      // snapshot that is behind the disk — see disk-sync.ts.
+      body: JSON.stringify({ ...data, baseSavedAt: getBaseSavedAt() }),
     });
     if (res.status === 409) {
+      const body = (await res.json().catch(() => null)) as { conflicts?: string[]; stale?: boolean } | null;
+      if (body?.stale) {
+        // Another tab saved since this one last synced. Take the disk's
+        // state rather than putting ours back over it; the user's local
+        // edits since then are the price of having been out of sync.
+        trace.error('disk-backend:save-stale', { id, base: getBaseSavedAt() });
+        toast.error('Saved elsewhere since this tab last synced — catching up with the disk.', {
+          id: 'disk-conflict',
+          duration: 6000,
+        });
+        void catchUpFromDisk();
+        throw new Error('disk save stale');
+      }
       // Files changed on disk (Claude Code / git / editor) since the studio
       // last saved. Do NOT clobber: tell the user to reload so the external
       // edits flow into the canvas.
-      const body = (await res.json().catch(() => null)) as { conflicts?: string[] } | null;
       const list = body?.conflicts?.slice(0, 3).join(', ') ?? 'files';
       toast.error(`Changed on disk: ${list} — reload the studio to pick the edits up.`, {
         id: 'disk-conflict',
@@ -103,6 +121,8 @@ export class DiskBackend extends LocalBackend {
       trace.error('disk-backend:save-error', { id, status: res.status });
       throw new Error(`disk save failed (${res.status})`);
     }
+    const saved = (await res.json().catch(() => null)) as { savedAt?: string } | null;
+    noteSavedAt(saved?.savedAt);
     trace.action('backend:save-project', {
       id,
       source: 'disk',

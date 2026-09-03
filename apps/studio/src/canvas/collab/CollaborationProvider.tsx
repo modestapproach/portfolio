@@ -26,6 +26,8 @@ import {
 } from 'react';
 import { io, type Socket } from 'socket.io-client';
 import { CLOUD_ENABLED } from '@/shared/cloud-flag';
+import { DISK_ENABLED } from '@/shared/disk-flag'; // LOCAL FORK
+import { catchUpFromDisk, noteSavedAt, deviceIdentity } from '@/backend/disk-sync'; // LOCAL FORK
 import { getProjectId } from '@/backend/project-id';
 import { projectFS, projectVersionAtom } from '@/code/project/project-fs';
 import { syncQueueCode } from '@/code/mutation/mutation-queue';
@@ -42,6 +44,9 @@ import {
 import type { ActiveUser, RemoteCursor, RemoteSelection } from './types';
 
 const SYNC_DEBOUNCE_MS = 50;
+
+// LOCAL FORK: device identity + disk catch-up live in @/backend/disk-sync —
+// shared with the stale-save path in disk-backend.ts.
 
 
 const API_URL = ((import.meta as ImportMeta & { env: Record<string, string> }).env?.VITE_API_URL ?? '').replace(/\/$/, '');
@@ -95,7 +100,10 @@ export function CollaborationProvider({ children }: { children: ReactNode }) {
   // In standalone mode, short-circuit with the no-op context so no
   // socket connection is ever attempted. Cheaper than rendering the
   // full provider with a dead socket.
-  if (!CLOUD_ENABLED) {
+  // LOCAL FORK: disk mode connects too — the editor's own server runs the
+  // relay (vite-plugins/collab-relay.ts), so every tab on the same project
+  // directory shares edits live.
+  if (!CLOUD_ENABLED && !DISK_ENABLED) {
     return <CollaborationContext.Provider value={noopValue}>{children}</CollaborationContext.Provider>;
   }
   return <CloudProvider>{children}</CloudProvider>;
@@ -141,6 +149,7 @@ function CloudProvider({ children }: { children: ReactNode }) {
   // color even when the author isn't currently in the room. The live
   // socket user list only carries ONLINE users; this fills the gap.
   useEffect(() => {
+    if (!CLOUD_ENABLED) return; // LOCAL FORK: no collaborator roster without the cloud backend
     let cancelled = false;
     listCollaborators(websiteId).then((list) => {
       if (cancelled) return;
@@ -164,7 +173,14 @@ function CloudProvider({ children }: { children: ReactNode }) {
   // editor that boots before the socket connects still persists).
   useEffect(() => {
     if (!isConnected) {
-      setIsSaveLeader(true);
+      // LOCAL FORK: in disk mode a DISCONNECTED tab must not lead. The relay
+      // is the writer of record for live edits, and a tab that lost the
+      // socket has also lost every edit made elsewhere since — a full
+      // snapshot autosave from it would put the stale copy back on disk
+      // (the manifest check only catches EXTERNAL edits, not a second
+      // studio tab). Leadership returns with the join ack, after catch-up.
+      // Explicit saves (Ctrl+S, bridge commits) bypass this gate as before.
+      setIsSaveLeader(!DISK_ENABLED);
       return;
     }
     const meIsLeader = self?.id === leader && leader !== null;
@@ -209,7 +225,7 @@ function CloudProvider({ children }: { children: ReactNode }) {
       trace.action('collab:socket-connect', { socketId: socket.id });
       socket.emit(
         'join',
-        { websiteId },
+        { websiteId, device: DISK_ENABLED ? deviceIdentity() : undefined },
         (res: { ok: boolean; users?: ActiveUser[]; leader?: string | null; error?: string }) => {
           if (!res?.ok) {
             trace.error('collab:join-failed', { error: res?.error });
@@ -225,6 +241,8 @@ function CloudProvider({ children }: { children: ReactNode }) {
             users: res.users?.length ?? 0,
             leader: res.leader,
           });
+          // LOCAL FORK: whatever happened on disk while this tab was away.
+          if (DISK_ENABLED) void catchUpFromDisk();
         },
       );
     });
@@ -290,10 +308,16 @@ function CloudProvider({ children }: { children: ReactNode }) {
     // `applyRemoteWrite` / `applyRemoteDelete` paths so projectFS tags
     // the event as `origin: 'remote'` — the broadcast hook below
     // checks that tag and skips re-emitting, avoiding a ping-pong loop.
+    // LOCAL FORK: the relay persisted our own write; advance the sync base.
+    socket.on('file-persisted', ({ savedAt }: { path: string; savedAt?: string }) => {
+      noteSavedAt(savedAt);
+    });
+
     socket.on(
       'file-sync',
-      ({ userId, path, content }: { userId: string; path: string; content: string }) => {
+      ({ userId, path, content, savedAt }: { userId: string; path: string; content: string; savedAt?: string }) => {
         trace.action('collab:apply-remote-write', { from: userId, path, size: content.length });
+        noteSavedAt(savedAt); // LOCAL FORK
         projectFS.applyRemoteWrite(path, content);
         // Bump the version atom so jotai-derived state (codeAtom, etc.)
         // re-reads from projectFS. Mirrors what `modifyProjectFile`
