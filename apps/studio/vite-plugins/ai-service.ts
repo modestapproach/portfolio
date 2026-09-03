@@ -53,9 +53,10 @@ const errMsg = (e: unknown) => (e instanceof Error ? e.message : String(e));
 function models() {
   const def = defaultModel();
   const list = [
+    { id: 'openai/gpt-5.6-terra', label: 'GPT-5.6 Terra', vendor: 'openai', tier: 'standard' },
+    { id: 'openai/gpt-5.6-terra-pro', label: 'GPT-5.6 Terra Pro', vendor: 'openai', tier: 'best' },
     { id: 'z-ai/glm-5.3-flash', label: 'GLM 5.3 Flash', vendor: 'zai', tier: 'fast' },
     { id: 'z-ai/glm-5.3', label: 'GLM 5.3', vendor: 'zai', tier: 'standard' },
-    { id: 'z-ai/glm-4.7-flash', label: 'GLM 4.7 Flash', vendor: 'zai', tier: 'fast' },
   ];
   if (!list.some((m) => m.id === def)) list.unshift({ id: def, label: def, vendor: def.split('/')[0] || 'other', tier: 'standard' });
   return { models: list, defaultModel: def };
