@@ -1,362 +1,324 @@
-// SelectionTool.tsx — Multi-select properties panel.
+// SelectionTool.tsx — "Selection colors" (Figma parity).
 //
-// Aggregates background fills (solid colors + gradients) across every
-// selected node, de-duplicates by exact value, and renders one row per
-// unique value. Editing a row propagates the new value to every selected
-// node that had the old one — so the user can recolor matching elements
-// as a group without touching each one individually.
+// Every distinct color used ANYWHERE inside the current selection — the
+// selected nodes and all their descendants — listed once, most-used first.
+// Works on a single selection too: select the page root and you see every
+// color on the page. Each row:
+//   · a ColorInput — editing it rewrites EVERY usage of that color inside
+//     the selection (one undo step), so a color can be changed without
+//     knowing which layer carries it;
+//   · a usage count;
+//   · a target button — selects the nodes using the color and reveals them
+//     in the layers panel, so the user can find WHERE it lives. Hovering the
+//     row outlines those nodes on the canvas first.
 //
-// COLLAPSED state (compact): one "Colors" row with inline swatch
-//   previews — up to 4 inline; overflow becomes `+N`.
-// EXPANDED state: full list with one SelectionFillRow per unique value
-//   so each is editable. Header carries a `+` / `-` toggle.
-//
-// Each fill row opens a popup with Color / Gradient tabs (same shape as
-// FillControl's Single mode, minus Image / Video — those don't make
-// sense across heterogeneous nodes). Switching tabs clears the other
-// fill type's property so the rendered background matches the active
-// tab.
+// Aggregation lives in selection-colors.ts (pure, tested). Writes route per
+// hit channel: styles through `updateNodeStyles` (which already knows
+// whether the interacting viewport is a replica and lands the value in the
+// right @media band), code-component props through the same
+// setInstanceProp / setResponsiveOverride path ComponentPropsTool uses.
+// Live drag frames patch the DOM only; the code commit runs once on
+// release — the pattern that keeps the picker at 60fps on a multi-node edit.
 
-import { useRef, useState, useEffect } from 'react';
-import { useLivePreview } from '../hooks/useLivePreview';
-import { useAtomValue } from 'jotai';
-import { selectedIdsAtom, getNodeFromCache } from '@/code/stores/store';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { useAtomValue, useSetAtom } from 'jotai';
+import type { CanvasNode } from '@/code/parsing/parser';
+import {
+  selectedIdsAtom, getNodeFromCache,
+  layersRevealRequestAtom, colorMatchHighlightAtom,
+} from '@/code/stores/store';
 import { useNodesComputed } from '@/code/stores/node-family';
-import { ColorSwatch, ToolSegmentedControl, ControlActionRow } from '../controls';
-import ToolPopup from '../ui/ToolPopup';
-import ColorPicker from '../ui/ColorPicker';
-import GradientEditor from '../ui/GradientEditor';
-import { presetTokensAtom } from '@/code/stores/preset-store';
-import { toHexDisplay } from '../ui/color-utils';
+import { containerOverridesAtom } from '@/code/stores/container-query-store';
+import { interactingViewportIdAtom, interactingViewportWidthAtom, isReplicaViewportAtom } from '@/code/stores/viewport-store';
+import { leftPanelAtom } from '@/code/stores/left-panel-store';
+import { projectFS, stableProjectVersionAtom } from '@/code/project/project-fs';
+import { activeFilePathAtom } from '@/code/project/active-file-store';
+import { isComponentFilePath } from '@/code/project/file-path-kind';
+import { modifyProjectFile } from '@/code/project/modify-file';
+import { buildComponentRegistry } from '@/code/components/component-registry';
+import type { ComponentControlDef } from '@/code/components/controls-parser';
+import { setResponsiveOverride } from '@/code/components/instance-prop-overrides';
+import { parseInstanceProps, setInstanceProp } from './ComponentPropsTool/instance-props';
+import { renderCodeComponentDirect } from '@/canvas/CodeComponentHost';
 import { updateNodeStyles, getContentRoot, parseRectCacheKey } from '@/canvas/node-ops';
 import { getCanvasBridge } from '@/canvas/canvas-bridge';
+import { useLivePreview } from '../hooks/useLivePreview';
+import ColorInput from '../controls/ColorInput';
+import ToolSection from '../controls/ToolSection';
+import { ColorSwatch, ControlActionRow } from '../controls';
+import ToolPopup from '../ui/ToolPopup';
+import GradientEditor from '../ui/GradientEditor';
+import { isGhostNodeId } from '@/shared/ghost-id';
 import { trace } from '@/shared/debug-trace';
-import { parseVarRef } from '@/shared/css-utils';
+import { collectSelectionColors, type ColorControlDef, type ColorGroup, type ColorHit } from './selection-colors';
 
-/** Skip these as "no fill" so the aggregation isn't dominated by transparent
- *  defaults the user didn't intentionally set. */
-const EMPTY_VALUES = new Set(['', 'transparent', 'rgba(0, 0, 0, 0)', 'rgba(0,0,0,0)', 'none']);
+/** Rows shown before the list collapses behind "See all N colors". */
+const INLINE_LIMIT = 8;
 
-/** Threshold for inline display in the collapsed row. ≤ this many unique
- *  fills → render every swatch; more than this → render the first 4 and
- *  add `+N`. */
-const INLINE_LIMIT = 4;
+// ─── Writers ─────────────────────────────────────────────────────────────────
 
-interface ColorGroup {
-  /** The exact CSS value the rule applies to. */
-  value: string;
-  /** Node ids that currently render with this value. */
-  nodeIds: string[];
-  /** Whether the value is a gradient (vs. a plain color). */
-  isGradient: boolean;
-}
-
-function isGradientValue(v: string): boolean {
-  return /\b(linear-gradient|radial-gradient|conic-gradient|repeating-)/.test(v);
-}
-
-/** Group selected nodes by their background fill. Reads both
- *  `backgroundColor` (solid colors) AND `background` / `backgroundImage`
- *  (gradients) so the aggregator picks up every authored fill. */
-function aggregateFills(
-  selectedIds: string[],
-  nodes: Map<string, import('@/code/parsing/parser').CanvasNode>,
-): ColorGroup[] {
-  const map = new Map<string, { ids: string[]; isGradient: boolean }>();
-  const collect = (id: string, raw: string | undefined) => {
-    if (!raw || EMPTY_VALUES.has(raw)) return;
-    const existing = map.get(raw);
-    if (existing) existing.ids.push(id);
-    else map.set(raw, { ids: [id], isGradient: isGradientValue(raw) });
-  };
-  for (const id of selectedIds) {
-    const n = getNodeFromCache(id) ?? nodes.get(id);
-    if (!n) continue;
-    collect(id, n.styles?.backgroundColor);
-    const bg = n.styles?.background;
-    if (bg && isGradientValue(bg)) collect(id, bg);
-    const bgImg = n.styles?.backgroundImage;
-    if (bgImg && isGradientValue(bgImg)) collect(id, bgImg);
+/** Split a group's hits into the per-node style maps and the code-component
+ *  prop hits, each of which has its own write path. */
+function partitionHits(hits: ColorHit[], value: string) {
+  const styles = new Map<string, Record<string, string>>();
+  const props: ColorHit[] = [];
+  for (const h of hits) {
+    if (h.channel === 'prop') { props.push(h); continue; }
+    // 'attr' (SVG fill/stroke) is written as the CSS property of the same
+    // name — the cascade prefers it over the presentation attribute, and it
+    // rides the normal per-viewport style routing.
+    const m = styles.get(h.nodeId) ?? {};
+    m[h.prop] = value;
+    styles.set(h.nodeId, m);
   }
-  return Array.from(map.entries())
-    .map(([value, { ids, isGradient }]) => ({ value, nodeIds: ids, isGradient }))
-    .sort((a, b) => b.nodeIds.length - a.nodeIds.length || a.value.localeCompare(b.value));
+  return { styles, props };
 }
 
-/** Fan-out helper — write the same styles map to every id in `ids` via
- *  the standard `updateNodeStyles` path (so per-node replica/variant
- *  routing keeps working). */
-function writeStylesToNodes(ids: string[], styles: Record<string, string>): void {
-  const contentEl = getContentRoot();
-  if (!contentEl) return;
-  for (const id of ids) {
-    updateNodeStyles({ id, styles, contentEl });
-  }
-}
-
-/** LIVE preview — imperative DOM patch only, NO code write. Same `bridge.patchStyles`
- *  fan-out as ControlProvider.updateStyleLive's primary path, but scoped to a specific
- *  group of node ids. Called on every drag frame so multi-select fill/gradient stays
- *  60fps; the code commit (`writeStylesToNodes`) runs ONCE on pointer release. Without
- *  this, the picker's per-frame onChange went straight to `updateNodeStyles` → a queued
- *  mutation → a full page re-parse PER FRAME — exactly the multi-select drag lag. */
-function livePatchToNodes(ids: string[], styles: Record<string, string>): void {
+/** LIVE — DOM patch only, no code write. Fans across every viewport prefix
+ *  the bridge knows about (a base edit shows on every tile). */
+function livePatchStyles(styles: Map<string, Record<string, string>>): void {
   const bridge = getCanvasBridge();
-  // Patch the primary tile + every replica viewport prefix the bridge knows about
-  // (a multi-select fill is a primary/base edit, so it cascades to all tiles).
   const rectCache = (bridge as any).rectCache as Map<string, DOMRect> | undefined;
   const prefixes = new Set<string>(['']);
   if (rectCache) {
-    for (const cacheKey of rectCache.keys()) {
-      const parsed = parseRectCacheKey(cacheKey);
-      if (!parsed) continue;
-      prefixes.add(parsed.vpPrefix);
+    for (const key of rectCache.keys()) {
+      const parsed = parseRectCacheKey(key);
+      if (parsed) prefixes.add(parsed.vpPrefix);
     }
   }
-  for (const id of ids) {
-    for (const prefix of prefixes) bridge.patchStyles(id, prefix, styles);
+  for (const [id, map] of styles) {
+    for (const prefix of prefixes) bridge.patchStyles(id, prefix, map);
   }
 }
 
-// ─── SelectionFillRow ────────────────────────────────────────────────────────
-//
-// One row per unique fill across the multi-select. Renders a clickable pill
-// (swatch + value) and opens a tabbed popup (Color / Gradient) on click. Tab
-// content uses the same ColorPicker / GradientEditor as the Fill control —
-// edits route through `writeStylesToNodes` so the change fans out to every
-// node currently sharing this fill.
+/** COMMIT — one `updateNodeStyles` per node, all synchronously, so the
+ *  history debounce folds the whole group into a single undo entry. */
+function commitStyles(styles: Map<string, Record<string, string>>): void {
+  const contentEl = getContentRoot();
+  if (!contentEl) return;
+  for (const [id, map] of styles) updateNodeStyles({ id, styles: map, contentEl });
+}
 
-type FillTab = 'color' | 'gradient';
+// ─── Icons ───────────────────────────────────────────────────────────────────
 
-function SelectionFillRow({ group, nodeIds }: {
+function TargetIcon() {
+  return (
+    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+      <circle cx="12" cy="12" r="8" />
+      <circle cx="12" cy="12" r="2.5" fill="currentColor" stroke="none" />
+      <line x1="12" y1="2" x2="12" y2="5" />
+      <line x1="12" y1="19" x2="12" y2="22" />
+      <line x1="2" y1="12" x2="5" y2="12" />
+      <line x1="19" y1="12" x2="22" y2="12" />
+    </svg>
+  );
+}
+
+// ─── Rows ────────────────────────────────────────────────────────────────────
+
+interface RowProps {
   group: ColorGroup;
-  /** Captured at render time so the writer doesn't depend on `group`
-   *  re-aggregating mid-edit. */
-  nodeIds: string[];
-}) {
+  onLive: (group: ColorGroup, value: string) => void;
+  onCommit: (group: ColorGroup, value: string) => void;
+  onHover: (group: ColorGroup | null) => void;
+  onSelectUsers: (group: ColorGroup) => void;
+}
+
+function GradientRow({ group, onLive, onCommit }: Pick<RowProps, 'group' | 'onLive' | 'onCommit'>) {
   const btnRef = useRef<HTMLSpanElement>(null);
   const [isOpen, setIsOpen] = useState(false);
-  const [tab, setTab] = useState<FillTab>(group.isGradient ? 'gradient' : 'color');
-  const allTokens = useAtomValue(presetTokensAtom);
-  const colorPresets = allTokens.filter(t => t.category === 'color');
-
-  // Keep the active tab in sync when the group's type flips (e.g. user
-  // switches from color → gradient via tab + commits). Without this the
-  // popup would re-open on the wrong tab next time.
-  useEffect(() => {
-    setTab(group.isGradient ? 'gradient' : 'color');
-  }, [group.isGradient]);
-
-  // Live swatch sync: during a drag the canvas patches imperatively (no code
-  // commit), so `group.value` — parsed from the committed source — stays stale until
-  // release. Mirror the single-node Fill's `livePreviewColor`: the picker's live
-  // callbacks set this, and the swatch/label read it so the panel tracks the drag in
-  // real time. Cleared whenever the committed value lands (group.value changes on the
-  // next re-parse), exactly like FillControl resets on styles.backgroundColor.
   const [livePreview, setLivePreview] = useLivePreview<string>([group.value]);
-
-  const displayValue = livePreview ?? group.value;
-  const showAsGradient = livePreview != null ? tab === 'gradient' : group.isGradient;
-  const swatchStyle = { background: displayValue };
-  const labelText = showAsGradient ? 'Gradient' : toHexDisplay(displayValue);
-
-  // Tab switch is UI-only. Clearing the old fill type here used to
-  // wipe the row's underlying value mid-switch, the aggregator
-  // emitted an empty list, the row unmounted, and the popup flickered
-  // and disappeared — the user saw "tab switch glitches and gradient
-  // can't be applied". Instead, defer the clear until the user
-  // actually commits a value in the NEW tab (see the picker / editor
-  // onChange handlers below — each one writes its own property AND
-  // clears the opposite type in the same `updateNodeStyles` call, so
-  // the swap is atomic and the row stays mounted across it).
-  const handleTabChange = (newTab: FillTab) => {
-    if (newTab === tab) return;
-    trace.action('selection-fill:tab-change', { from: tab, to: newTab, count: nodeIds.length });
-    setTab(newTab);
-  };
-
+  const display = livePreview ?? group.value;
   return (
     <>
       <span ref={btnRef} className="contents">
         <ControlActionRow onClick={() => setIsOpen(true)} className="justify-between">
           <span className="flex items-center gap-2 truncate">
-            <ColorSwatch style={swatchStyle} />
-            <span className="text-xs truncate text-[var(--text-primary)]">{labelText}</span>
+            <ColorSwatch style={{ background: display }} />
+            <span className="text-xs truncate text-[var(--text-primary)]">Gradient</span>
           </span>
         </ControlActionRow>
       </span>
-
-      <ToolPopup
-        isOpen={isOpen}
-        onClose={() => setIsOpen(false)}
-        title={tab === 'color' ? 'Color' : 'Gradient'}
-        anchorRef={btnRef}
-        width={280}
-      >
-        <ToolSegmentedControl
-          value={tab}
-          onChange={(v) => handleTabChange(v as FillTab)}
-          options={[
-            { value: 'color', label: 'Color' },
-            { value: 'gradient', label: 'Gradient' },
-          ]}
-          size="sm"
+      <ToolPopup isOpen={isOpen} onClose={() => setIsOpen(false)} title="Gradient" anchorRef={btnRef} width={280}>
+        <GradientEditor
+          value={group.value}
+          onChange={(css) => onCommit(group, css)}
+          onLiveChange={(css) => { onLive(group, css); setLivePreview(css); }}
+          hideOverlay
         />
-
-        {tab === 'color' && (() => {
-          // Resolve preset references through the token map so the picker
-          // opens on the actual color, not the var() reference.
-          const presetName = group.value.startsWith('var(--')
-            ? parseVarRef(group.value) || ''
-            : '';
-          const resolved = presetName
-            ? (colorPresets.find(t => t.name === presetName)?.value || '#000000')
-            : (group.isGradient ? '#000000' : group.value || '#000000');
-          return (
-            <ColorPicker
-              value={resolved}
-              onChange={(c) => {
-                // LIVE: imperative DOM patch every drag frame, NO code write — 60fps,
-                // and sync this row's panel swatch/label to the dragged color.
-                livePatchToNodes(nodeIds, { backgroundColor: c, background: '', backgroundImage: '' });
-                setLivePreview(c);
-              }}
-              onChangeEnd={(c) => {
-                // COMMIT once on pointer release. Atomic swap: set color, clear gradient
-                // in a single updateStyles call so the aggregator sees the new value WITH
-                // the old gradient already gone (no empty-group intermediate that would
-                // unmount the row).
-                writeStylesToNodes(nodeIds, { backgroundColor: c, background: '', backgroundImage: '' });
-              }}
-              showAlpha
-              colorPresets={colorPresets}
-              onApplyPreset={(varVal) => writeStylesToNodes(nodeIds, {
-                backgroundColor: varVal,
-                background: '',
-                backgroundImage: '',
-              })}
-              activePresetName={presetName || undefined}
-            />
-          );
-        })()}
-
-        {tab === 'gradient' && (
-          <GradientEditor
-            value={group.isGradient ? group.value : ''}
-            onChange={(css) => {
-              // COMMIT on release — GradientEditor fires onChange once on pointer-up
-              // now that onLiveChange is supplied (without it, onChange fell back to
-              // firing per-frame → a code commit every frame, the gradient drag lag).
-              // Atomic swap: gradient on `backgroundImage`, clear `background` shorthand
-              // + `backgroundColor` in one write so the aggregator never sees an empty
-              // intermediate state.
-              writeStylesToNodes(nodeIds, {
-                backgroundImage: css,
-                background: '',
-                backgroundColor: '',
-              });
-            }}
-            onLiveChange={(css) => {
-              // LIVE every drag frame — imperative DOM patch only, no code write (60fps),
-              // and sync this row's panel swatch to the dragged gradient.
-              livePatchToNodes(nodeIds, { backgroundImage: css, background: '', backgroundColor: '' });
-              setLivePreview(css);
-            }}
-            hideOverlay
-          />
-        )}
       </ToolPopup>
     </>
   );
 }
 
+function ColorRow({ group, onLive, onCommit, onHover, onSelectUsers }: RowProps) {
+  const n = group.nodeIds.length;
+  const places = group.hits.length;
+  const countTitle = places === n ? `${n} layer${n === 1 ? '' : 's'}` : `${places} usages on ${n} layer${n === 1 ? '' : 's'}`;
+  return (
+    <div
+      className="flex items-center gap-1.5 w-full min-w-0"
+      onMouseEnter={() => onHover(group)}
+      onMouseLeave={() => onHover(null)}
+    >
+      <div className="flex-1 min-w-0">
+        {group.isGradient ? (
+          <GradientRow group={group} onLive={onLive} onCommit={onCommit} />
+        ) : (
+          <ColorInput
+            value={group.value}
+            onChangeLive={(c) => onLive(group, c)}
+            onChange={(c) => onCommit(group, c)}
+            showAlpha
+          />
+        )}
+      </div>
+      <span className="text-[10px] text-[var(--text-disabled)] tabular-nums w-4 text-right shrink-0 select-none" title={countTitle}>
+        {n}
+      </span>
+      <button
+        onClick={(e) => { e.stopPropagation(); onSelectUsers(group); }}
+        className="w-5 h-5 flex items-center justify-center shrink-0 cursor-pointer text-[var(--text-secondary)] hover:text-[var(--text-primary)] transition-colors"
+        title={`Select ${n} layer${n === 1 ? '' : 's'} using this color`}
+      >
+        <TargetIcon />
+      </button>
+    </div>
+  );
+}
+
+// ─── Tool ────────────────────────────────────────────────────────────────────
+
 export default function SelectionTool() {
   const selectedIds = useAtomValue(selectedIdsAtom);
-  const [isExpanded, setIsExpanded] = useState(false);
+  const vpId = useAtomValue(interactingViewportIdAtom);
+  const vpWidth = useAtomValue(interactingViewportWidthAtom);
+  const isReplica = useAtomValue(isReplicaViewportAtom);
+  const overrides = useAtomValue(containerOverridesAtom);
+  const activeFile = useAtomValue(activeFilePathAtom);
+  const projectVersion = useAtomValue(stableProjectVersionAtom);
+  const setSelectedIds = useSetAtom(selectedIdsAtom);
+  const setLeftPanel = useSetAtom(leftPanelAtom);
+  const setReveal = useSetAtom(layersRevealRequestAtom);
+  const setHighlight = useSetAtom(colorMatchHighlightAtom);
+  const [showAll, setShowAll] = useState(false);
 
-  const groups = useNodesComputed(
-    (nodes) => aggregateFills(selectedIds, nodes),
-    [selectedIds],
+  // Which code-component controls are colors, per component file. Component
+  // MASTER files route instance props through variant branches; the
+  // aggregator stays style-only there.
+  const colorControls = useMemo(() => {
+    if (isComponentFilePath(activeFile)) return null;
+    const byFile = new Map<string, { name: string; props: ColorControlDef[] }>();
+    const walk = (defs: Record<string, ComponentControlDef> | undefined, out: ColorControlDef[]) => {
+      for (const [prop, def] of Object.entries(defs ?? {})) {
+        if (def.type === 'color') out.push({ prop, default: typeof def.default === 'string' ? def.default : undefined });
+        if (def.type === 'group') walk(def.controls, out);
+      }
+    };
+    for (const info of buildComponentRegistry(projectFS).values()) {
+      if (!info.controlsMeta) continue;
+      const props: ColorControlDef[] = [];
+      walk(info.controlsMeta.controls, props);
+      if (props.length) byFile.set(info.filePath, { name: info.name, props });
+    }
+    return byFile;
+    // projectVersion is the registry's cache key.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [activeFile, projectVersion]);
+
+  const colorPropsOf = useCallback(
+    (node: CanvasNode) => (node.componentFile ? colorControls?.get(node.componentFile)?.props ?? null : null),
+    [colorControls],
   );
 
-  if (selectedIds.length <= 1) return null;
-  if (groups.length === 0) return null;
+  const groups = useNodesComputed(
+    (nodes) => collectSelectionColors(selectedIds, nodes, { vpWidth, overrides, colorPropsOf }),
+    [selectedIds, vpWidth, overrides, colorPropsOf],
+  );
 
-  const compactGroups = groups.slice(0, INLINE_LIMIT);
-  const overflow = groups.length - compactGroups.length;
+  // Never leave a stale outline behind when the panel goes away.
+  useEffect(() => () => setHighlight(null), [setHighlight]);
+
+  const onLive = useCallback((group: ColorGroup, value: string) => {
+    const { styles, props } = partitionHits(group.hits, value);
+    livePatchStyles(styles);
+    for (const h of props) renderCodeComponentDirect(h.nodeId, { [h.prop]: value }, isReplica ? vpWidth : undefined);
+  }, [isReplica, vpWidth]);
+
+  const onCommit = useCallback((group: ColorGroup, value: string) => {
+    trace.action('selection-colors:commit', { from: group.key, to: value, hits: group.hits.length, nodes: group.nodeIds.length });
+    const { styles, props } = partitionHits(group.hits, value);
+    commitStyles(styles);
+    if (props.length && colorControls) {
+      modifyProjectFile(activeFile, (code) => {
+        let next = code;
+        for (const h of props) {
+          const file = getNodeFromCache(h.nodeId)?.componentFile;
+          const comp = file ? colorControls.get(file) : undefined;
+          if (!comp) continue;
+          if (isReplica) {
+            const base = parseInstanceProps(next, h.nodeId, comp.name).get(h.prop) ?? null;
+            next = setResponsiveOverride(next, h.nodeId, comp.name, vpWidth, h.prop, value, base);
+          } else {
+            next = setInstanceProp(next, h.nodeId, comp.name, h.prop, value);
+          }
+        }
+        return next;
+      });
+    }
+  }, [activeFile, colorControls, isReplica, vpWidth]);
+
+  const onHover = useCallback((group: ColorGroup | null) => {
+    setHighlight(group ? group.nodeIds.map(nodeId => ({ nodeId, vpId })) : null);
+  }, [setHighlight, vpId]);
+
+  const onSelectUsers = useCallback((group: ColorGroup) => {
+    const ids = group.nodeIds.filter(id => !isGhostNodeId(id));
+    if (ids.length === 0) return;
+    trace.action('selection-colors:select-users', { key: group.key, count: ids.length, vpId });
+    setHighlight(null);
+    setLeftPanel('layers');
+    setSelectedIds(ids);
+    setReveal({ nodeIds: ids, vpId, nonce: Date.now() });
+  }, [setHighlight, setLeftPanel, setSelectedIds, setReveal, vpId]);
+
+  if (selectedIds.length === 0 || groups.length === 0) return null;
+
+  const visible = showAll ? groups : groups.slice(0, INLINE_LIMIT);
+  const hidden = groups.length - visible.length;
 
   return (
-    <div className="px-2">
-      {/* Header — title + toggle icon. Title click toggles too. */}
-      <div className="mb-1.5 flex items-center justify-between py-1.5">
-        <span
-          onClick={() => setIsExpanded(v => !v)}
-          className="text-xs font-bold text-[var(--text-primary)] cursor-pointer select-none"
-        >
-          Selection
-        </span>
-        <button
-          onClick={() => setIsExpanded(v => !v)}
-          className="flex items-center justify-center cursor-pointer text-[var(--text-primary)] hover:opacity-80 transition-opacity"
-          title={isExpanded ? 'Collapse' : 'Expand'}
-        >
-          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-            <line x1="5" y1="12" x2="19" y2="12" />
-            {!isExpanded && <line x1="12" y1="5" x2="12" y2="19" />}
-          </svg>
-        </button>
+    <ToolSection title="Selection colors">
+      <div className="flex flex-col gap-1.5 w-full">
+        {visible.map(group => (
+          // Keyed by the first usage, not the value: a value-keyed row would
+          // unmount on commit and close the picker under the pointer.
+          <ColorRow
+            key={`${group.hits[0].nodeId}:${group.hits[0].prop}`}
+            group={group}
+            onLive={onLive}
+            onCommit={onCommit}
+            onHover={onHover}
+            onSelectUsers={onSelectUsers}
+          />
+        ))}
+        {hidden > 0 && (
+          <button
+            onClick={() => setShowAll(true)}
+            className="h-7 text-[11px] text-[var(--text-secondary)] hover:text-[var(--text-primary)] cursor-pointer text-left transition-colors"
+          >
+            See all {groups.length} colors
+          </button>
+        )}
+        {showAll && groups.length > INLINE_LIMIT && (
+          <button
+            onClick={() => setShowAll(false)}
+            className="h-7 text-[11px] text-[var(--text-secondary)] hover:text-[var(--text-primary)] cursor-pointer text-left transition-colors"
+          >
+            Show fewer
+          </button>
+        )}
       </div>
-
-      <div className="flex flex-col py-0.5 gap-2 pl-3">
-        <div className="flex items-start justify-between w-full">
-          {/* Label flex-child carries the chevron-gutter geometry DIRECTLY
-              (`w-3/4 pl-[18px] -ml-[18px]`) so its flex footprint matches the
-              Styles rows (Fill/Radius/Margin) — whose labels are the NON-plain
-              `<button>` ControlLabel (ControlLabel.tsx:729), ALSO
-              `w-3/4 pl-[18px] -ml-[18px]` with NO `mr-[2px]`. The `mr-[2px]`
-              shim lives ONLY on the plain `<span>` variant (ControlLabel:189)
-              because an inline `<span>` measures 2px narrower than a
-              `<button>`; a block `<div>` measures like the button, so adding
-              `mr-[2px]` here made the label 2px too WIDE → colors 2px short.
-              (It was ALSO double-wrapped before — an outer `w-3/4` div around a
-              plain ControlLabel that ALSO renders `w-3/4` → ~16px short.)
-              `h-8 items-center` centers the single-line label with the first
-              32-px color row. */}
-          <div className="h-8 flex items-center w-3/4 min-w-0 pl-[18px] -ml-[18px]">
-            <span className="text-xs font-bold text-[var(--text-secondary)] select-none truncate" title="Colors">
-              Colors
-            </span>
-          </div>
-          <div className="flex flex-col gap-1.5 w-full">
-            {isExpanded ? (
-              groups.map(group => (
-                // KEY by `nodeIds[0]`: live edits change `group.value`,
-                // and a value-keyed component would unmount mid-drag and
-                // close the popup. The node id set is stable across
-                // value edits.
-                <SelectionFillRow
-                  key={group.nodeIds[0]}
-                  group={group}
-                  nodeIds={group.nodeIds}
-                />
-              ))
-            ) : (
-              <button
-                onClick={() => setIsExpanded(true)}
-                className="w-full h-[var(--control-height)] flex items-center gap-1.5 px-2 bg-[var(--grid-line)] border border-[var(--control-border)] [--cut-border-color:var(--control-border)] cut-corners cut-border hover:[--cut-border-color:var(--control-border-hover)] hover:border-[var(--control-border-hover)] transition-colors cursor-pointer"
-                title="Click to expand"
-              >
-                {compactGroups.map(g => (
-                  <ColorSwatch key={g.value} style={{ background: g.value }} size="sm" />
-                ))}
-                {overflow > 0 && (
-                  <span className="text-[10px] text-[var(--text-disabled)] ml-auto">+{overflow}</span>
-                )}
-              </button>
-            )}
-          </div>
-        </div>
-      </div>
-    </div>
+    </ToolSection>
   );
 }

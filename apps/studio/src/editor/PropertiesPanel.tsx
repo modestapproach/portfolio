@@ -822,17 +822,16 @@ function PropertiesPanelInner({ isMultiSelect = false }: { isMultiSelect?: boole
           </>
         )}
 
-        {/* 7e. Selection (multi-select only) — aggregated fills across
-            all selected nodes. Placed right above Styles so the user's
-            mental model of "set the color" lands first on the
-            multi-color aggregator, then on per-element overrides
-            below. Returns null on single-select. */}
-        {isMultiSelect && (
-          <>
-            <SelectionTool />
-            <ToolDivider />
-          </>
-        )}
+        {/* 7e. Selection colors — every color used inside the selection
+            (the selected nodes AND their descendants), one row each,
+            editable in place, with a jump to the layers using it. Shows
+            for single selections too, so selecting the page root lists
+            the whole page's palette. Placed right above Styles so "set
+            the color" lands first on the aggregator, then on the
+            per-element controls below. Returns null when nothing in the
+            selection carries a color. */}
+        <SelectionTool />
+        <ToolDivider />
 
         {/* 8. Styles: Fill, Radius, Padding, Margin, Overflow, Opacity.
             Hidden on a templated viewport — those styles belong to the

@@ -1006,6 +1006,18 @@ export const variableModalRequestAtom = atom<VariableModalRequest | null>(null);
  *  re-trigger even when the previous flash already ended. */
 export const componentToolRevealAtom = atom(0);
 
+/** One-shot request from the properties panel to reveal a set of nodes in the
+ *  LAYERS panel: expand their ancestors in the given viewport's tree and
+ *  scroll the first into view. Raised by the "Selection colors" tool's
+ *  select-users action. Nonce so a repeat click on the same set re-fires. */
+export interface LayersRevealRequest { nodeIds: string[]; vpId: string; nonce: number }
+export const layersRevealRequestAtom = atom<LayersRevealRequest | null>(null);
+
+/** Nodes to outline on the canvas while a "Selection colors" row is hovered —
+ *  every node using that color. A list, deliberately separate from the
+ *  scalar `hoveredIdAtom`. Null when nothing is hovered. */
+export const colorMatchHighlightAtom = atom<Array<{ nodeId: string; vpId: string }> | null>(null);
+
 // ─── Async Parse ────────────────────────────────────────────────────────────
 
 let lastParsedCode = _cachedCode;

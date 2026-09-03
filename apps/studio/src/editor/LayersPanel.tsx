@@ -6,7 +6,7 @@
 import React, { useState, useCallback, useRef, useMemo, useEffect, useDeferredValue } from 'react';
 import { useAtomValue, useSetAtom, useAtom } from 'jotai';
 import { overlayEditingIdAtom } from '@/code/stores/overlay-store';
-import { nodesAtom, selectedNodeAtom, selectedIdsAtom, isMapTemplateSelectedAtom, layerDropTargetAtom, nodeTreeStructureVersionAtom, getCachedNodesMap } from '@/code/stores/store';
+import { nodesAtom, selectedNodeAtom, selectedIdsAtom, isMapTemplateSelectedAtom, layerDropTargetAtom, nodeTreeStructureVersionAtom, getCachedNodesMap, layersRevealRequestAtom } from '@/code/stores/store';
 import { activeFilePathAtom, isComponentFilePath, isComponentLikeFilePath, isIconSetFilePath, getLayoutForPage, getLayoutClientPath } from '@/code/project/active-file-store';
 import { flushNow } from '@/code/mutation/mutation-queue';
 import { visibleViewportsAtom, interactingViewportIdAtom, viewportsConfigAtom, viewportWidthsAtom } from '@/code/stores/viewport-store';
@@ -653,6 +653,37 @@ export default function LayersPanel() {
       row.scrollIntoView({ block: 'nearest' });
     }
   }, [selectedLayerId, layers]);
+
+  // Reveal request from the properties panel ("Selection colors" → select the
+  // layers using a color): expand the ancestors of EVERY requested node in the
+  // requested viewport's tree, then hand the first to the auto-scroll effect
+  // above. The canvas-selection effect only walks `selectedIds[0]`; this is
+  // what makes all N matches visible, not just one.
+  const revealRequest = useAtomValue(layersRevealRequestAtom);
+  const revealSeenRef = useRef(0);
+  useEffect(() => {
+    if (!revealRequest || revealRequest.nonce === revealSeenRef.current) return;
+    revealSeenRef.current = revealRequest.nonce;
+    const { nodeIds, vpId } = revealRequest;
+    const toExpand = new Set<string>([`__vp_${vpId}`]);
+    for (const id of nodeIds) {
+      let parentId = nodes.get(id)?.parentId ?? null;
+      while (parentId) {
+        toExpand.add(`${vpId}:${parentId}`);
+        parentId = nodes.get(parentId)?.parentId ?? null;
+      }
+    }
+    trace.action('layers:reveal-request', { count: nodeIds.length, vpId, expanded: toExpand.size });
+    setExpanded(prev => {
+      let changed = false;
+      const next = new Set(prev);
+      for (const id of toExpand) {
+        if (!next.has(id)) { next.add(id); changed = true; }
+      }
+      return changed ? next : prev;
+    });
+    if (nodeIds[0]) setSelectedLayerId(`${vpId}:${nodeIds[0]}`);
+  }, [revealRequest, nodes]);
 
   const toggleExpand = useCallback((id: string) => {
     setExpanded(prev => {
