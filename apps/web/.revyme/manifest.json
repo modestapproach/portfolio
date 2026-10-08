@@ -18,13 +18,13 @@
     "messages/es.json",
     "messages/fr.json"
   ],
-  "savedAt": "2026-10-08T21:07:40.993Z",
+  "savedAt": "2026-10-08T21:10:45.297Z",
   "hashes": {
     "_meta/chat-history.json": "4ea78821dd56644406caa7d702e0f377513ee1de",
     "_meta/page-camera.json": "917787d19faed9857b460aeaafa809e083b2f538",
     "app/globals.css": "41733e65b02434300b36f5bfda6265806432f968",
     "app/layout.tsx": "bade26c3780586cbdf11c15a1ba616cf1cc236d5",
-    "app/page.client.tsx": "8ff019698e885be1a7d6c579a68c802d27b1e61a",
+    "app/page.client.tsx": "3acf67110f5372a59e3d8ac66ecae8be54865b4a",
     "app/page.tsx": "6b8246d8042620af1ab4a867b78f45ff612f7a53",
     "app/providers.tsx": "ed703d8e48a61cbcf04b5921742155cf6634209d",
     "app/work/dibslist/page.client.tsx": "0d849f3e30761064c12db8cbe8bf84f1177d4786",
