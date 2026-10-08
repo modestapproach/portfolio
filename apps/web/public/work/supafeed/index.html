@@ -12,6 +12,7 @@
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=Work+Sans:wght@300..700&display=swap" rel="stylesheet">
 <style>
+.ref span{display:block;line-height:1.45}
 :root{
   --cobalt:#4358CD; --cobalt-deep:#2B3A9E; --navy:#141B4D; --peach:#F0C9B4;
   --ink:#16191C; --body:#2A2E33; --muted:#666C73; --line:#E6E7EB;
@@ -230,6 +231,123 @@ footer .sig{font-size:12px;color:var(--ink)}
   .shot .phone{width:200px}
   .table td:first-child{white-space:normal}
 }
+/* ---- research chapter graphics ---- */
+.stats{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:16px;margin:30px 0 6px}
+.stat{border-radius:22px;padding:24px 20px 22px;text-align:center;background:linear-gradient(160deg,#fff 30%,#EEF1FD);box-shadow:var(--shadow);display:flex;flex-direction:column;align-items:center}
+.stat.dark{background:linear-gradient(170deg,#2E3EA8,#141B4D);color:#E6E9FF}
+.stat .viz{height:112px;width:100%;display:flex;align-items:center;justify-content:center;margin-bottom:10px}
+.stat .big{font-size:58px;line-height:1;font-weight:700;color:var(--cobalt);letter-spacing:-.03em}
+.stat.dark .big{color:#fff}
+.stat .big small{font-size:26px;letter-spacing:0}
+.stat .lbl{font-size:15px;line-height:1.35;color:var(--ink);margin-top:10px}
+.stat.dark .lbl{color:#E6E9FF}
+.stat sup a{font-size:11px;color:var(--muted);text-decoration:none;margin-left:2px}
+.stat.dark sup a{color:#A2AFFF}
+.srcnote{font-size:12px;color:var(--muted);text-align:right;margin:6px 4px 0}
+
+.chapter{margin-top:80px;padding:64px 0 10px;background:linear-gradient(180deg,#F4F6FE 0,#fff 420px)}
+.chapter .eyebrow{display:inline-block;font-size:12px;font-weight:700;letter-spacing:.12em;text-transform:uppercase;color:var(--cobalt);background:#fff;border:1px solid #DCE2FB;border-radius:999px;padding:5px 12px;margin-bottom:14px}
+.chapter h2.big{font-size:40px;color:var(--ink);margin-bottom:12px}
+.sub{font-size:13px;font-weight:700;letter-spacing:.1em;text-transform:uppercase;color:var(--cobalt);margin:56px 0 6px}
+.figure{margin-top:26px;margin-bottom:8px}
+.figcap{font-size:13px;line-height:1.45;color:var(--muted);margin-top:12px;text-align:center}
+.scroll-x{overflow-x:auto;-webkit-overflow-scrolling:touch;padding-bottom:6px}
+
+/* journey map */
+.journey{min-width:880px;background:#fff;border-radius:22px;box-shadow:var(--shadow);padding:26px 24px 22px}
+.journey .row{display:grid;grid-template-columns:120px repeat(6,minmax(0,1fr));gap:10px;align-items:start}
+.journey .rh{font-size:11px;font-weight:700;letter-spacing:.08em;text-transform:uppercase;color:var(--muted);padding-top:8px}
+.journey .stage{font-size:13px;font-weight:600;color:#fff;background:var(--cobalt);border-radius:999px;padding:6px 10px;text-align:center}
+.journey .stage.bad{background:#1E2A78}
+.journey .cell{font-size:13px;line-height:1.4;color:var(--body);padding:8px 2px}
+.journey .pain{font-size:12.5px;line-height:1.35;background:#FDE9DF;color:#7A3A1E;border-radius:10px;padding:9px 10px;transform:rotate(-1deg)}
+.journey .pain:nth-child(odd){transform:rotate(1deg)}
+.journey .opp{font-size:12.5px;line-height:1.35;background:var(--tint);color:#26338C;border-radius:10px;padding:9px 10px;font-weight:500}
+.journey .curve{height:110px;position:relative;margin-top:14px}
+.journey svg{width:100%;height:110px;display:block;overflow:visible}
+.journey .div{height:1px;background:var(--line);margin:12px 0}
+
+/* teardown */
+.teardown{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:26px;align-items:start}
+.tshot{position:relative;margin:0}
+.tshot .phone{width:100%;max-width:250px;margin:0 auto}
+.pin{position:absolute;width:26px;height:26px;border-radius:50%;background:#E8613A;color:#fff;font:700 13px/26px "Work Sans",sans-serif;text-align:center;box-shadow:0 0 0 4px rgba(232,97,58,.25),0 4px 10px rgba(0,0,0,.25);z-index:2}
+.tnotes{list-style:none;padding:0;margin:14px 0 0;counter-reset:t}
+.tnotes li{position:relative;padding-left:32px;font-size:14px;line-height:1.45;margin-bottom:9px;color:var(--body)}
+.tnotes li b{color:var(--ink)}
+.tnotes li span.n{position:absolute;left:0;top:0;width:22px;height:22px;border-radius:50%;background:#E8613A;color:#fff;font:700 12px/22px "Work Sans",sans-serif;text-align:center}
+.placeholder{aspect-ratio:9/19.5;border-radius:34px;border:2px dashed #C6CCEB;background:repeating-linear-gradient(135deg,#F6F7FD 0 12px,#EEF1FD 12px 24px);display:flex;flex-direction:column;align-items:center;justify-content:center;text-align:center;color:#5B66A8;font-size:13px;padding:18px;gap:8px}
+.placeholder b{font-size:15px;color:#26338C}
+
+/* matrix */
+.matrix{width:100%;border-collapse:separate;border-spacing:0;font-size:14px;background:#fff;border-radius:18px;box-shadow:var(--shadow);overflow:hidden;min-width:640px}
+.matrix th{font-size:12px;font-weight:600;color:var(--muted);padding:14px 10px;text-align:center;border-bottom:1px solid var(--line)}
+.matrix th:first-child,.matrix td:first-child{text-align:left;padding-left:18px;width:34%}
+.matrix th.us{color:#fff;background:var(--cobalt)}
+.matrix td{padding:13px 10px;border-bottom:1px solid #F0F1F4;text-align:center;color:var(--ink)}
+.matrix td:first-child{font-weight:500}
+.matrix td.us{background:#F1F3FD}
+.matrix tr:last-child td{border-bottom:0}
+.dot{display:inline-block;width:14px;height:14px;border-radius:50%;vertical-align:middle}
+.dot.y{background:var(--cobalt)} .dot.p{background:linear-gradient(90deg,var(--cobalt) 50%,#D9DEF7 50%)} .dot.n{background:#fff;box-shadow:inset 0 0 0 2px #C9CED8}
+.legend{display:flex;gap:18px;justify-content:center;font-size:12px;color:var(--muted);margin-top:12px;flex-wrap:wrap}
+.legend span{display:inline-flex;align-items:center;gap:6px}
+
+/* 2x2 */
+.quad svg{width:100%;height:auto;display:block}
+.quad text{font-family:"Work Sans",sans-serif}
+
+/* affinity */
+.affinity{display:grid;grid-template-columns:repeat(6,minmax(0,1fr));gap:14px;min-width:960px}
+.cluster{background:#fff;border-radius:18px;box-shadow:var(--shadow);padding:16px 12px 14px}
+.cluster h5{margin:0 0 4px;font-size:14px;line-height:1.25;color:var(--ink)}
+.cluster .count{font-size:12px;color:var(--muted);margin-bottom:10px}
+.sticky{font-size:12px;line-height:1.3;padding:8px 9px;border-radius:4px;margin-bottom:7px;box-shadow:0 1px 2px rgba(0,0,0,.08);color:#2b2b2b}
+.sticky:nth-child(3n){transform:rotate(-1.2deg)} .sticky:nth-child(3n+1){transform:rotate(.8deg)}
+.c1 .sticky{background:#FFF1B8} .c2 .sticky{background:#FDE0D2} .c3 .sticky{background:#DCE2FB} .c4 .sticky{background:#D9F0E3} .c5 .sticky{background:#E9DDF8} .c6 .sticky{background:#FCE7F0}
+.cluster.top{outline:2px solid var(--cobalt);outline-offset:3px}
+
+/* persona */
+.persona{display:grid;grid-template-columns:240px 1fr;background:#fff;border-radius:24px;box-shadow:var(--shadow);overflow:hidden}
+.persona .side{background:linear-gradient(170deg,#2E3EA8,#141B4D);color:#E6E9FF;padding:26px 22px;display:flex;flex-direction:column;gap:10px}
+.persona .side svg{width:120px;height:120px}
+.persona .side h4{margin:6px 0 0;color:#fff;font-size:22px}
+.persona .side .role{font-size:13px;color:#C9CFF5}
+.persona .side .tags{display:flex;flex-wrap:wrap;gap:6px;margin-top:6px}
+.persona .side .tags span{font-size:11.5px;background:rgba(255,255,255,.12);border-radius:999px;padding:4px 9px}
+.persona .main{padding:24px 26px;display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:20px}
+.persona .main h5{margin:0 0 8px;font-size:13px;letter-spacing:.06em;text-transform:uppercase;color:var(--cobalt)}
+.persona .main ul{margin:0;padding-left:16px;font-size:14px;line-height:1.45}
+.persona .main li{margin-bottom:6px}
+.persona .basis{grid-column:1/-1;font-size:12.5px;color:var(--muted);border-top:1px solid var(--line);padding-top:12px}
+
+/* refs cards */
+.refs{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:12px}
+.ref{background:#fff;border-radius:16px;box-shadow:var(--shadow);padding:16px}
+.ref b{display:block;font-size:15px;color:var(--ink);margin-bottom:6px}
+.ref span{font-size:13.5px;line-height:1.4;color:var(--body)}
+.ref.take{background:var(--cobalt);color:#fff}
+.ref.take b{color:#fff} .ref.take span{color:#DCE2FB}
+
+@media (max-width:980px){
+  .stats{grid-template-columns:repeat(2,minmax(0,1fr))}
+  .refs{grid-template-columns:repeat(2,minmax(0,1fr))}
+  .persona{grid-template-columns:1fr}
+  .persona .main{grid-template-columns:1fr}
+}
+@media (max-width:720px){
+  .chapter h2.big{font-size:31px}
+  .stat .big{font-size:46px}
+  .teardown{grid-template-columns:1fr}
+  .tshot .phone{max-width:230px}
+  .refs{grid-template-columns:1fr}
+  .persona .side{flex-direction:row;flex-wrap:wrap;align-items:center}
+  .persona .side svg{width:72px;height:72px}
+}
+
+.ba{display:grid;grid-template-columns:1fr 1fr;gap:20px}
+.teardown.four{grid-template-columns:repeat(4,minmax(0,1fr))}
+@media (max-width:720px){.ba{grid-template-columns:1fr}.teardown.four{grid-template-columns:1fr 1fr;gap:18px}}
 @media (prefers-reduced-motion:reduce){html{scroll-behavior:auto}}
 </style>
 </head>
@@ -276,6 +394,56 @@ footer .sig{font-size:12px;color:var(--ink)}
   <p>Supafeed is that place. Your own agent fills a private feed, a plan for your day and small dashboards. You read them on your phone, and talk back to the agent from the same app.</p>
 </section>
 
+<div class="wide">
+  <div class="stats" role="list" aria-label="Background numbers">
+    <div class="stat" role="listitem">
+      <div class="viz" aria-hidden="true">
+        <svg viewBox="0 0 220 92" width="200" height="84">
+          <text x="0" y="14" font-size="11" fill="#666C73" font-family="Work Sans">OpenClaw</text>
+          <rect x="0" y="20" width="214" height="22" rx="7" fill="#4358CD"/>
+          <text x="0" y="62" font-size="11" fill="#666C73" font-family="Work Sans">React</text>
+          <rect x="0" y="68" width="137" height="22" rx="7" fill="#CDD4F6"/>
+          <text x="208" y="36" font-size="11" fill="#fff" text-anchor="end" font-family="Work Sans" font-weight="600">391K</text>
+          <text x="131" y="84" font-size="11" fill="#26338C" text-anchor="end" font-family="Work Sans" font-weight="600">251K</text>
+        </svg>
+      </div>
+      <div class="big">391<small>K</small></div>
+      <div class="lbl">GitHub stars for OpenClaw, more than React<sup><a href="#src1">1</a></sup></div>
+    </div>
+    <div class="stat" role="listitem">
+      <div class="viz" aria-hidden="true">
+        <svg viewBox="0 0 220 96" width="200" height="88" id="bubbles33"></svg>
+      </div>
+      <div class="big">33</div>
+      <div class="lbl">chat apps OpenClaw can talk through. Every one is a chat.<sup><a href="#src2">2</a></sup></div>
+    </div>
+    <div class="stat" role="listitem">
+      <div class="viz" aria-hidden="true">
+        <svg viewBox="0 0 220 96" width="200" height="88" id="phones17"></svg>
+      </div>
+      <div class="big">17</div>
+      <div class="lbl">AI agents that live in your text messages, in one roundup<sup><a href="#src3">3</a></sup></div>
+    </div>
+    <div class="stat dark" role="listitem">
+      <div class="viz" aria-hidden="true">
+        <svg viewBox="0 0 220 104" width="200" height="96">
+          <rect x="20" y="2" width="180" height="100" rx="14" fill="rgba(255,255,255,.08)"/>
+          <g fill="#A2AFFF" opacity=".55">
+            <rect x="34" y="16" width="150" height="6" rx="3"/><rect x="34" y="28" width="138" height="6" rx="3"/><rect x="34" y="40" width="152" height="6" rx="3"/>
+            <rect x="34" y="52" width="120" height="6" rx="3"/><rect x="34" y="64" width="146" height="6" rx="3"/><rect x="34" y="76" width="96" height="6" rx="3"/>
+          </g>
+          <text x="140" y="83" font-size="14" fill="#F0C9B4" font-family="Work Sans" font-weight="700">…</text>
+          <text x="186" y="96" font-size="9" fill="#C9CFF5" text-anchor="end" font-family="Work Sans">4,096 / 4,096</text>
+        </svg>
+      </div>
+      <div class="big">4,096</div>
+      <div class="lbl">characters: the most one Telegram message can hold<sup><a href="#src4">4</a></sup></div>
+    </div>
+  </div>
+  <p class="srcnote">Sources at the end of the page.</p>
+</div>
+
+
 <section class="wrap">
   <h2>Where I came in</h2>
   <p>This started as something else. <strong>ClawParty</strong>, which a collaborator and I started in February, was a pre-networking platform: AI agents met each other on their humans' behalf before events. Agents wrote plenty. Nobody, human or agent, needed to read much of it.</p>
@@ -304,7 +472,7 @@ footer .sig{font-size:12px;color:var(--ink)}
 <section class="wrap" id="problem">
   <h2>What was the problem?</h2>
   <p class="problem">People's finds were scattered across chats, and their agents had nowhere better to put them.</p>
-  <p>I was the first user, so I started with myself: every need I'd stated, collected into one list of 41. They ran from <em>"replace morning scrolling with morning strolling"</em> to <em>"feed noise must not pollute the user's wiki or memories."</em> Three themes kept coming up:</p>
+  <p>Three things kept coming up, in my own use and in everything I read:</p>
   <ol class="three">
     <li><strong>A chat is the wrong shape for a find.</strong> An event needs a date, a place, a price and a reminder. A chat message has text.</li>
     <li><strong>The agent has no screen of its own.</strong> It can only talk. It can't lay out a card, so every find arrives looking like every other message.</li>
@@ -344,34 +512,243 @@ footer .sig{font-size:12px;color:var(--ink)}
   <p class="cap">Two users, opposite needs. Most of the design decisions below are about which of the two a screen is for.</p>
 </section>
 
-<section class="wrap" id="research">
-  <h2>What research gave me</h2>
-  <p>Before drawing anything I wanted to know whether this already existed. I scanned nine product families: read-it-later apps (Readwise Reader), feed readers (Feedly, Inoreader), bookmark tools (Karakeep, mymind), algorithmic feeds (Bluesky custom feeds, YouTube) and AI news apps, including Artifact, which its founders shut down in 2024.</p>
-  <p>I compared them on <strong>who does the finding, who owns the result, and where it ends up.</strong> Most answered <em>you find it yourself</em> or <em>a platform's algorithm finds it for everyone</em>. A couple, like Karakeep and Readwise, already let agents in through an API, so agent access alone couldn't be the difference. None was built around your own agent finding events, places and videos and handing them to a feed you own.</p>
-  <p>Then I studied seven products closer and took one lesson from each:</p>
-  <div class="table-wrap"><table class="table t2">
-    <thead><tr><th>Reference</th><th>What I took</th></tr></thead>
-    <tbody>
-      <tr><td>Readwise Reader</td><td>Finite daily editions with a real "you're caught up" state</td></tr>
-      <tr><td>Karakeep</td><td>Agent APIs and tags are table stakes now, so they can't be the differentiator</td></tr>
-      <tr><td>Puddle</td><td>Turn inspiration into something you can act on: places, times, bookings</td></tr>
-      <tr><td>Lateroll</td><td>Private, mixed-media rediscovery is appealing</td></tr>
-      <tr><td>Perplexity, Manus</td><td>Show the schedule, the run history and what happens next</td></tr>
-      <tr><td>Linear's agents</td><td>An agent's work has visible states: waiting, working, needs you, done</td></tr>
-      <tr><td>Lakebed</td><td>One clear entry command, limits up front, docs that unfold as you need them</td></tr>
-    </tbody>
-  </table></div>
-  <p><strong>What fell out of it.</strong> The person needs a calm, finite feed of things they can act on. The agent needs a contract it can fill without guessing. And the space between them needs one rule: <strong>show only what actually happened.</strong></p>
-
-  <h3>Testing my plan without a team</h3>
-  <p>I didn't have colleagues to poke holes in my plans, so I had a second AI agent attack each major plan before it was built. The first review listed eight things to change before coding. Three of them:</p>
-  <ul class="clean">
-    <li>my setup flow pasted a permanent API key into the chat history, breaking my own rule about keys;</li>
-    <li>a sharing feature would have exposed which private item and research topic a public post came from;</li>
-    <li>my plan promised that old items expire, then put off building the job that clears them.</li>
-  </ul>
-  <p>Not every fix landed on time. Key-free pairing replaced the pasted key. A switch that auto-shared a whole hashtag shipped anyway, and I took it out four days later: now a card goes public only when you share that one card. The review's sharpest line became the rule behind that: <strong>a tag an agent adds is a label, not permission to publish.</strong></p>
+<section class="wide" style="padding-top:36px">
+  <div class="wrap" style="padding:0;max-width:640px"><h3 style="margin-top:0">What it's like today</h3>
+  <p>A journey map of one find, from asking to (not) going, as it works when your agent lives in a chat app.</p></div>
+  <div class="figure scroll-x">
+    <div class="journey" role="img" aria-label="Journey map with six stages: ask, agent searches, reply arrives, it scrolls away, Thursday comes, steer. The emotion curve starts hopeful, peaks when the reply arrives, then falls as the find scrolls away and is lost by Thursday, ending at its lowest when you can't see or change what the agent is looking for.">
+      <div class="row">
+        <div class="rh">Stage</div>
+        <div class="stage">Ask</div><div class="stage">Agent searches</div><div class="stage">Reply arrives</div><div class="stage bad">It scrolls away</div><div class="stage bad">Thursday comes</div><div class="stage bad">Steer it</div>
+      </div>
+      <div class="row">
+        <div class="rh">Doing</div>
+        <div class="cell">"Find me something fun this weekend"</div>
+        <div class="cell">Browses for a few minutes, or runs overnight</div>
+        <div class="cell">A long paragraph: five events, two links</div>
+        <div class="cell">Small talk, other tasks and alerts pile on top</div>
+        <div class="cell">"What was that synth night?" Scroll, search, give up</div>
+        <div class="cell">"Stop sending me crypto news." Will it remember?</div>
+      </div>
+      <div class="row">
+        <div class="rh">Feeling</div>
+        <div style="grid-column:2/8" class="curve">
+          <svg viewBox="0 0 720 110" preserveAspectRatio="none" aria-hidden="true">
+            <defs><linearGradient id="jg" x1="0" x2="1"><stop offset="0" stop-color="#4358CD"/><stop offset=".45" stop-color="#4358CD"/><stop offset=".6" stop-color="#E8613A"/><stop offset="1" stop-color="#E8613A"/></linearGradient></defs>
+            <line x1="0" y1="55" x2="720" y2="55" stroke="#E6E7EB" stroke-dasharray="4 4"/>
+            <path d="M60 40 C 120 34, 160 34, 180 38 S 260 12, 300 14 S 380 50, 420 66 S 520 92, 540 94 S 640 100, 660 102" fill="none" stroke="url(#jg)" stroke-width="3.5" stroke-linecap="round"/>
+            <g font-size="20"><text x="50" y="30">🙂</text><text x="168" y="30">⏳</text><text x="288" y="10">😃</text><text x="408" y="62">😐</text><text x="528" y="88">😕</text><text x="646" y="96">😩</text></g>
+          </svg>
+        </div>
+      </div>
+      <div class="div"></div>
+      <div class="row">
+        <div class="rh">Pain</div>
+        <div></div><div class="pain">No idea how long it'll take or if it's working</div><div class="pain">Dates, prices, places are just words</div><div class="pain">Finds mixed with everything else</div><div class="pain">Can't filter "events only"</div><div class="pain">The agent's plan lives in its head</div>
+      </div>
+      <div class="row" style="margin-top:10px">
+        <div class="rh">Opportunity</div>
+        <div></div><div class="opp">Honest status: scheduled, collecting, overdue</div><div class="opp">Typed cards with real details</div><div class="opp">A feed separate from the chat</div><div class="opp">Filters and a finite "caught up"</div><div class="opp">A visible brief you can edit</div>
+      </div>
+    </div>
+  </div>
+  <p class="figcap">Built from my own use and the 41 stated needs. Each opportunity became a feature below.</p>
 </section>
+
+
+
+<section class="chapter" id="research">
+  <div class="wrap">
+    <span class="eyebrow">Background research</span>
+    <h2 class="big">Agents were already finding things. Then they had to text you about it.</h2>
+    <p class="lead">Before designing anything, I wanted to see where an agent's finds end up today, what the best tool for it, OpenClaw's own app, does with them, and whether anyone had built the thing I had in mind.</p>
+
+    <div class="sub">01 · Where people talk to their agents</div>
+    <h3 style="margin-top:4px">The interface is a chat thread</h3>
+    <p>OpenClaw is the most-starred software project on GitHub, and people mostly use it through chat apps: messaging is its main interface, and its docs list 33 of them, from Telegram and WhatsApp to Slack and iMessage. A new wave of agents skips the app entirely; one October 2026 roundup counted 17 assistants that live only in your text messages. The bet is that people don't want another app.</p>
+    <p>So I looked at what a find turns into once it lands in one of those threads.</p>
+  </div>
+
+  <div class="wide figure">
+    <div class="teardown">
+      <figure class="tshot">
+        <div class="placeholder" data-mobbin="telegram-bot-chat"><b>Telegram</b>A bot's long reply with a list of finds<br><small>img/mobbin/telegram-bot-chat.png</small></div>
+        <figcaption class="figcap">Telegram: a find is a paragraph</figcaption>
+      </figure>
+      <figure class="tshot">
+        <div class="placeholder" data-mobbin="telegram-inline-buttons"><b>Telegram</b>A bot message with inline buttons<br><small>img/mobbin/telegram-inline-buttons.png</small></div>
+        <figcaption class="figcap">Telegram: buttons, but only for that one message</figcaption>
+      </figure>
+      <figure class="tshot">
+        <div class="placeholder" data-mobbin="whatsapp-business-chat"><b>WhatsApp</b>A long reply with a link preview<br><small>img/mobbin/whatsapp-business-chat.png</small></div>
+        <figcaption class="figcap">WhatsApp: one link preview, the rest is text</figcaption>
+      </figure>
+    </div>
+  </div>
+  <div class="wrap">
+    <ol class="tnotes">
+      <li><span class="n">1</span><b>A find is a paragraph.</b> Dates, prices and places are just words, so nothing can be sorted, filtered or added to a calendar.</li>
+      <li><span class="n">2</span><b>Long replies hit a ceiling.</b> Telegram cuts a message at 4,096 characters, so a good batch of finds arrives in pieces.</li>
+      <li><span class="n">3</span><b>Buttons forget.</b> A button can carry at most 64 bytes back to the agent, so the agent has to remember what each one meant.</li>
+      <li><span class="n">4</span><b>Everything scrolls.</b> Tuesday's best find sits under Wednesday's small talk, and there's no way to see what the agent is still looking for.</li>
+    </ol>
+
+    <div class="sub">02 · OpenClaw's own app</div>
+    <h3 style="margin-top:4px">OpenClaw's own iPhone app, tested</h3>
+    <p>If chat apps are the wrong container, maybe the agent's own app is the right one. I built the latest OpenClaw iPhone app (v2026.9.9, released the day I tested it), ran it in the simulator against a fresh Gateway, and set it up as a new user would.</p>
+  </div>
+  <div class="wide figure">
+    <div class="teardown four">
+      <figure class="tshot"><div style="position:relative"><div class="phone"><img src="/work/supafeed/img/oc9-02.webp" alt="OpenClaw's Connect Gateway screen: Run this on your gateway host and scan the code, with the command openclaw qr" loading="lazy"></div><span class="pin" style="left:12%;top:45%">1</span></div><figcaption class="figcap">Step one is a terminal command</figcaption></figure>
+      <figure class="tshot"><div style="position:relative"><div class="phone"><img src="/work/supafeed/img/oc9-04.webp" alt="Gateway Details, step 2 of 4: three identical gateways named mini, each marked TLS required with advice about Tailscale Serve HTTPS hosts" loading="lazy"></div><span class="pin" style="left:76%;top:40%">2</span></div><figcaption class="figcap">Three identical gateways, all "TLS required"</figcaption></figure>
+      <figure class="tshot"><div style="position:relative"><div class="phone"><img src="/work/supafeed/img/oc9-quicksetup.webp" alt="Quick Setup sheet: Connect a nearby Gateway, pair this iPhone as a secure node, with Discovery, Gateway, Node and Operator status rows" loading="lazy"></div><span class="pin" style="left:20%;top:53%">3</span></div><figcaption class="figcap">"Pair this iPhone as a secure node"</figcaption></figure>
+      <figure class="tshot"><div style="position:relative"><div class="phone"><img src="/work/supafeed/img/oc9-menu.webp" alt="OpenClaw's sidebar: New Chat, Home, Overview, Usage, Automations, and Sessions" loading="lazy"></div><span class="pin" style="left:62%;top:38%">4</span></div><figcaption class="figcap">Inside: a console, not a place for finds</figcaption></figure>
+    </div>
+  </div>
+  <div class="wrap">
+    <ol class="tnotes">
+      <li><span class="n">1</span><b>Setup starts in a terminal.</b> The first screen asks you to run <code>openclaw qr</code> on the computer your agent lives on, then scan the code.</li>
+      <li><span class="n">2</span><b>Network words before anything useful.</b> TLS, Tailscale Serve, LAN, ports and discovery domains, across four steps. On my network it listed three gateways with the same name and the same warning.</li>
+      <li><span class="n">3</span><b>The same sheet keeps coming back.</b> A Quick Setup sheet offering to "pair this iPhone as a secure node" reappeared every time I returned to the Gateway screen, once per gateway it had found.</li>
+      <li><span class="n">4</span><b>Once you're in, it's an operator's console.</b> Home opens the agent's chat; the other pages are Overview (approvals), Usage, Automations (scheduled jobs) and Sessions. It's built for running an agent, and it does that well. What the agent finds still arrives as messages in that chat.</li>
+    </ol>
+    <p class="note" style="margin-top:18px"><b>What I took from it:</b> OpenClaw's app is for the person <em>operating</em> the agent. Nobody had designed for the person <em>receiving</em> what it finds. That's a different user with a different job, and it became Supafeed's.</p>
+
+
+    <div class="sub">03 · What a find needs</div>
+    <h3 style="margin-top:4px">Capability matrix</h3>
+    <p>I listed what a find needs to be useful and checked each place it could live today.</p>
+  </div>
+  <div class="wide figure scroll-x">
+    <table class="matrix">
+      <thead><tr><th></th><th>Telegram</th><th>WhatsApp</th><th>iMessage</th><th>OpenClaw app</th><th class="us">Supafeed</th></tr></thead>
+      <tbody>
+        <tr><td>Keeps its details (date, place, price)</td><td><span class="dot p" title="Partly"></span></td><td><span class="dot p" title="Partly"></span></td><td><span class="dot p" title="Partly"></span></td><td><span class="dot p" title="Partly"></span></td><td class="us"><span class="dot y" title="Yes"></span></td></tr>
+        <tr><td>Filter by kind (events, food, jobs)</td><td><span class="dot n" title="No"></span></td><td><span class="dot n" title="No"></span></td><td><span class="dot n" title="No"></span></td><td><span class="dot n" title="No"></span></td><td class="us"><span class="dot y" title="Yes"></span></td></tr>
+        <tr><td>A finite "you're caught up" state</td><td><span class="dot n" title="No"></span></td><td><span class="dot n" title="No"></span></td><td><span class="dot n" title="No"></span></td><td><span class="dot n" title="No"></span></td><td class="us"><span class="dot y" title="Yes"></span></td></tr>
+        <tr><td>See what the agent keeps looking for</td><td><span class="dot n" title="No"></span></td><td><span class="dot n" title="No"></span></td><td><span class="dot n" title="No"></span></td><td><span class="dot p" title="Partly: Automations lists scheduled jobs"></span></td><td class="us"><span class="dot y" title="Yes"></span></td></tr>
+        <tr><td>Act on a find (save, calendar, ask)</td><td><span class="dot p" title="Partly"></span></td><td><span class="dot p" title="Partly"></span></td><td><span class="dot n" title="No"></span></td><td><span class="dot p" title="Partly"></span></td><td class="us"><span class="dot y" title="Yes"></span></td></tr>
+        <tr><td>Still findable next week</td><td><span class="dot p" title="Partly"></span></td><td><span class="dot p" title="Partly"></span></td><td><span class="dot p" title="Partly"></span></td><td><span class="dot p" title="Partly"></span></td><td class="us"><span class="dot y" title="Yes"></span></td></tr>
+        <tr><td>Honest status: is the agent actually running?</td><td><span class="dot n" title="No"></span></td><td><span class="dot n" title="No"></span></td><td><span class="dot n" title="No"></span></td><td><span class="dot y" title="Yes"></span></td><td class="us"><span class="dot y" title="Yes"></span></td></tr>
+      </tbody>
+    </table>
+    <div class="legend"><span><i class="dot y"></i>Yes</span><span><i class="dot p"></i>Partly</span><span><i class="dot n"></i>No</span><span>My assessment, October 2026</span></div>
+  </div>
+
+  <div class="wrap">
+    <div class="sub">04 · Who finds it, and who it's for</div>
+    <h3 style="margin-top:4px">A scan of nine product families</h3>
+    <p>I scanned nine families of products that collect things to read or do: read-it-later apps (Readwise Reader), feed readers (Feedly, Inoreader), bookmark tools (Karakeep, mymind), algorithmic feeds (Bluesky custom feeds, YouTube), news digests (Kagi News) and AI news apps, including Artifact, which its founders shut down in 2024. I placed them on two questions: <strong>who does the finding, and who is it for?</strong></p>
+  </div>
+  <div class="wide figure quad">
+    <div style="max-width:760px;margin:0 auto;background:#fff;border-radius:22px;box-shadow:var(--shadow);padding:18px">
+      <svg viewBox="0 0 640 480" role="img" aria-label="Positioning map. Horizontal axis: you find it, to something finds it for you. Vertical axis: for everyone, to just for you. Readwise, Karakeep and feed readers sit top-left; Bluesky feeds, YouTube, Kagi News and Artifact sit bottom-right. An agent in a chat app and Supafeed sit top-right, the quadrant for things found by your own agent, just for you.">
+        <rect x="330" y="30" width="270" height="200" rx="14" fill="#EEF1FD"/>
+        <text x="590" y="52" font-size="12" fill="#4358CD" text-anchor="end" font-weight="600">Found by your own agent, just for you</text>
+        <line x1="60" y1="230" x2="600" y2="230" stroke="#D7DAE2"/>
+        <line x1="330" y1="30" x2="330" y2="430" stroke="#D7DAE2"/>
+        <rect x="60" y="30" width="540" height="400" rx="14" fill="none" stroke="#E6E7EB"/>
+        <text x="60" y="456" font-size="12" fill="#666C73">You find it</text>
+        <text x="600" y="456" font-size="12" fill="#666C73" text-anchor="end">Something finds it for you →</text>
+        <text x="40" y="430" font-size="12" fill="#666C73" transform="rotate(-90 40 430)">For everyone</text>
+        <text x="40" y="30" font-size="12" fill="#666C73" text-anchor="end" transform="rotate(-90 40 30)">Just for you →</text>
+        <g font-size="13" fill="#2A2E33">
+          <circle cx="157" cy="118" r="7" fill="#9AA3B5"/><text x="168" y="122">Readwise Reader</text>
+          <circle cx="125" cy="182" r="7" fill="#9AA3B5"/><text x="136" y="186">Karakeep, mymind</text>
+          <circle cx="233" cy="210" r="7" fill="#9AA3B5"/><text x="244" y="214">Feedly, Inoreader</text>
+          <circle cx="373" cy="302" r="7" fill="#9AA3B5"/><text x="384" y="306">Bluesky feeds</text>
+          <circle cx="481" cy="358" r="7" fill="#9AA3B5"/><text x="470" y="384" text-anchor="middle">YouTube</text>
+          <circle cx="395" cy="382" r="7" fill="#9AA3B5"/><text x="384" y="410" text-anchor="middle">Kagi News</text>
+          <circle cx="481" cy="278" r="7" fill="#9AA3B5"/><text x="492" y="282">Artifact (closed)</text>
+          <circle cx="514" cy="126" r="9" fill="#fff" stroke="#E8613A" stroke-width="2.5"/><text x="500" y="152" text-anchor="middle" fill="#B5603A">Your agent, in a chat app</text>
+          <circle cx="545" cy="78" r="11" fill="#4358CD"/><text x="530" y="83" text-anchor="end" font-weight="700" fill="#4358CD">Supafeed</text>
+        </g>
+        <path d="M514 116 C 520 100, 530 92, 538 86" stroke="#E8613A" stroke-width="1.5" fill="none" stroke-dasharray="3 3"/>
+      </svg>
+    </div>
+    <p class="figcap">Placements are my judgment from the September 2026 scan. Karakeep and Readwise also let agents in through an API, so agent access alone isn't the difference.</p>
+  </div>
+  <div class="wrap">
+    <p>The top-right corner wasn't empty. It was occupied by a chat thread: right quadrant, wrong container. Your own agent was already finding things just for you; the problem was where it put them.</p>
+
+    <div class="sub">05 · What I needed, in my own words</div>
+    <h3 style="margin-top:4px">Affinity map of 41 stated needs</h3>
+    <p>I was the first user, so I started with myself: every need I'd stated across the planning sessions, collected into one list of 41 and then clustered by what each one was really asking for.</p>
+  </div>
+  <div class="wide figure scroll-x">
+    <div class="affinity">
+      <div class="cluster c1"><h5>One place for every kind of find</h5><div class="count">7 needs</div>
+        <div class="sticky">Good stuff is scattered across sites</div><div class="sticky">Keep the good ones</div><div class="sticky">Let the rest expire, without anxiety</div><div class="sticky">Agents should tag things for me</div><div class="sticky">Real # hashtags</div><div class="sticky">Same feed on my laptop</div><div class="sticky">Dense, not padded</div></div>
+      <div class="cluster c2"><h5>Private by default</h5><div class="count">5 needs</div>
+        <div class="sticky">Don't pollute my agent's memory</div><div class="sticky">Some research is secret</div><div class="sticky">Public tags only if I opt in</div><div class="sticky">Share one post, on purpose</div><div class="sticky">Explore stays second</div></div>
+      <div class="cluster c3 top"><h5>The agent does the work</h5><div class="count">11 needs · largest</div>
+        <div class="sticky">Agent fills it, app draws it</div><div class="sticky">Runs on my own agent</div><div class="sticky">"Tell your agent" is enough</div><div class="sticky">No terminal rituals for me</div><div class="sticky">Approve, then back to the chat</div><div class="sticky">Onboard in conversation</div><div class="sticky">It knows what to look for</div><div class="sticky">Visual controls if they help</div><div class="sticky">Keeps filling on schedule</div><div class="sticky">The app can nudge the agent</div><div class="sticky">Taps become real tasks</div></div>
+      <div class="cluster c4"><h5>Feels native</h5><div class="count">6 needs</div>
+        <div class="sticky">Native iPhone is the advantage</div><div class="sticky">A look of its own</div><div class="sticky">Keep the brand line</div><div class="sticky">Same feed in the app instantly</div><div class="sticky">Real views inside chat</div><div class="sticky">Fit inside the chat</div></div>
+      <div class="cluster c5"><h5>Works with any agent, keeps working</h5><div class="count">7 needs</div>
+        <div class="sticky">OpenClaw, Hermes, maybe Muse</div><div class="sticky">A real install command</div><div class="sticky">Pick protocols by job</div><div class="sticky">Don't break later</div><div class="sticky">One clear source of truth</div><div class="sticky">No silent workarounds</div><div class="sticky">Learn from agent apps</div></div>
+      <div class="cluster c6"><h5>Worth coming back to</h5><div class="count">5 needs</div>
+        <div class="sticky">Intent, not an algorithm</div><div class="sticky">Free to start</div><div class="sticky">Cheap paid plan</div><div class="sticky">No surprise crawl bills</div><div class="sticky">Keep people coming back</div></div>
+    </div>
+  </div>
+  <div class="wrap">
+    <p>The biggest cluster wasn't about the feed at all. Eleven of the 41 needs were about <strong>the agent doing the work</strong>: setting itself up, knowing what to look for, and keeping at it. That's what made me treat the agent as a second user rather than a data source.</p>
+
+    <div class="sub">06 · Who it's for first</div>
+    <h3 style="margin-top:4px">Proto-persona</h3>
+    <p>The research narrowed the first audience to one kind of person, so I wrote them down before designing for them.</p>
+  </div>
+  <div class="wide figure">
+    <div class="persona" style="max-width:960px;margin:0 auto">
+      <div class="side">
+        <svg viewBox="0 0 120 120" aria-hidden="true">
+          <circle cx="60" cy="60" r="58" fill="#3A4CC0"/>
+          <circle cx="60" cy="48" r="20" fill="#F0C9B4"/>
+          <path d="M22 104c6-22 22-32 38-32s32 10 38 32" fill="#F0C9B4"/>
+          <path d="M92 26l3 8 8 3-8 3-3 8-3-8-8-3 8-3z" fill="#fff"/>
+        </svg>
+        <div><h4>The delegator</h4><div class="role">Already runs an agent, wants somewhere better to read what it finds</div></div>
+        <div class="tags"><span>Runs OpenClaw</span><span>Talks to it in a chat app</span><span>Pays for a model</span></div>
+      </div>
+      <div class="main">
+        <div><h5>Goals</h5><ul><li>Hand off the looking: events, places, jobs, reading</li><li>Act on a find quickly: save it, calendar it, go</li><li>Keep it private</li></ul></div>
+        <div><h5>Frustrations</h5><ul><li>Good finds get buried in the chat</li><li>Can't tell what the agent is doing or whether it stopped</li><li>Setup means terminals and keys</li></ul></div>
+        <div><h5>Needs from Supafeed</h5><ul><li>Typed cards, not paragraphs</li><li>One-message setup, approve on the phone</li><li>Honest status, and a way to steer</li></ul></div>
+        <div class="basis">Based on the launch audience the research narrowed to: an existing OpenClaw user with a running agent who wants a better personal place to read and act on what it finds. Not a composite of interviews.</div>
+      </div>
+    </div>
+  </div>
+
+  <div class="wrap">
+    <div class="sub">07 · Seven references, one lesson each</div>
+    <h3 style="margin-top:4px">What I borrowed</h3>
+  </div>
+  <div class="wide figure">
+    <div class="refs">
+      <div class="ref"><b>Readwise Reader</b><span>Finite daily editions with a real "you're caught up"</span></div>
+      <div class="ref"><b>Karakeep</b><span>Agent APIs and tags are table stakes, so they can't be the difference</span></div>
+      <div class="ref"><b>Puddle</b><span>Turn inspiration into something you can act on: places, times, bookings</span></div>
+      <div class="ref"><b>Lateroll</b><span>Private, mixed-media rediscovery is appealing</span></div>
+      <div class="ref"><b>Perplexity, Manus</b><span>Show the schedule, the run history and what happens next</span></div>
+      <div class="ref"><b>Linear's agents</b><span>An agent's work has visible states: waiting, working, needs you, done</span></div>
+      <div class="ref"><b>Lakebed</b><span>One clear entry command, limits up front, docs that unfold as you need them</span></div>
+      <div class="ref take"><b>What fell out of it</b><span>A calm, finite feed for the person. An exact contract for the agent. And one rule between them: show only what actually happened.</span></div>
+    </div>
+  </div>
+
+  <div class="wrap">
+    <div class="sub">08 · Testing my plan without a team</div>
+    <h3 style="margin-top:4px">A second AI as red team</h3>
+    <p>I didn't have colleagues to poke holes in my plans, so I had a second AI agent attack each major plan before it was built. The first review listed eight things to change before coding. Three of them:</p>
+    <ul class="clean">
+      <li>my setup flow pasted a permanent API key into the chat history, breaking my own rule about keys;</li>
+      <li>a sharing feature would have exposed which private item and research topic a public post came from;</li>
+      <li>my plan promised that old items expire, then put off building the job that clears them.</li>
+    </ul>
+    <p>Not every fix landed on time. Key-free pairing replaced the pasted key. A switch that auto-shared a whole hashtag shipped anyway, and I took it out four days later: now a card goes public only when you share that one card. The review's sharpest line became the rule behind that: <strong>a tag an agent adds is a label, not permission to publish.</strong></p>
+  </div>
+</section>
+
 
 <section class="band dark">
   <div class="wide">
@@ -390,6 +767,64 @@ footer .sig{font-size:12px;color:var(--ink)}
   </div>
 </section>
 
+<section class="wrap" id="system">
+  <h2>How it fits together</h2>
+  <p>Three loops share one account: you <strong>delegate</strong> what to look for, the agent <strong>discovers</strong> and posts, and you <strong>act</strong> on what it found. Each loop runs through a different part of the system, and the app only claims what it can see.</p>
+</section>
+<section class="wide figure">
+  <div style="background:#fff;border-radius:24px;box-shadow:var(--shadow);padding:22px;max-width:1000px;margin:0 auto" class="scroll-x">
+    <svg viewBox="0 0 960 430" style="min-width:760px;width:100%;height:auto;display:block" role="img" aria-label="System diagram. Left: the person, on the iPhone app and the web. Middle: Supafeed, holding cards, the brief, requests and status. Right: the agent, OpenClaw through a connector or Muse and Hermes through a polling bridge, which searches the web. Arrows: the person edits the brief and taps actions; the agent reads the brief and posts typed cards; Supafeed shows status only from what it saw.">
+      <defs>
+        <marker id="ar" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0L10 5L0 10z" fill="#4358CD"/></marker>
+        <marker id="ar2" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0L10 5L0 10z" fill="#B5603A"/></marker>
+      </defs>
+      <g font-family="Work Sans" font-size="13">
+        <!-- person -->
+        <rect x="20" y="70" width="210" height="290" rx="22" fill="#EEF1FD"/>
+        <text x="125" y="102" text-anchor="middle" font-size="15" font-weight="700" fill="#26338C">You</text>
+        <rect x="52" y="122" width="62" height="118" rx="12" fill="#fff" stroke="#4358CD" stroke-width="2"/><rect x="64" y="136" width="38" height="8" rx="4" fill="#CDD4F6"/><rect x="64" y="152" width="38" height="30" rx="6" fill="#DCE2FB"/><rect x="64" y="190" width="38" height="30" rx="6" fill="#DCE2FB"/>
+        <text x="83" y="260" text-anchor="middle" fill="#2A2E33">iPhone app</text>
+        <rect x="128" y="146" width="80" height="70" rx="8" fill="#fff" stroke="#4358CD" stroke-width="2"/><rect x="138" y="158" width="60" height="8" rx="4" fill="#CDD4F6"/><rect x="138" y="174" width="60" height="30" rx="5" fill="#DCE2FB"/>
+        <text x="168" y="260" text-anchor="middle" fill="#2A2E33">Web</text>
+        <text x="125" y="300" text-anchor="middle" fill="#666C73" font-size="12">Reads, saves, shares,</text>
+        <text x="125" y="316" text-anchor="middle" fill="#666C73" font-size="12">edits the brief, chats</text>
+
+        <!-- supafeed -->
+        <rect x="350" y="40" width="260" height="350" rx="24" fill="#4358CD"/>
+        <text x="480" y="74" text-anchor="middle" font-size="16" font-weight="700" fill="#fff">Supafeed</text>
+        <g fill="#fff">
+          <rect x="374" y="96" width="212" height="52" rx="12" opacity=".14"/><text x="392" y="119" font-weight="600">Typed cards</text><text x="392" y="137" font-size="11.5" fill="#DCE2FB">17 kinds, checked on the way in</text>
+          <rect x="374" y="158" width="212" height="52" rx="12" opacity=".14"/><text x="392" y="181" font-weight="600">The brief</text><text x="392" y="199" font-size="11.5" fill="#DCE2FB">What to look for, how often</text>
+          <rect x="374" y="220" width="212" height="52" rx="12" opacity=".14"/><text x="392" y="243" font-weight="600">Requests</text><text x="392" y="261" font-size="11.5" fill="#DCE2FB">"Find more", "Add to calendar"</text>
+          <rect x="374" y="282" width="212" height="52" rx="12" opacity=".14"/><text x="392" y="305" font-weight="600">Status</text><text x="392" y="323" font-size="11.5" fill="#DCE2FB">From what the server saw</text>
+          <text x="480" y="366" text-anchor="middle" font-size="11.5" fill="#DCE2FB">Chat runs alongside on its own server</text>
+        </g>
+
+        <!-- agent -->
+        <rect x="730" y="70" width="210" height="290" rx="22" fill="#FBF0EA"/>
+        <text x="835" y="102" text-anchor="middle" font-size="15" font-weight="700" fill="#8A4A2C">Your agent</text>
+        <rect x="752" y="122" width="166" height="56" rx="12" fill="#fff"/><text x="768" y="146" font-weight="600" fill="#20262B">OpenClaw</text><text x="768" y="164" font-size="11.5" fill="#666C73">via a connector on its Mac</text>
+        <rect x="752" y="188" width="166" height="56" rx="12" fill="#fff"/><text x="768" y="212" font-weight="600" fill="#20262B">Muse, Hermes</text><text x="768" y="230" font-size="11.5" fill="#666C73">check in about once a minute</text>
+        <circle cx="835" cy="300" r="34" fill="#fff"/><text x="835" y="296" text-anchor="middle" font-size="20">🌐</text><text x="835" y="316" text-anchor="middle" font-size="11" fill="#666C73">the web</text>
+        <line x1="835" y1="244" x2="835" y2="264" stroke="#B5603A" stroke-width="2" marker-end="url(#ar2)"/>
+
+        <!-- arrows person <-> supafeed -->
+        <line x1="232" y1="160" x2="346" y2="160" stroke="#4358CD" stroke-width="2.5" marker-end="url(#ar)"/>
+        <text x="289" y="150" text-anchor="middle" font-size="12" fill="#26338C" font-weight="600">Delegate</text>
+        <line x1="346" y1="270" x2="232" y2="270" stroke="#4358CD" stroke-width="2.5" marker-end="url(#ar)"/>
+        <text x="289" y="292" text-anchor="middle" font-size="12" fill="#26338C" font-weight="600">Act</text>
+        <!-- supafeed <-> agent -->
+        <line x1="612" y1="160" x2="726" y2="160" stroke="#B5603A" stroke-width="2.5" marker-end="url(#ar2)"/>
+        <text x="669" y="150" text-anchor="middle" font-size="12" fill="#8A4A2C" font-weight="600">reads brief</text>
+        <line x1="726" y1="270" x2="612" y2="270" stroke="#B5603A" stroke-width="2.5" marker-end="url(#ar2)"/>
+        <text x="669" y="292" text-anchor="middle" font-size="12" fill="#8A4A2C" font-weight="600">Discover: posts cards</text>
+        <text x="480" y="418" text-anchor="middle" font-size="12" fill="#666C73">Setup: you send the agent one message → it reads supafeed.app/agents.md → you approve a code on your phone</text>
+      </g>
+    </svg>
+  </div>
+</section>
+
+
 <section class="wide" id="features">
   <div class="wrap" style="padding:0;text-align:center;max-width:640px"><h2>Key features</h2></div>
   <div class="features">
@@ -405,6 +840,36 @@ footer .sig{font-size:12px;color:var(--ink)}
   <div class="kicker">Feature 1/4</div>
   <h2>Typed cards</h2>
   <p>A find is not a message. A concert has a date, a venue, a price and a ticket link. A stock story has a ticker and a live price. Paste them into a chat and they all look the same.</p>
+</section>
+
+<div class="wide figure">
+  <div class="ba" style="max-width:960px;margin:0 auto">
+    <div style="background:#EEF0F3;border-radius:22px;padding:22px 20px">
+      <div style="font-size:12px;font-weight:700;letter-spacing:.1em;color:#666C73;margin-bottom:12px">BEFORE · THE SAME FIND IN A CHAT</div>
+      <div style="background:#fff;border-radius:18px 18px 18px 4px;padding:14px 16px;font-size:14px;line-height:1.5;color:#20262B;max-width:94%;box-shadow:0 1px 2px rgba(0,0,0,.06)">
+        Found a few things for this weekend! 🎶<br><br>
+        1. <b>Rooftop modular synth night</b> at The Roof at 18th, Thursday 8pm, $15, you saved two modular synth videos this week so thought you'd like it: https://…<br>
+        2. Bright Hours Coffee is quiet until noon, big tables, Mon–Fri 7–6, 200 Valencia…<br>
+        3. Nvidia is up 2.4% ahead of earnings, you hold 40 shares…<br><br>
+        Want me to add any to your calendar?
+      </div>
+      <div style="font-size:11px;color:#8A8F96;margin:6px 0 0 4px">teds-openclaw · Telegram</div>
+      <ul style="margin:16px 0 0;padding-left:18px;font-size:13.5px;line-height:1.45;color:#2A2E33">
+        <li>Date, place and price are just words</li><li>Three kinds of thing in one bubble</li><li>"Add to calendar" means typing a reply</li><li>Gone under the next message</li>
+      </ul>
+    </div>
+    <div style="background:var(--tint);border-radius:22px;padding:22px 20px">
+      <div style="font-size:12px;font-weight:700;letter-spacing:.1em;color:var(--cobalt);margin-bottom:12px">AFTER · A TYPED CARD</div>
+      <img src="/work/supafeed/img/crop-event-card.webp" alt="The same find as a Supafeed event card: photo, Thursday 8 date tile, Rooftop modular synth night, Today 8 PM, The Roof at 18th, $15, hashtags sf and weekend" style="width:100%;border-radius:16px;box-shadow:0 6px 20px rgba(20,27,77,.12)">
+      <ul style="margin:16px 0 0;padding-left:18px;font-size:13.5px;line-height:1.45;color:#2A2E33">
+        <li>Date, venue and price are fields, so they sort and filter</li><li>One find per card, with its own layout</li><li>Calendar, tickets and directions are buttons</li><li>It stays in Events until the night is over</li>
+      </ul>
+    </div>
+  </div>
+  <p class="figcap">Left is a vector mock-up of a typical agent reply, written from the same card data. Right is the real card.</p>
+</div>
+
+<section class="wrap" style="padding-top:24px">
   <p><strong>What I explored.</strong> In September 2026 there were several ways to let an AI agent show something on a screen. I compared them on one question: who draws the interface, the agent or the app?</p>
   <div class="table-wrap"><table class="table t3">
     <thead><tr><th>Approach</th><th>The agent sends</th><th>Why not</th></tr></thead>
@@ -418,6 +883,29 @@ footer .sig{font-size:12px;color:var(--ink)}
   </table></div>
   <p>Each kind has a short contract: what's required, what's optional and what must never be guessed. An event needs its timing and either a venue or "virtual." A movie card carries IMDb and Rotten Tomatoes scores, and MyAnimeList for anime. The server checks every card against the same contract the agent reads.</p>
 </section>
+
+<div class="wide figure">
+  <div style="background:#fff;border-radius:22px;box-shadow:var(--shadow);padding:16px;max-width:960px;margin:0 auto" class="scroll-x">
+    <div style="position:relative;min-width:720px"><img src="/work/supafeed/img/crop-event-card.webp" alt="" style="position:absolute;left:25%;top:4.26%;width:50%;height:auto;border-radius:12px"><svg viewBox="0 0 1000 470" style="position:relative;width:100%;height:auto;display:block" role="img" aria-label="Anatomy of an event card, with each part labelled by the field it comes from: the header shows kind, agent and age; the photo; a date tile from the timing; the title; time and venue from timing and venue; the price from price; hashtags from the primary tag and tags.">
+      <g font-family="Work Sans" font-size="13" fill="#20262B">
+        <g stroke="#4358CD" stroke-width="1.5" fill="none">
+          <path d="M150 49 H 246"/><path d="M150 316 H 246"/><path d="M150 382 H 246"/>
+          <path d="M754 168 H 830"/><path d="M754 295 H 830"/><path d="M754 330 H 830"/><path d="M754 421 H 830"/>
+        </g>
+        <g fill="#4358CD"><circle cx="250" cy="49" r="4.5"/><circle cx="250" cy="316" r="4.5"/><circle cx="250" cy="382" r="4.5"/><circle cx="750" cy="168" r="4.5"/><circle cx="750" cy="295" r="4.5"/><circle cx="750" cy="330" r="4.5"/><circle cx="750" cy="421" r="4.5"/></g>
+        <text x="142" y="45" text-anchor="end" font-weight="700">Header</text><text x="142" y="61" text-anchor="end" fill="#666C73">kind · agent · age</text>
+        <text x="142" y="312" text-anchor="end" font-weight="700">Date tile</text><text x="142" y="328" text-anchor="end" fill="#666C73">from timing</text>
+        <text x="142" y="378" text-anchor="end" font-weight="700">Price</text><text x="142" y="394" text-anchor="end" fill="#666C73">hidden after 24 h</text>
+        <text x="838" y="164" font-weight="700">Photo</text><text x="838" y="180" fill="#666C73">fetched if missing</text>
+        <text x="838" y="291" font-weight="700">Title</text><text x="838" y="307" fill="#666C73">required</text>
+        <text x="838" y="335" font-weight="700">When · where</text><text x="838" y="351" fill="#666C73">never guessed</text>
+        <text x="838" y="417" font-weight="700">Hashtags</text><text x="838" y="433" fill="#666C73">1 primary + 3–8</text>
+      </g>
+    </svg></div>
+  </div>
+  <p class="figcap">Anatomy of an event card. Every part maps to a field in the contract; the agent never sends layout.</p>
+</div>
+
 
 <section class="band peach">
   <div class="gallery">
@@ -476,6 +964,55 @@ footer .sig{font-size:12px;color:var(--ink)}
     <h3 style="margin-top:0">One question, different paths</h3>
     <p>Agents connect differently. OpenClaw chats through a small connector running beside it (so far, only on my own Mac). Muse lives in a cloud machine that nothing can call into, so it's designed to check in about once a minute through a bridge it builds itself; that bridge isn't running yet. So the intro asks one question first, <strong>"Which agent do you use?"</strong>, and each answer leads to the right setup message and an honest status page.</p>
   </div>
+
+<div class="wide figure">
+  <div style="background:#fff;border-radius:22px;box-shadow:var(--shadow);padding:22px;max-width:1000px;margin:0 auto" class="scroll-x">
+    <svg viewBox="0 0 980 380" style="min-width:780px;width:100%;height:auto;display:block" role="img" aria-label="User flow. Sign in, then the question Which agent do you use. OpenClaw leads to a setup message for feed and chat, approve the code with Face ID, the connector checks in, and chat is ready. Muse or Hermes lead to a setup message for the feed and a polling bridge, approve the code, first cards arrive, and chat checks in about once a minute. Another agent leads to the one-line feed message, approve, first cards. No agent yet leads to a page explaining what you need.">
+      <defs><marker id="fa" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto"><path d="M0 0L10 5L0 10z" fill="#9AA3B5"/></marker></defs>
+      <g font-family="Work Sans" font-size="12.5">
+        <rect x="10" y="160" width="100" height="56" rx="28" fill="#20262B"/><text x="60" y="193" text-anchor="middle" fill="#fff" font-weight="600">Sign in</text>
+        <line x1="112" y1="188" x2="150" y2="188" stroke="#9AA3B5" stroke-width="2" marker-end="url(#fa)"/>
+        <path d="M215 132 L 280 188 L 215 244 L 150 188 Z" fill="#4358CD"/><text x="215" y="184" text-anchor="middle" fill="#fff" font-weight="600">Which agent</text><text x="215" y="200" text-anchor="middle" fill="#fff" font-weight="600">do you use?</text>
+        <!-- branches -->
+        <g stroke="#9AA3B5" stroke-width="2" fill="none">
+          <path d="M280 188 C 310 188, 300 50, 330 50" marker-end="url(#fa)"/>
+          <path d="M280 188 C 310 188, 300 140, 330 140" marker-end="url(#fa)"/>
+          <path d="M280 188 C 310 188, 300 236, 330 236" marker-end="url(#fa)"/>
+          <path d="M280 188 C 310 188, 300 326, 330 326" marker-end="url(#fa)"/>
+        </g>
+        <!-- lanes -->
+        <g>
+          <text x="335" y="34" font-weight="700" fill="#4358CD">OpenClaw</text>
+          <rect x="335" y="40" width="150" height="40" rx="10" fill="#EEF1FD"/><text x="410" y="64" text-anchor="middle">Setup message: feed + chat</text>
+          <rect x="505" y="40" width="140" height="40" rx="10" fill="#EEF1FD"/><text x="575" y="64" text-anchor="middle">Approve code (Face ID)</text>
+          <rect x="665" y="40" width="140" height="40" rx="10" fill="#EEF1FD"/><text x="735" y="64" text-anchor="middle">Connector checks in</text>
+          <rect x="825" y="40" width="140" height="40" rx="20" fill="#4358CD"/><text x="895" y="64" text-anchor="middle" fill="#fff" font-weight="600">Chat ready</text>
+
+          <text x="335" y="124" font-weight="700" fill="#8A4A2C">Muse, Hermes</text>
+          <rect x="335" y="130" width="150" height="40" rx="10" fill="#FBF0EA"/><text x="410" y="154" text-anchor="middle">Message: feed + bridge</text>
+          <rect x="505" y="130" width="140" height="40" rx="10" fill="#FBF0EA"/><text x="575" y="154" text-anchor="middle">Approve code (Face ID)</text>
+          <rect x="665" y="130" width="140" height="40" rx="10" fill="#FBF0EA"/><text x="735" y="154" text-anchor="middle">First cards land</text>
+          <rect x="825" y="130" width="140" height="40" rx="20" fill="#B5603A"/><text x="895" y="148" text-anchor="middle" fill="#fff" font-weight="600" font-size="11.5">Checks in ~1/min</text><text x="895" y="162" text-anchor="middle" fill="#FBF0EA" font-size="10.5">never "ready"</text>
+
+          <text x="335" y="220" font-weight="700" fill="#2A2E33">Another agent</text>
+          <rect x="335" y="226" width="150" height="40" rx="10" fill="#F1F2F5"/><text x="410" y="250" text-anchor="middle">One-line feed message</text>
+          <rect x="505" y="226" width="140" height="40" rx="10" fill="#F1F2F5"/><text x="575" y="250" text-anchor="middle">Approve code</text>
+          <rect x="665" y="226" width="140" height="40" rx="20" fill="#20262B"/><text x="735" y="250" text-anchor="middle" fill="#fff" font-weight="600">First cards</text>
+
+          <text x="335" y="310" font-weight="700" fill="#666C73">No agent yet</text>
+          <rect x="335" y="316" width="290" height="40" rx="10" fill="#fff" stroke="#D7DAE2" stroke-dasharray="4 4"/><text x="480" y="340" text-anchor="middle" fill="#666C73">What you need: OpenClaw or Muse, then come back</text>
+        </g>
+        <g stroke="#C9CED8" stroke-width="1.5">
+          <line x1="487" y1="60" x2="503" y2="60"/><line x1="647" y1="60" x2="663" y2="60"/><line x1="807" y1="60" x2="823" y2="60"/>
+          <line x1="487" y1="150" x2="503" y2="150"/><line x1="647" y1="150" x2="663" y2="150"/><line x1="807" y1="150" x2="823" y2="150"/>
+          <line x1="487" y1="246" x2="503" y2="246"/><line x1="647" y1="246" x2="663" y2="246"/>
+        </g>
+      </g>
+    </svg>
+  </div>
+  <p class="figcap">The intro's user flow. Every path ends on a state the app has seen, not one the agent claims.</p>
+</div>
+
   <div class="gallery">
     <figure class="shot"><div class="phone"><img src="/work/supafeed/img/ios-intro-pick-muse.webp" alt="The intro asks which agent you use: OpenClaw, Muse, Hermes, another agent, or none yet" loading="lazy"></div><figcaption>One question first.</figcaption></figure>
     <figure class="shot"><div class="phone"><img src="/work/supafeed/img/ios-intro-muse-setup.webp" alt="The setup message to send Muse, with Copy and Send buttons" loading="lazy"></div><figcaption>The exact message to send,<br>written for that agent.</figcaption></figure>
@@ -499,6 +1036,28 @@ footer .sig{font-size:12px;color:var(--ink)}
   <p>The agent's clock lives on the agent's own machine, so the app can't change it directly. When you change a task's timing, the app marks the schedule out of date. The next time the agent checks in, it's told to update its own job. The website's editor says so in one line, so nobody thinks a change took effect when it hasn't yet.</p>
   <h3>Never a fake green</h3>
   <p>An agent saying "I've set up a daily job" proves nothing: a test run can work while the unattended job lacks a permission it needs. So an agent's status comes from what the server has <em>seen</em>, in seven states from "Waiting" to "Collecting," and it reads "Scheduled" until one of its scheduled runs actually finishes.</p>
+
+<div class="figure" style="margin-top:18px">
+  <div style="background:#fff;border-radius:22px;box-shadow:var(--shadow);padding:20px 18px">
+    <svg viewBox="0 0 600 410" style="width:100%;height:auto;display:block" role="img" aria-label="Status ladder, checked top to bottom, first match wins: Paused if the agent can't post; Waiting if it has never run and reported no schedule; Not scheduled if it has run but reported no schedule; Failing if the last run failed, was abandoned or overran; Overdue if a run is more than two hours late; Scheduled until a scheduled run has succeeded; otherwise Collecting.">
+      <g font-family="Work Sans" font-size="13">
+        <text x="0" y="16" font-size="12" fill="#666C73">Checked top to bottom. The first rule that matches is what you see.</text>
+        <g transform="translate(0,30)">
+          <rect x="0" y="0" width="128" height="40" rx="20" fill="#9AA3B5"/><text x="64" y="25" text-anchor="middle" fill="#fff" font-weight="600">Paused</text><text x="146" y="25" fill="#2A2E33">You turned off its permission to post</text>
+          <rect x="0" y="52" width="128" height="40" rx="20" fill="#C9CED8"/><text x="64" y="77" text-anchor="middle" fill="#20262B" font-weight="600">Waiting</text><text x="146" y="77" fill="#2A2E33">No schedule reported, never run</text>
+          <rect x="0" y="104" width="128" height="40" rx="20" fill="#C9CED8"/><text x="64" y="129" text-anchor="middle" fill="#20262B" font-weight="600">Not scheduled</text><text x="146" y="129" fill="#2A2E33">It has run, but reported no schedule</text>
+          <rect x="0" y="156" width="128" height="40" rx="20" fill="#E8613A"/><text x="64" y="181" text-anchor="middle" fill="#fff" font-weight="600">Failing</text><text x="146" y="181" fill="#2A2E33">Last run failed, was abandoned or overran its lease</text>
+          <rect x="0" y="208" width="128" height="40" rx="20" fill="#F0A36B"/><text x="64" y="233" text-anchor="middle" fill="#20262B" font-weight="600">Overdue</text><text x="146" y="233" fill="#2A2E33">A run is more than two hours late</text>
+          <rect x="0" y="260" width="128" height="40" rx="20" fill="#A2AFFF"/><text x="64" y="285" text-anchor="middle" fill="#20262B" font-weight="600">Scheduled</text><text x="146" y="285" fill="#2A2E33">Has a schedule, but no <tspan font-weight="700">scheduled</tspan> run has succeeded yet</text>
+          <rect x="0" y="312" width="128" height="40" rx="20" fill="#4358CD"/><text x="64" y="337" text-anchor="middle" fill="#fff" font-weight="600">Collecting</text><text x="146" y="337" fill="#2A2E33">Proven: unattended runs are succeeding</text>
+        </g>
+        <path d="M584 36 L584 380" stroke="#E6E7EB" stroke-width="2"/><path d="M578 372 L584 384 L590 372" fill="#C9CED8"/>
+      </g>
+    </svg>
+  </div>
+  <p class="figcap">Seven states, all derived from runs the server recorded. A manual test run can't turn an agent green.</p>
+</div>
+
 </section>
 
 <section class="band mint">
@@ -519,11 +1078,33 @@ footer .sig{font-size:12px;color:var(--ink)}
   <p>iOS 26's tab bar can't open into a multi-line message box, so I drew my own Liquid Glass bar. The first version broke scrolling and was reverted the same day. The second is built to measurements I read from the running system bar, with nothing estimated. That Saturday, ten commits touched that one file.</p>
   <h3>Learning a gesture rule the hard way</h3>
   <p>Hold-to-talk kept dying a second in, while my finger was still down, and sent nothing. I added a trace to the bar and found the cause: 300 ms into a hold, the app switched to the chat tab, which rebuilt the bar, which removed the button under my finger, so iOS cancelled the touch.</p>
-  <div class="trace" role="img" aria-label="A trace log: hold began, the tab switched to chat after 300 milliseconds, the bar was rebuilt, and the touch was released while the finger was still down">hold   began            source=agentButton
-hold   listening        +300ms
-tab    → ask            bar rebuilt under the finger
-press  <span class="hl">released lifted=false</span>   ← iOS took the touch away</div>
-  <p class="cap" style="margin:-12px 0 22px;padding:0;text-align:left">Reconstructed from the bar's trace. "released lifted=false" is the line quoted in the fix.</p>
+  
+<div class="figure">
+  <div style="background:#fff;border-radius:22px;box-shadow:var(--shadow);padding:20px 18px" class="scroll-x">
+    <svg viewBox="0 0 620 300" style="min-width:540px;width:100%;height:auto;display:block" role="img" aria-label="Gesture timeline. Before: finger down at zero, at 300 milliseconds the app switches to the chat tab and rebuilds the bar under the finger, iOS cancels the touch, and nothing is sent. After: finger down, at 300 milliseconds a listening panel appears above the bar, the bar stays put, the person talks as long as they like, and on release the message is sent and only then does the tab switch.">
+      <g font-family="Work Sans" font-size="12.5">
+        <text x="0" y="18" font-weight="700" fill="#E8613A">BEFORE</text>
+        <line x1="70" y1="60" x2="600" y2="60" stroke="#E6E7EB" stroke-width="2"/>
+        <circle cx="90" cy="60" r="8" fill="#20262B"/><text x="90" y="88" text-anchor="middle">finger down</text>
+        <circle cx="230" cy="60" r="8" fill="#4358CD"/><text x="230" y="40" text-anchor="middle" fill="#4358CD">300 ms</text><text x="230" y="88" text-anchor="middle">switch to chat tab</text><text x="230" y="104" text-anchor="middle" fill="#666C73">bar rebuilt under finger</text>
+        <path d="M370 48 L392 72 M392 48 L370 72" stroke="#E8613A" stroke-width="4" stroke-linecap="round"/><text x="381" y="88" text-anchor="middle" fill="#E8613A" font-weight="600">iOS cancels the touch</text>
+        <rect x="430" y="44" width="160" height="32" rx="16" fill="#FDE9DF"/><text x="510" y="65" text-anchor="middle" fill="#7A3A1E" font-weight="600">nothing sent</text>
+        <path d="M90 60 L 370 60" stroke="#20262B" stroke-width="3"/>
+
+        <text x="0" y="168" font-weight="700" fill="#4358CD">AFTER</text>
+        <line x1="70" y1="210" x2="600" y2="210" stroke="#E6E7EB" stroke-width="2"/>
+        <path d="M90 210 L 470 210" stroke="#20262B" stroke-width="3"/>
+        <circle cx="90" cy="210" r="8" fill="#20262B"/><text x="90" y="238" text-anchor="middle">finger down</text>
+        <circle cx="200" cy="210" r="8" fill="#4358CD"/><text x="200" y="190" text-anchor="middle" fill="#4358CD">300 ms</text><text x="200" y="238" text-anchor="middle">panel appears</text><text x="200" y="254" text-anchor="middle" fill="#666C73">beside, not under</text>
+        <rect x="250" y="196" width="190" height="28" rx="14" fill="#EEF1FD"/><text x="345" y="215" text-anchor="middle" fill="#26338C">talk as long as you like</text>
+        <circle cx="470" cy="210" r="8" fill="#20262B"/><text x="470" y="238" text-anchor="middle">let go</text>
+        <rect x="490" y="194" width="126" height="32" rx="16" fill="#4358CD"/><text x="553" y="215" text-anchor="middle" fill="#fff" font-weight="600">send, then switch</text>
+        <text x="0" y="292" fill="#666C73" font-size="12">Rule: never move, rebuild or reshape the view under a finger. Navigate on release.</text>
+      </g>
+    </svg>
+  </div>
+</div>
+
   <p class="pull">The rule that came out of it: never move, rebuild or reshape the view under a finger. Show feedback beside it, and navigate on release.</p>
   <p>Now a panel appears above the bar while you hold, and the tab changes only when you let go.</p>
   <h3>"Ready" means proven</h3>
@@ -534,6 +1115,7 @@ press  <span class="hl">released lifted=false</span>   ← iOS took the touch aw
   <div class="gallery">
     <figure class="shot"><div class="phone"><img src="/work/supafeed/img/ios-hold.webp" alt="Holding the sparkle button: a panel above the tab bar shows the words being heard, with Release to send, slide up to cancel" loading="lazy"></div><figcaption>Hold ✦ to talk. The words appear<br>beside your finger, not under it.</figcaption></figure>
     <figure class="shot"><div class="phone"><img src="/work/supafeed/img/ios-chat-2.webp" alt="Agent chat: a cafe card inline, a question asking to book a table with Book it and Not now buttons, and a task showing its progress" loading="lazy"></div><figcaption>The agent's chat shows real cards,<br>questions and live progress.</figcaption></figure>
+    <figure class="shot"><div class="phone"><img src="/work/supafeed/img/ios-chat-perm.webp" alt="Agent chat: a permission request to use a saved card for a refundable deposit, with Approve and No, styled differently from questions, and a form asking indoor or outdoor activities" loading="lazy"></div><figcaption>Permissions look different from questions,<br>so you never approve one by accident.</figcaption></figure>
     <figure class="shot"><div class="phone"><img src="/work/supafeed/img/ios-connect-openclaw.webp" alt="The Agent connection sheet for OpenClaw: feed connected, chat setup needed, and the setup message to copy" loading="lazy"></div><figcaption>Each agent's connection sheet<br>states exactly what's working.</figcaption></figure>
   </div>
 </section>
@@ -604,6 +1186,18 @@ press  <span class="hl">released lifted=false</span>   ← iOS took the touch aw
   <p style="display:flex;gap:12px;flex-wrap:wrap"><a class="btn" href="https://supafeed.app/">Visit supafeed.app →</a><a class="btn ghost" href="https://testflight.apple.com/join/CJ72G2F8">Get the iPhone beta</a><a class="btn ghost" href="https://supafeed.app/agents.md">Read agents.md</a></p>
 </section>
 
+
+<section class="wrap" id="sources">
+  <h2 style="font-size:22px;color:var(--ink)">Sources</h2>
+  <ol style="font-size:14px;line-height:1.55;color:var(--muted);padding-left:20px">
+    <li id="src1">GitHub API, openclaw/openclaw and facebook/react star counts, Oct 8, 2026 (391,459 and 250,762).</li>
+    <li id="src2">OpenClaw docs, <a href="https://docs.openclaw.ai/channels">Chat channels</a> (33 listed); <a href="https://en.wikipedia.org/wiki/OpenClaw">Wikipedia</a>: messaging platforms are its main user interface.</li>
+    <li id="src3">TechCrunch, <a href="https://techcrunch.com/2026/10/03/all-the-ai-agents-that-can-live-in-your-text-messages/">"All the AI agents that can live in your text messages"</a>, Oct 3, 2026.</li>
+    <li id="src4">Telegram <a href="https://core.telegram.org/bots/api#sendmessage">Bot API</a>: message text 1–4096 characters; callback data 1–64 bytes.</li>
+    <li>OpenClaw iPhone app v2026.9.9, built from the release tag and tested in the iOS simulator on Oct 8, 2026.</li>
+    <li>Artifact's shutdown: announced by its founders in January 2024.</li>
+  </ol>
+</section>
 </main>
 
 <footer>
@@ -626,6 +1220,20 @@ press  <span class="hl">released lifted=false</span>   ← iOS took the touch aw
     el('text',{x:x+bw/2,y:d[1]>0?y-6:base-6,'text-anchor':'middle','class':'v'},d[1]>0?d[1]:'0');
     el('text',{x:x+bw/2,y:base+18,'text-anchor':'middle'},d[0]);
   });
+})();
+
+(function(){
+  var ns='http://www.w3.org/2000/svg';
+  function el(svg,t,a){var e=document.createElementNS(ns,t);for(var k in a)e.setAttribute(k,a[k]);svg.appendChild(e);return e}
+  var b=document.getElementById('bubbles33');
+  if(b){for(var i=0;i<33;i++){var c=i%11,r=Math.floor(i/11),x=10+c*19,y=10+r*28;
+    el(b,'rect',{x:x,y:y,width:16,height:13,rx:5,fill:i<2?'#4358CD':'#CDD4F6'});
+    el(b,'path',{d:'M'+(x+3)+' '+(y+12)+' l0 5 l5 -5z',fill:i<2?'#4358CD':'#CDD4F6'});}}
+  var p=document.getElementById('phones17');
+  if(p){for(var j=0;j<17;j++){var cc=j%9,rr=Math.floor(j/9),px=14+cc*22,py=8+rr*44;
+    el(p,'rect',{x:px,y:py,width:16,height:30,rx:4,fill:'none',stroke:'#4358CD','stroke-width':1.6});
+    el(p,'rect',{x:px+4,y:py+8,width:8,height:5,rx:2,fill:'#A2AFFF'});
+    el(p,'rect',{x:px+4,y:py+16,width:6,height:5,rx:2,fill:'#4358CD'});}}
 })();
 </script>
 </body>
