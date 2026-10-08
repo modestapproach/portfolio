@@ -154,6 +154,67 @@ export default function Page() {
         gap: '24px'
       }}>
 
+      <a data-id="card-supafeed" data-name="Card · Supafeed" href="/work/supafeed" style={{ width: 'auto', height: 'auto',
+          position: 'relative',
+          flex: '1 1 380px',
+          order: '0',
+          display: 'flex',
+          flexDirection: 'column',
+          backgroundColor: '#fffdf9',
+          border: '1px solid #22201721',
+          borderRadius: '18px',
+          overflow: 'hidden',
+          textDecoration: 'none',
+          color: 'inherit'
+        }}>
+        <div data-id="supafeed-art" data-name="Art" style={{ width: 'auto',
+            position: 'relative',
+            flex: '0 0 auto',
+            order: '0',
+            height: '180px',
+            backgroundColor: '#1E2A78',
+            backgroundImage: 'url(/work/supafeed/img/card.webp)',
+            backgroundSize: 'cover',
+            backgroundPosition: 'center top'
+          }} />
+        <div data-id="supafeed-body" data-name="Body" style={{ width: 'auto', height: 'auto',
+            position: 'relative',
+            flex: '1 0 auto',
+            order: '1',
+            display: 'flex',
+            flexDirection: 'column',
+            gap: '10px',
+            padding: '22px 24px 26px 24px'
+          }}>
+          <p data-id="supafeed-badge" data-name="Badge" style={{ width: 'auto', height: 'auto',
+              position: 'relative',
+              flex: '0 0 auto',
+              order: '0',
+              fontSize: '12px',
+              fontWeight: '600',
+              letterSpacing: '0.1em',
+              textTransform: 'uppercase',
+              color: '#4358CD'
+            }}>AI agent product · iOS + web · 2026</p>
+          <h3 data-id="supafeed-name" data-name="Name" style={{ width: 'auto', height: 'auto',
+              position: 'relative',
+              flex: '0 0 auto',
+              order: '1',
+              fontSize: '24px',
+              fontWeight: '700',
+              color: '#222017'
+            }}>Supafeed</h3>
+          <p data-id="supafeed-desc" data-name="Description" style={{ width: 'auto', height: 'auto',
+              position: 'relative',
+              flex: '0 0 auto',
+              order: '2',
+              fontSize: '15px',
+              lineHeight: '1.55',
+              color: '#665f4e'
+            }}>An app with two users: you, and the AI agent that works for you. Your own agent fills a private feed, a plan for your day and dashboards; you read them in a native iPhone app.</p>
+        </div>
+      </a>
+
       <a data-id="card-dibslist" data-name="Card · Dibslist" href="/work/dibslist" style={{
           position: 'relative',
           flex: '1 1 380px',
