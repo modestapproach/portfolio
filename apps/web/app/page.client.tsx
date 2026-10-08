@@ -44,7 +44,7 @@ export default function Page() {
       [data-id="footer"] { flex-direction: column !important; align-items: stretch !important; justify-content: flex-start !important; gap: 6px !important; padding: 20px 24px 28px 24px !important; }
     }
 `}</style>
-  <div data-id="hero" data-name="Hero" style={{
+  <div data-id="hero" data-name="Hero" style={{ width: 'auto', height: 'auto',
       position: 'relative',
       flex: '0 0 auto',
       order: '0',
@@ -58,7 +58,7 @@ export default function Page() {
         flex: '0 0 auto',
         order: '0'
       }} />
-    <h2 data-id="hero-title" data-name="Headline" style={{
+    <h2 data-id="hero-title" data-name="Headline" style={{ width: 'auto', height: 'auto',
         position: 'relative',
         flex: '0 0 auto',
         order: '1',
@@ -69,7 +69,7 @@ export default function Page() {
         color: '#3a3527',
         maxWidth: '820px'
       }}>Product designer for ambitious software with weird edges and real constraints.</h2>
-    <p data-id="hero-sub" data-name="Subhead" style={{
+    <p data-id="hero-sub" data-name="Subhead" style={{ width: 'auto', height: 'auto',
         position: 'relative',
         flex: '0 0 auto',
         order: '2',
@@ -78,7 +78,7 @@ export default function Page() {
         color: '#665f4e',
         maxWidth: '640px'
       }}>Seven years helping new products become legible, lovable, and ready to ship. Self-driving cars, IOT, social products, AI — and teaching UX design from scratch.</p>
-    <div data-id="hero-facts" data-name="Fact chips" style={{
+    <div data-id="hero-facts" data-name="Fact chips" style={{ width: 'auto', height: 'auto',
         position: 'relative',
         flex: '0 0 auto',
         order: '3',
@@ -88,7 +88,7 @@ export default function Page() {
         flexWrap: 'wrap',
         marginTop: '8px'
       }}>
-      <p data-id="fact-1" data-name="Fact · years" style={{
+      <p data-id="fact-1" data-name="Fact · years" style={{ width: 'auto', height: 'auto',
           position: 'relative',
           flex: '0 0 auto',
           order: '0',
@@ -99,7 +99,7 @@ export default function Page() {
           borderRadius: '999px',
           padding: '8px 16px'
         }}>7 years in product design</p>
-      <p data-id="fact-2" data-name="Fact · 0-1" style={{
+      <p data-id="fact-2" data-name="Fact · 0-1" style={{ width: 'auto', height: 'auto',
           position: 'relative',
           flex: '0 0 auto',
           order: '1',
@@ -110,7 +110,7 @@ export default function Page() {
           borderRadius: '999px',
           padding: '8px 16px'
         }}>0-1 product work</p>
-      <p data-id="fact-3" data-name="Fact · instructor" style={{
+      <p data-id="fact-3" data-name="Fact · instructor" style={{ width: 'auto', height: 'auto',
           position: 'relative',
           flex: '0 0 auto',
           order: '2',
@@ -124,7 +124,7 @@ export default function Page() {
     </div>
   </div>
 
-  <div data-id="work" data-name="Selected work" style={{
+  <div data-id="work" data-name="Selected work" style={{ width: 'auto', height: 'auto',
       position: 'relative',
       flex: '0 0 auto',
       order: '1',
@@ -133,7 +133,7 @@ export default function Page() {
       padding: '24px 96px 96px 96px',
       gap: '28px'
     }}>
-    <h2 data-id="work-title" data-name="Section title" style={{
+    <h2 data-id="work-title" data-name="Section title" style={{ width: 'auto', height: 'auto',
         position: 'relative',
         flex: '0 0 auto',
         order: '0',
@@ -144,7 +144,7 @@ export default function Page() {
         color: '#7d735f'
       }}>Selected work</h2>
 
-    <div data-id="cards" data-name="Project cards" style={{
+    <div data-id="cards" data-name="Project cards" style={{ width: 'auto', height: 'auto',
         position: 'relative',
         flex: '0 0 auto',
         order: '1',
@@ -154,7 +154,7 @@ export default function Page() {
         gap: '24px'
       }}>
 
-      <a data-id="card-dibslist" data-name="Card · Dibslist" href="/work/dibslist" style={{
+      <a data-id="card-dibslist" data-name="Card · Dibslist" href="/work/dibslist" style={{ width: 'auto', height: 'auto',
           position: 'relative',
           flex: '1 1 380px',
           order: '0',
@@ -167,7 +167,7 @@ export default function Page() {
           textDecoration: 'none',
           color: 'inherit'
         }}>
-        <div data-id="dibs-art" data-name="Art" style={{
+        <div data-id="dibs-art" data-name="Art" style={{ width: 'auto',
             position: 'relative',
             flex: '0 0 auto',
             order: '0',
@@ -177,7 +177,7 @@ export default function Page() {
             height: '180px',
             backgroundColor: '#ffffff'
           }}>
-          <p data-id="dibs-art-word" data-name="Art word" style={{
+          <p data-id="dibs-art-word" data-name="Art word" style={{ width: 'auto', height: 'auto',
               position: 'relative',
               flex: '0 0 auto',
               order: '0',
@@ -187,7 +187,7 @@ export default function Page() {
               color: '#f6f0e5'
             }}>Dibslist</p>
         </div>
-        <div data-id="dibs-body" data-name="Body" style={{
+        <div data-id="dibs-body" data-name="Body" style={{ width: 'auto', height: 'auto',
             position: 'relative',
             flex: '1 0 auto',
             order: '1',
@@ -196,7 +196,7 @@ export default function Page() {
             gap: '10px',
             padding: '22px 24px 26px 24px'
           }}>
-          <p data-id="dibs-badge" data-name="Badge" style={{
+          <p data-id="dibs-badge" data-name="Badge" style={{ width: 'auto', height: 'auto',
               position: 'relative',
               flex: '0 0 auto',
               order: '0',
@@ -206,7 +206,7 @@ export default function Page() {
               textTransform: 'uppercase',
               color: '#4a6c56'
             }}>Object-aware checkout · 2026 concept</p>
-          <h3 data-id="dibs-name" data-name="Name" style={{
+          <h3 data-id="dibs-name" data-name="Name" style={{ width: 'auto', height: 'auto',
               position: 'relative',
               flex: '0 0 auto',
               order: '1',
@@ -214,7 +214,7 @@ export default function Page() {
               fontWeight: '700',
               color: '#222017'
             }}>Dibslist</h3>
-          <p data-id="dibs-desc" data-name="Description" style={{
+          <p data-id="dibs-desc" data-name="Description" style={{ width: 'auto', height: 'auto',
               position: 'relative',
               flex: '0 0 auto',
               order: '2',
@@ -225,7 +225,7 @@ export default function Page() {
         </div>
       </a>
 
-      <div data-id="card-reef" data-name="Card · Reef" style={{
+      <div data-id="card-reef" data-name="Card · Reef" style={{ width: 'auto', height: 'auto',
           position: 'relative',
           flex: '1 1 380px',
           order: '1',
@@ -236,7 +236,7 @@ export default function Page() {
           borderRadius: '18px',
           overflow: 'hidden'
         }}>
-        <div data-id="reef-art" data-name="Art" style={{
+        <div data-id="reef-art" data-name="Art" style={{ width: 'auto',
             position: 'relative',
             flex: '0 0 auto',
             order: '0',
@@ -246,7 +246,7 @@ export default function Page() {
             height: '180px',
             backgroundColor: '#ffffff'
           }}>
-          <p data-id="reef-art-word" data-name="Art word" style={{
+          <p data-id="reef-art-word" data-name="Art word" style={{ width: 'auto', height: 'auto',
               position: 'relative',
               flex: '0 0 auto',
               order: '0',
@@ -256,7 +256,7 @@ export default function Page() {
               color: '#ffd166'
             }}>Reef</p>
         </div>
-        <div data-id="reef-body" data-name="Body" style={{
+        <div data-id="reef-body" data-name="Body" style={{ width: 'auto', height: 'auto',
             position: 'relative',
             flex: '1 0 auto',
             order: '1',
@@ -265,7 +265,7 @@ export default function Page() {
             gap: '10px',
             padding: '22px 24px 26px 24px'
           }}>
-          <p data-id="reef-badge" data-name="Badge" style={{
+          <p data-id="reef-badge" data-name="Badge" style={{ width: 'auto', height: 'auto',
               position: 'relative',
               flex: '0 0 auto',
               order: '0',
@@ -275,7 +275,7 @@ export default function Page() {
               textTransform: 'uppercase',
               color: '#8b3a2b'
             }}>macOS utility · in development</p>
-          <h3 data-id="reef-name" data-name="Name" style={{
+          <h3 data-id="reef-name" data-name="Name" style={{ width: 'auto', height: 'auto',
               position: 'relative',
               flex: '0 0 auto',
               order: '1',
@@ -283,7 +283,7 @@ export default function Page() {
               fontWeight: '700',
               color: '#222017'
             }}>Reef</h3>
-          <p data-id="reef-desc" data-name="Description" style={{
+          <p data-id="reef-desc" data-name="Description" style={{ width: 'auto', height: 'auto',
               position: 'relative',
               flex: '0 0 auto',
               order: '2',
@@ -294,7 +294,7 @@ export default function Page() {
         </div>
       </div>
 
-      <div data-id="card-type" data-name="Card · Type experiments" style={{
+      <div data-id="card-type" data-name="Card · Type experiments" style={{ width: 'auto', height: 'auto',
           position: 'relative',
           flex: '1 1 380px',
           order: '2',
@@ -305,7 +305,7 @@ export default function Page() {
           borderRadius: '18px',
           overflow: 'hidden'
         }}>
-        <div data-id="type-art" data-name="Art" style={{
+        <div data-id="type-art" data-name="Art" style={{ width: 'auto',
             position: 'relative',
             flex: '0 0 auto',
             order: '0',
@@ -315,7 +315,7 @@ export default function Page() {
             height: '180px',
             backgroundColor: '#ffffff'
           }}>
-          <p data-id="type-art-word" data-name="Art word" style={{
+          <p data-id="type-art-word" data-name="Art word" style={{ width: 'auto', height: 'auto',
               position: 'relative',
               flex: '0 0 auto',
               order: '0',
@@ -326,7 +326,7 @@ export default function Page() {
               fontFamily: 'ui-monospace, SFMono-Regular, Menlo, monospace'
             }}>Flow</p>
         </div>
-        <div data-id="type-body" data-name="Body" style={{
+        <div data-id="type-body" data-name="Body" style={{ width: 'auto', height: 'auto',
             position: 'relative',
             flex: '1 0 auto',
             order: '1',
@@ -335,7 +335,7 @@ export default function Page() {
             gap: '10px',
             padding: '22px 24px 26px 24px'
           }}>
-          <p data-id="type-badge" data-name="Badge" style={{
+          <p data-id="type-badge" data-name="Badge" style={{ width: 'auto', height: 'auto',
               position: 'relative',
               flex: '0 0 auto',
               order: '0',
@@ -345,7 +345,7 @@ export default function Page() {
               textTransform: 'uppercase',
               color: '#7d1fa0'
             }}>Typography engines · 2026</p>
-          <h3 data-id="type-name" data-name="Name" style={{
+          <h3 data-id="type-name" data-name="Name" style={{ width: 'auto', height: 'auto',
               position: 'relative',
               flex: '0 0 auto',
               order: '1',
@@ -353,7 +353,7 @@ export default function Page() {
               fontWeight: '700',
               color: '#222017'
             }}>Set in advance</h3>
-          <p data-id="type-desc" data-name="Description" style={{
+          <p data-id="type-desc" data-name="Description" style={{ width: 'auto', height: 'auto',
               position: 'relative',
               flex: '0 0 auto',
               order: '2',
@@ -364,7 +364,7 @@ export default function Page() {
         </div>
       </div>
 
-      <div data-id="card-metabob" data-name="Card · Metabob" style={{
+      <div data-id="card-metabob" data-name="Card · Metabob" style={{ width: 'auto', height: 'auto',
           position: 'relative',
           flex: '1 1 380px',
           order: '3',
@@ -375,7 +375,7 @@ export default function Page() {
           borderRadius: '18px',
           overflow: 'hidden'
         }}>
-        <div data-id="meta-art" data-name="Art" style={{
+        <div data-id="meta-art" data-name="Art" style={{ width: 'auto',
             position: 'relative',
             flex: '0 0 auto',
             order: '0',
@@ -385,7 +385,7 @@ export default function Page() {
             height: '180px',
             backgroundColor: '#ffffff'
           }}>
-          <p data-id="meta-art-word" data-name="Art word" style={{
+          <p data-id="meta-art-word" data-name="Art word" style={{ width: 'auto', height: 'auto',
               position: 'relative',
               flex: '0 0 auto',
               order: '0',
@@ -395,7 +395,7 @@ export default function Page() {
               color: '#39ff88'
             }}>Metabob</p>
         </div>
-        <div data-id="meta-body" data-name="Body" style={{
+        <div data-id="meta-body" data-name="Body" style={{ width: 'auto', height: 'auto',
             position: 'relative',
             flex: '1 0 auto',
             order: '1',
@@ -404,7 +404,7 @@ export default function Page() {
             gap: '10px',
             padding: '22px 24px 26px 24px'
           }}>
-          <p data-id="meta-badge" data-name="Badge" style={{
+          <p data-id="meta-badge" data-name="Badge" style={{ width: 'auto', height: 'auto',
               position: 'relative',
               flex: '0 0 auto',
               order: '0',
@@ -414,7 +414,7 @@ export default function Page() {
               textTransform: 'uppercase',
               color: '#4a6c56'
             }}>AI developer tool · previously at</p>
-          <h3 data-id="meta-name" data-name="Name" style={{
+          <h3 data-id="meta-name" data-name="Name" style={{ width: 'auto', height: 'auto',
               position: 'relative',
               flex: '0 0 auto',
               order: '1',
@@ -422,7 +422,7 @@ export default function Page() {
               fontWeight: '700',
               color: '#222017'
             }}>Metabob</h3>
-          <p data-id="meta-desc" data-name="Description" style={{
+          <p data-id="meta-desc" data-name="Description" style={{ width: 'auto', height: 'auto',
               position: 'relative',
               flex: '0 0 auto',
               order: '2',
@@ -436,7 +436,7 @@ export default function Page() {
     </div>
   </div>
 
-  <div data-id="footer" data-name="Footer" style={{
+  <div data-id="footer" data-name="Footer" style={{ width: 'auto', height: 'auto',
       position: 'relative',
       flex: '0 0 auto',
       order: '2',
@@ -447,7 +447,7 @@ export default function Page() {
       padding: '28px 96px 40px 96px',
       borderTop: '1px solid #22201721'
     }}>
-    <p data-id="footer-name" data-name="Footer name" style={{
+    <p data-id="footer-name" data-name="Footer name" style={{ width: 'auto', height: 'auto',
         position: 'relative',
         flex: '0 0 auto',
         order: '0',
@@ -455,16 +455,17 @@ export default function Page() {
         fontWeight: '600',
         color: '#222017'
       }}>Ted Dessert</p>
-    <p data-id="footer-note" data-name="Footer note" style={{
+    <p data-id="footer-note" data-name="Footer note" style={{ width: 'auto', height: 'auto',
         position: 'relative',
         flex: '0 0 auto',
         order: '1',
         fontSize: '13px',
         color: '#7d735f'
-      }}>Designed on my own canvas — this page is real JSX in my repo.</p>
+      }}>Designed on my own canvas. This page is real code in my repo.</p>
   </div>
 
 </div>;
 }
+
 const canvasNodes = <>
   </>;

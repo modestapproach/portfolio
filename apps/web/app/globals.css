@@ -1,5 +1,6 @@
 @import url('https://fonts.googleapis.com/css2?family=Geist+Sans:wght@300;400;500;600;700&display=swap');
 @import url('https://fonts.googleapis.com/css2?family=Index+Variable:wght@300;400;500;600;700&display=swap');
+@import url('https://fonts.googleapis.com/css2?family=Work+Sans:wght@300;400;500;600;700&display=swap');
 /* Modern reset — without this, `width: 100%` + horizontal padding
    blows out the layout because the browser's default box-sizing is
    content-box. Most Next.js starters ship this (or Tailwind preflight).
