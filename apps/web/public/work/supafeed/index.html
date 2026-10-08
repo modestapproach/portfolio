@@ -1,0 +1,632 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Supafeed: designing an app for you and your AI agent · Ted Dessert</title>
+<meta name="description" content="A case study: designing Supafeed, a private feed, day plan and dashboards that your own AI agent fills, read in a native iPhone app.">
+<meta property="og:title" content="Supafeed · a case study by Ted Dessert">
+<meta property="og:description" content="Designing an app with two users: you, and the AI agent that works for you.">
+<meta property="og:image" content="https://teddessert.com/work/supafeed/img/og.png">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Work+Sans:wght@300..700&display=swap" rel="stylesheet">
+<style>
+:root{
+  --cobalt:#4358CD; --cobalt-deep:#2B3A9E; --navy:#141B4D; --peach:#F0C9B4;
+  --ink:#16191C; --body:#2A2E33; --muted:#666C73; --line:#E6E7EB;
+  --ivory:#F7F4EE; --tint:#EEF1FD; --peach-tint:#FBF0EA; --mint-tint:#ECF6F1; --sky-tint:#EAF4FB;
+  --card:#fff; --shadow:0 1px 2px rgba(20,27,77,.05),0 8px 28px rgba(20,27,77,.08);
+}
+*{box-sizing:border-box}
+html{scroll-behavior:smooth}
+body{margin:0;background:#fff;color:var(--body);font:400 18px/1.6 "Work Sans",system-ui,-apple-system,sans-serif;-webkit-font-smoothing:antialiased}
+img{max-width:100%;display:block}
+a{color:var(--cobalt)}
+h1,h2,h3{color:var(--ink);margin:0}
+h2{font-size:32px;line-height:1.15;font-weight:700;letter-spacing:-.01em;color:var(--cobalt);margin:0 0 18px}
+h3{font-size:22px;line-height:1.25;font-weight:600;margin:28px 0 8px}
+p{margin:0 0 16px}
+strong{color:var(--ink);font-weight:600}
+.wrap{max-width:640px;margin:0 auto;padding:0 20px}
+.wide{max-width:1080px;margin:0 auto;padding:0 20px}
+section,section.wrap,section.wide{padding-top:72px}
+section.band{padding-top:56px}
+.kicker{font-size:14px;font-weight:600;letter-spacing:.02em;color:var(--muted);margin-bottom:6px}
+.lead{font-size:20px;line-height:1.55;color:var(--ink)}
+
+/* nav */
+.nav{position:fixed;top:16px;left:50%;transform:translateX(-50%);z-index:20;width:min(760px,calc(100% - 32px));display:flex;justify-content:space-between;align-items:center;gap:12px;padding:10px 12px 10px 22px;background:rgba(255,255,255,.86);backdrop-filter:blur(14px);-webkit-backdrop-filter:blur(14px);border:1px solid rgba(20,27,77,.08);border-radius:999px;box-shadow:0 4px 18px rgba(20,27,77,.10);font-size:13px}
+.nav b{color:var(--ink);font-weight:600}.nav .x{color:var(--muted);margin:0 6px}
+.nav nav{display:flex;gap:4px}
+.nav nav a{color:var(--ink);text-decoration:none;padding:7px 12px;border-radius:999px}
+.nav nav a:hover{background:var(--tint)}
+
+/* hero */
+.hero{position:relative;overflow:hidden;background:radial-gradient(120% 90% at 50% 0%,#3A4CC0 0%,#1E2A78 46%,#0F1540 100%);color:#fff;padding:150px 20px 0;text-align:center}
+.hero:before{content:"";position:absolute;inset:0;background-image:linear-gradient(rgba(255,255,255,.05) 1px,transparent 1px),linear-gradient(90deg,rgba(255,255,255,.05) 1px,transparent 1px);background-size:56px 56px;mask-image:linear-gradient(#000 30%,transparent 90%);-webkit-mask-image:linear-gradient(#000 30%,transparent 90%)}
+.hero > *{position:relative}
+.hero .brand{display:inline-flex;align-items:center;gap:10px;color:var(--peach);font-weight:600;font-size:16px;margin-bottom:14px}
+.hero .brand img{height:22px}
+.hero h1{color:#fff;font-size:clamp(32px,5vw,52px);line-height:1.08;font-weight:700;letter-spacing:-.02em;max-width:820px;margin:0 auto 22px}
+.chips{display:flex;flex-wrap:wrap;justify-content:center;gap:10px;margin-bottom:56px}
+.chips a{color:#fff;text-decoration:none;font-size:14px;padding:7px 14px;border-radius:999px;background:rgba(255,255,255,.12);border:1px solid rgba(255,255,255,.16)}
+.chips a:hover{background:rgba(255,255,255,.2)}
+.hero-phones{display:flex;justify-content:center;align-items:flex-start;gap:28px;height:420px;overflow:hidden}
+.hero-phones .phone{width:250px;margin-top:56px}
+.hero-phones .phone:nth-child(2){width:280px;margin-top:0}
+.hero-phones .phone:nth-child(1),.hero-phones .phone:nth-child(3){opacity:.92}
+
+/* phone frame */
+.phone{position:relative;flex:none;width:250px;border-radius:42px;background:#0d0f14;padding:9px;box-shadow:0 24px 60px rgba(10,14,40,.35),0 0 0 1px rgba(255,255,255,.06) inset}
+.phone img{border-radius:34px;width:100%;height:auto}
+.phone figcaption,.shot figcaption{font-size:13px;line-height:1.4;color:var(--muted);text-align:center;margin-top:14px}
+.shot{margin:0;display:flex;flex-direction:column;align-items:center}
+.shot .phone{width:230px}
+
+/* meta card */
+.meta{max-width:900px;margin:-60px auto 0;position:relative;z-index:2;background:#fff;border-radius:20px;box-shadow:var(--shadow);padding:30px 36px;display:grid;grid-template-columns:repeat(4,1fr);gap:24px}
+.meta h3{font-size:18px;color:var(--cobalt);margin:0 0 6px}
+.meta p{font-size:16px;line-height:1.45;margin:0;color:var(--body)}
+
+/* impact */
+.impact{display:grid;grid-template-columns:1fr 1fr;gap:28px;margin-top:8px}
+.impact .num{font-size:56px;line-height:1;font-weight:700;color:var(--navy);letter-spacing:-.02em}
+.impact p{font-size:15px;margin-top:10px;color:var(--muted)}
+ul.clean{margin:0 0 16px;padding-left:20px}
+ul.clean li{margin-bottom:8px}
+
+/* problem callout */
+.problem{font-size:24px;line-height:1.35;font-weight:600;color:var(--ink);border-left:4px solid var(--cobalt);padding:4px 0 4px 20px;margin:4px 0 26px}
+.three{counter-reset:n;list-style:none;padding:0;margin:0 0 18px}
+.three li{counter-increment:n;position:relative;padding-left:44px;margin-bottom:14px}
+.three li:before{content:counter(n);position:absolute;left:0;top:1px;width:28px;height:28px;border-radius:50%;background:var(--tint);color:var(--cobalt);font-weight:700;font-size:14px;display:flex;align-items:center;justify-content:center}
+
+/* tables */
+.table{width:100%;border-collapse:collapse;font-size:16px;line-height:1.45;margin:8px 0 22px}
+.table th{text-align:left;font-size:13px;font-weight:600;color:var(--muted);text-transform:uppercase;letter-spacing:.04em;padding:10px 12px;border-bottom:2px solid var(--line)}
+.table td{padding:12px;border-bottom:1px solid var(--line);vertical-align:top}
+.table td:first-child{font-weight:600;color:var(--ink)}
+.table.t2 td:first-child{white-space:nowrap}
+.table.t3 td:first-child{width:36%}
+.table tr.win td{background:var(--tint)}
+.table-wrap{overflow-x:auto;-webkit-overflow-scrolling:touch}
+
+/* bands */
+.band{margin-top:56px;padding:56px 0}
+.band.tint{background:var(--tint)}
+.band.ivory{background:var(--ivory)}
+.band.peach{background:var(--peach-tint)}
+.band.mint{background:var(--mint-tint)}
+.band.dark{background:linear-gradient(180deg,#1E2A78,#141B4D);color:#E6E9FF}
+.band.dark h2{color:#fff}
+.gallery{display:flex;justify-content:center;gap:34px;flex-wrap:wrap}
+.cap{max-width:640px;margin:26px auto 0;padding:0 20px;text-align:center;font-size:14px;color:var(--muted)}
+
+/* two users */
+.two{display:grid;grid-template-columns:1fr auto 1fr;gap:18px;align-items:stretch;margin:12px 0 8px}
+.two .side{background:#fff;border-radius:18px;box-shadow:var(--shadow);padding:22px}
+.two .side h4{margin:0 0 4px;font-size:18px;color:var(--ink)}
+.two .side .who{font-size:13px;color:var(--muted);margin-bottom:12px}
+.two .side ul{margin:0;padding-left:18px;font-size:15px;line-height:1.5}
+.two .mid{display:flex;flex-direction:column;justify-content:center;align-items:center;gap:10px;padding:0 6px;min-width:150px}
+.two .mid .core{background:var(--cobalt);color:#fff;border-radius:16px;padding:16px 18px;text-align:center;font-weight:600;font-size:15px;line-height:1.35}
+.two .mid .core img{height:18px;margin:0 auto 8px;filter:brightness(0) invert(1)}
+.two .mid .arrow{font-size:13px;color:var(--muted);text-align:center}
+
+/* philosophy cards */
+.rules{display:grid;grid-template-columns:repeat(5,1fr);gap:14px}
+.rule{background:linear-gradient(170deg,#2E3EA8,#1A2366);border-radius:16px;padding:20px 18px 22px;min-height:190px;display:flex;flex-direction:column;border:1px solid rgba(255,255,255,.08)}
+.rule .n{font-size:13px;color:var(--peach);font-weight:600;margin-bottom:auto}
+.rule b{display:block;color:#fff;font-size:18px;line-height:1.25;margin:26px 0 8px}
+.rule span{font-size:14px;line-height:1.45;color:#C9CFF5}
+
+/* feature overview */
+.features{display:grid;grid-template-columns:repeat(4,1fr);gap:16px}
+.fcard{border-radius:18px;padding:20px 18px 0;overflow:hidden;display:flex;flex-direction:column;text-decoration:none;color:inherit;min-height:330px}
+.fcard .k{font-size:12px;color:var(--muted)}
+.fcard b{font-size:20px;line-height:1.2;color:var(--ink);margin:4px 0 6px}
+.fcard span{font-size:14px;line-height:1.45;color:var(--body)}
+.fcard .crop{margin-top:auto;height:150px;overflow:hidden;border-radius:16px 16px 0 0;box-shadow:0 -2px 18px rgba(20,27,77,.10)}
+.fcard .crop img{width:100%}
+.f1{background:linear-gradient(160deg,#FBF0EA,#F6E1D6)}
+.f2{background:linear-gradient(160deg,#EEF1FD,#DCE2FB)}
+.f3{background:linear-gradient(160deg,#ECF6F1,#D7EEE2)}
+.f4{background:linear-gradient(160deg,#EAF4FB,#D3E8F6)}
+
+/* feature section */
+.fhead .kicker{color:var(--cobalt)}
+.f3wide{max-width:900px}
+.f3wide > h2,.f3wide > h3,.f3wide > p,.f3wide > .kicker{max-width:600px}
+.fsplit{display:grid;grid-template-columns:minmax(0,600px) 250px;gap:40px;align-items:start}
+.fsplit .shot .phone{width:250px}
+.note{background:var(--ivory);border-radius:14px;padding:16px 18px;font-size:16px;margin:0 0 18px}
+.note b{color:var(--ink)}
+.pull{font-size:22px;line-height:1.4;font-weight:600;color:var(--ink);margin:6px 0 22px}
+
+/* steps */
+.steps{display:grid;grid-template-columns:repeat(5,1fr);gap:12px;margin:22px 0 4px}
+.step{background:#fff;border-radius:14px;box-shadow:var(--shadow);padding:16px 14px;font-size:14px;line-height:1.4;position:relative}
+.step .who{font-size:11px;font-weight:600;text-transform:uppercase;letter-spacing:.06em;margin-bottom:8px}
+.step .who.p{color:var(--cobalt)} .step .who.a{color:#B5603A}
+.step .t{color:var(--ink);font-weight:500}
+.msg{font-family:ui-monospace,SFMono-Regular,Menlo,monospace;font-size:15px;line-height:1.5;background:#0F1540;color:#E6E9FF;border-radius:14px;padding:16px 18px;margin:6px 0 22px}
+
+/* chart */
+.chart{background:#fff;border-radius:18px;box-shadow:var(--shadow);padding:22px 22px 14px;margin:22px 0}
+.chart h4{margin:0;font-size:15px;color:var(--ink)}
+.chart small{color:var(--muted);font-size:13px}
+.chart svg{width:100%;height:auto;margin-top:12px;overflow:visible}
+.chart text{font:500 11px "Work Sans",sans-serif;fill:#666C73}
+.chart .v{font-weight:600;fill:#16191C}
+
+/* trace */
+.trace{font-family:ui-monospace,SFMono-Regular,Menlo,monospace;font-size:13.5px;line-height:1.65;background:#0F1540;color:#B9C0EA;border-radius:14px;padding:16px 18px;margin:4px 0 22px;overflow-x:auto;white-space:pre}
+.trace .hl{color:#FFD7C2;background:rgba(240,201,180,.14);border-radius:4px;padding:1px 4px}
+
+/* brand */
+.brandrow{display:grid;grid-template-columns:1fr;gap:14px;margin:8px 0 22px}
+.brandmark{background:var(--ivory);border-radius:18px;padding:34px;display:flex;flex-direction:row;gap:36px;align-items:center;justify-content:center}
+.brandmark img.word{height:46px}
+.swatches{display:grid;grid-template-columns:repeat(5,minmax(0,1fr));gap:8px}
+.sw{min-width:0;overflow:hidden}
+.sw{border-radius:12px;height:92px;padding:10px;display:flex;flex-direction:column;justify-content:flex-end;font-size:11px;line-height:1.3}
+.sw b{font-size:12px;color:inherit}
+.cut{display:flex;flex-wrap:wrap;gap:8px;margin:6px 0 18px}
+.cut span{font-size:14px;padding:6px 12px;border-radius:999px;background:#F3F4F6;color:#8A8F96;text-decoration:line-through}
+.cut span.keep{background:var(--tint);color:var(--cobalt);text-decoration:none;font-weight:600}
+
+/* lesson */
+.maxim{font-size:28px;line-height:1.25;font-weight:700;color:var(--ink);margin:12px 0 0}
+
+/* honesty */
+.honest{display:flex;flex-wrap:wrap;gap:8px;margin:4px 0 22px}
+.honest span{font-size:13px;font-weight:600;padding:6px 12px;border-radius:999px;background:var(--peach-tint);color:#8A4A2C}
+
+/* bridge */
+.btn{display:inline-flex;align-items:center;gap:8px;background:var(--cobalt);color:#fff;text-decoration:none;font-weight:600;font-size:15px;padding:12px 20px;border-radius:999px}
+.btn:hover{background:var(--cobalt-deep)}
+.btn.ghost{background:transparent;color:var(--cobalt);border:1.5px solid var(--cobalt)}
+
+/* footer */
+footer{margin-top:96px;background:#F5F5F5;padding:72px 20px 56px;text-align:center}
+footer .l1{font-size:26px;font-weight:600;color:var(--ink);line-height:1.2}
+footer .l2{font-size:26px;font-weight:600;color:#8A8F96;line-height:1.2}
+footer p{font-size:14px;color:var(--muted);margin:14px 0 0}
+footer hr{border:0;border-top:1px solid #DDD;max-width:760px;margin:40px auto}
+footer .sig{font-size:12px;color:var(--ink)}
+
+/* responsive */
+@media (max-width:980px){
+  .rules{grid-template-columns:repeat(2,1fr)}
+  .features{grid-template-columns:repeat(2,1fr)}
+  .steps{grid-template-columns:repeat(2,1fr)}
+  .meta{grid-template-columns:repeat(2,1fr);margin:-48px 16px 0}
+}
+@media (max-width:720px){
+  body{font-size:17px}
+  h2{font-size:27px}
+  .nav{padding-left:16px}.nav nav a:not(:last-child){display:none}
+  .hero{padding-top:120px}
+  .hero-phones{height:330px;gap:14px}
+  .hero-phones .phone{width:180px}.hero-phones .phone:nth-child(2){width:220px}
+  .hero-phones .phone:nth-child(1),.hero-phones .phone:nth-child(3){display:none}
+  .meta{grid-template-columns:1fr 1fr;padding:22px;gap:18px}
+  .impact .num{font-size:34px}
+  .fcard{min-height:0}
+  .fcard .crop{height:190px;margin-top:18px}
+  .two{grid-template-columns:1fr}
+  .two .mid{flex-direction:row;min-width:0}
+  .fsplit{grid-template-columns:1fr}
+  .fsplit .shot{order:-1;margin-bottom:8px}
+  .features{grid-template-columns:1fr}
+  .rules{grid-template-columns:1fr}
+  .rule{min-height:0}
+  .steps{grid-template-columns:1fr}
+  .brandrow{grid-template-columns:1fr}
+  .swatches{grid-template-columns:repeat(3,minmax(0,1fr))}
+  .brandmark{flex-wrap:wrap;gap:20px;padding:24px}
+  .gallery{gap:20px}
+  .shot .phone{width:200px}
+  .table td:first-child{white-space:normal}
+}
+@media (prefers-reduced-motion:reduce){html{scroll-behavior:auto}}
+</style>
+</head>
+<body>
+
+<div class="nav" role="banner">
+  <span><b>Ted Dessert</b><span class="x">×</span>Supafeed</span>
+  <nav aria-label="Site">
+    <a href="https://teddessert.com/">Work</a>
+    <a href="https://supafeed.app/">Supafeed</a>
+    <a href="mailto:theodoreyd@gmail.com">Email</a>
+  </nav>
+</div>
+
+<header class="hero">
+  <div class="brand"><img src="/work/supafeed/img/wordmark-peach.svg" alt="Supafeed"></div>
+  <h1>Designing an app with two users: you, and the AI agent that works for you</h1>
+  <div class="chips">
+    <a href="#research">Research ↓</a>
+    <a href="#features">Interaction design ↓</a>
+    <a href="#agents">Agent experience ↓</a>
+    <a href="#native">iOS ↓</a>
+  </div>
+  <div class="hero-phones" aria-hidden="true">
+    <div class="phone"><img src="/work/supafeed/img/ios-today.webp" alt=""></div>
+    <div class="phone"><img src="/work/supafeed/img/ios-feed.webp" alt=""></div>
+    <div class="phone"><img src="/work/supafeed/img/ios-chat-2.webp" alt=""></div>
+  </div>
+</header>
+
+<div class="meta" role="region" aria-label="Project details">
+  <div><h3>Role</h3><p>Founder and designer: product, UX, interaction and visual design, and the build</p></div>
+  <div><h3>Team</h3><p>Just me, directing coding agents (Claude Code and Codex) for most of the code</p></div>
+  <div><h3>Timeline</h3><p>13 days<br>Sep 26 – Oct 8, 2026</p></div>
+  <div><h3>Stack</h3><p>SwiftUI (iOS 26), React, Convex, Cloudflare Workers, Claude Code, Codex</p></div>
+</div>
+
+<main>
+
+<section class="wrap" id="backstage">
+  <h2>Backstage</h2>
+  <p>Everyone I know who uses an AI agent has the same problem. Their agent is good at finding things: a concert on Thursday, a job that fits, a bakery worth the walk. Then it pastes the find into a chat, where it scrolls away with everything else.</p>
+  <p>By September 2026, agents like <strong>OpenClaw</strong> (which runs on your own computer), <strong>Hermes</strong> and Meta's <strong>Muse</strong> could browse the web and work on a schedule. What they didn't have was a place to put what they found. So the finding happened, and then the finding got lost.</p>
+  <p>Supafeed is that place. Your own agent fills a private feed, a plan for your day and small dashboards. You read them on your phone, and talk back to the agent from the same app.</p>
+</section>
+
+<section class="wrap">
+  <h2>Where I came in</h2>
+  <p>This started as something else. <strong>ClawParty</strong>, which a collaborator and I started in February, was a pre-networking platform: AI agents met each other on their humans' behalf before events. Agents wrote plenty. Nobody, human or agent, needed to read much of it.</p>
+  <p>In September I took it over alone and turned it inside out: the agent's posts go to one reader, the person who owns the agent. Everything from that point is my design and my build. I wrote the plans, made the product calls, and directed Claude Code and Codex to write most of the code, checking what shipped on my phone and in the simulator.</p>
+</section>
+
+<section class="wrap">
+  <h2>My contributions</h2>
+  <ul class="clean">
+    <li>Research: a scan of <strong>9 product families</strong> the day before building, then a review of <strong>7 reference products</strong> and an inventory of the <strong>41 needs</strong> I'd stated as the first user.</li>
+    <li>The core model: <strong>17 typed card kinds</strong> that agents fill and the app draws.</li>
+    <li>Onboarding that runs in the agent's own chat, plus the docs page agents read (<strong>28 published revisions</strong> in 13 days).</li>
+    <li>A native <strong>SwiftUI iPhone app</strong> with its own Liquid Glass tab bar, hold-to-talk and widgets, and the web app.</li>
+    <li>The trust rules: what the app may claim about an agent, and what it must never fake.</li>
+  </ul>
+</section>
+
+<section class="wrap">
+  <h2>Impact</h2>
+  <div class="impact">
+    <div><div class="num">13 days</div><p>From an empty feed to a public iPhone beta, a web app, and a setup path for three different agents. 106 pull requests, 56 releases.</p></div>
+    <div><div class="num">1 message</div><p>To set it up. You send your agent one message; it does the rest and asks you to approve a code.</p></div>
+  </div>
+</section>
+
+<section class="wrap" id="problem">
+  <h2>What was the problem?</h2>
+  <p class="problem">People's finds were scattered across chats, and their agents had nowhere better to put them.</p>
+  <p>I was the first user, so I started with myself: every need I'd stated, collected into one list of 41. They ran from <em>"replace morning scrolling with morning strolling"</em> to <em>"feed noise must not pollute the user's wiki or memories."</em> Three themes kept coming up:</p>
+  <ol class="three">
+    <li><strong>A chat is the wrong shape for a find.</strong> An event needs a date, a place, a price and a reminder. A chat message has text.</li>
+    <li><strong>The agent has no screen of its own.</strong> It can only talk. It can't lay out a card, so every find arrives looking like every other message.</li>
+    <li><strong>Neither side can see the other's work.</strong> I couldn't tell what my agent was looking for, how often, or whether it had stopped. It couldn't tell what I'd saved, dismissed or wanted more of.</li>
+  </ol>
+  <p>The third one turned out to be the real problem. Two parties were working on the same thing with no shared surface.</p>
+</section>
+
+<section class="wide">
+  <div class="two" role="figure" aria-label="Supafeed sits between two users">
+    <div class="side">
+      <h4>The person</h4>
+      <div class="who">Reads, decides, acts</div>
+      <ul>
+        <li>A calm, finite feed they can finish</li>
+        <li>Things they can act on: a date, a place, a button</li>
+        <li>To see and steer what the agent is doing</li>
+        <li>Privacy by default</li>
+      </ul>
+    </div>
+    <div class="mid">
+      <div class="arrow">reads and steers →</div>
+      <div class="core"><img src="/work/supafeed/img/mark.svg" alt="">Supafeed</div>
+      <div class="arrow">← finds and posts</div>
+    </div>
+    <div class="side">
+      <h4>The agent</h4>
+      <div class="who">Searches, writes, runs on a schedule</div>
+      <ul>
+        <li>An exact contract it can fill without guessing</li>
+        <li>Instructions it can read on its own</li>
+        <li>Clear errors when it gets something wrong</li>
+        <li>To know what the person liked</li>
+      </ul>
+    </div>
+  </div>
+  <p class="cap">Two users, opposite needs. Most of the design decisions below are about which of the two a screen is for.</p>
+</section>
+
+<section class="wrap" id="research">
+  <h2>What research gave me</h2>
+  <p>Before drawing anything I wanted to know whether this already existed. I scanned nine product families: read-it-later apps (Readwise Reader), feed readers (Feedly, Inoreader), bookmark tools (Karakeep, mymind), algorithmic feeds (Bluesky custom feeds, YouTube) and AI news apps, including Artifact, which its founders shut down in 2024.</p>
+  <p>I compared them on <strong>who does the finding, who owns the result, and where it ends up.</strong> Most answered <em>you find it yourself</em> or <em>a platform's algorithm finds it for everyone</em>. A couple, like Karakeep and Readwise, already let agents in through an API, so agent access alone couldn't be the difference. None was built around your own agent finding events, places and videos and handing them to a feed you own.</p>
+  <p>Then I studied seven products closer and took one lesson from each:</p>
+  <div class="table-wrap"><table class="table t2">
+    <thead><tr><th>Reference</th><th>What I took</th></tr></thead>
+    <tbody>
+      <tr><td>Readwise Reader</td><td>Finite daily editions with a real "you're caught up" state</td></tr>
+      <tr><td>Karakeep</td><td>Agent APIs and tags are table stakes now, so they can't be the differentiator</td></tr>
+      <tr><td>Puddle</td><td>Turn inspiration into something you can act on: places, times, bookings</td></tr>
+      <tr><td>Lateroll</td><td>Private, mixed-media rediscovery is appealing</td></tr>
+      <tr><td>Perplexity, Manus</td><td>Show the schedule, the run history and what happens next</td></tr>
+      <tr><td>Linear's agents</td><td>An agent's work has visible states: waiting, working, needs you, done</td></tr>
+      <tr><td>Lakebed</td><td>One clear entry command, limits up front, docs that unfold as you need them</td></tr>
+    </tbody>
+  </table></div>
+  <p><strong>What fell out of it.</strong> The person needs a calm, finite feed of things they can act on. The agent needs a contract it can fill without guessing. And the space between them needs one rule: <strong>show only what actually happened.</strong></p>
+
+  <h3>Testing my plan without a team</h3>
+  <p>I didn't have colleagues to poke holes in my plans, so I had a second AI agent attack each major plan before it was built. The first review listed eight things to change before coding. Three of them:</p>
+  <ul class="clean">
+    <li>my setup flow pasted a permanent API key into the chat history, breaking my own rule about keys;</li>
+    <li>a sharing feature would have exposed which private item and research topic a public post came from;</li>
+    <li>my plan promised that old items expire, then put off building the job that clears them.</li>
+  </ul>
+  <p>Not every fix landed on time. Key-free pairing replaced the pasted key. A switch that auto-shared a whole hashtag shipped anyway, and I took it out four days later: now a card goes public only when you share that one card. The review's sharpest line became the rule behind that: <strong>a tag an agent adds is a label, not permission to publish.</strong></p>
+</section>
+
+<section class="band dark">
+  <div class="wide">
+    <div class="wrap" style="padding:0">
+      <h2>Design philosophy</h2>
+      <p>I wanted Supafeed to feel like <strong style="color:#fff">a good assistant's desk</strong>: what they found for you, laid out cleanly, with a note on why, and nothing pretending to be done when it isn't.</p>
+      <p style="margin-bottom:34px">Not a social feed that wants your attention. Not a chatbot that wants a conversation. An assistant that says "here are four things worth your evening," then stops. That became five rules every screen follows:</p>
+    </div>
+    <div class="rules">
+      <div class="rule"><div class="n">01</div><b>Agents send facts. The app draws.</b><span>The agent never decides what a card looks like.</span></div>
+      <div class="rule"><div class="n">02</div><b>Unknown stays unknown.</b><span>No invented dates, prices, hours or ratings. A missing field shows nothing.</span></div>
+      <div class="rule"><div class="n">03</div><b>Never a fake green.</b><span>Status comes from what the server saw, not what the agent claims.</span></div>
+      <div class="rule"><div class="n">04</div><b>Private by default.</b><span>Only you can share a card, and only one at a time.</span></div>
+      <div class="rule"><div class="n">05</div><b>An honest path for every agent.</b><span>The app says plainly what works with your agent today.</span></div>
+    </div>
+  </div>
+</section>
+
+<section class="wide" id="features">
+  <div class="wrap" style="padding:0;text-align:center;max-width:640px"><h2>Key features</h2></div>
+  <div class="features">
+    <a class="fcard f1" href="#f1"><span class="k">Feature #1</span><b>Typed cards</b><span>17 kinds, each drawn by its own native component.</span><div class="crop"><img src="/work/supafeed/img/ios-feed-movie.webp" alt="" loading="lazy"></div></a>
+    <a class="fcard f2" href="#agents"><span class="k">Feature #2</span><b>One-sentence setup</b><span>The agent sets itself up from a docs page. You approve a code.</span><div class="crop"><img src="/work/supafeed/img/ios-approve.webp" alt="" loading="lazy" style="margin-top:-62%"></div></a>
+    <a class="fcard f3" href="#f3"><span class="k">Feature #3</span><b>Edit discovery</b><span>See and steer what your agent keeps looking for.</span><div class="crop"><img src="/work/supafeed/img/ios-discovery.webp" alt="" loading="lazy"></div></a>
+    <a class="fcard f4" href="#native"><span class="k">Feature #4</span><b>Talk to your agent</b><span>Chat and hold-to-talk from anywhere in the app.</span><div class="crop"><img src="/work/supafeed/img/ios-chat-2.webp" alt="" loading="lazy" style="margin-top:-40%"></div></a>
+  </div>
+</section>
+
+<!-- Feature 1 -->
+<section class="wrap fhead" id="f1">
+  <div class="kicker">Feature 1/4</div>
+  <h2>Typed cards</h2>
+  <p>A find is not a message. A concert has a date, a venue, a price and a ticket link. A stock story has a ticker and a live price. Paste them into a chat and they all look the same.</p>
+  <p><strong>What I explored.</strong> In September 2026 there were several ways to let an AI agent show something on a screen. I compared them on one question: who draws the interface, the agent or the app?</p>
+  <div class="table-wrap"><table class="table t3">
+    <thead><tr><th>Approach</th><th>The agent sends</th><th>Why not</th></tr></thead>
+    <tbody>
+      <tr><td>AG-UI</td><td>A live stream of interface events</td><td>Needs a live session. An agent posting at 6 AM has nobody watching.</td></tr>
+      <tr><td>A2UI</td><td>A layout tree</td><td>Stores layout, not facts. A feed can't sort or filter a layout.</td></tr>
+      <tr><td>MCP Apps</td><td>Mini-apps inside a chat</td><td>Lives inside the chat app, not in a feed.</td></tr>
+      <tr><td>OpenClaw Canvas</td><td>A widget the agent writes</td><td>Agent-written HTML: unsafe, and every card would look different.</td></tr>
+      <tr class="win"><td>Typed cards</td><td>Facts, in a fixed shape per kind</td><td>The app draws them, sorts them and can restyle them all at once.</td></tr>
+    </tbody>
+  </table></div>
+  <p>Each kind has a short contract: what's required, what's optional and what must never be guessed. An event needs its timing and either a venue or "virtual." A movie card carries IMDb and Rotten Tomatoes scores, and MyAnimeList for anime. The server checks every card against the same contract the agent reads.</p>
+</section>
+
+<section class="band peach">
+  <div class="gallery">
+    <figure class="shot"><div class="phone"><img src="/work/supafeed/img/ios-feed.webp" alt="The Feed: an event card for a rooftop synth night with date, time, venue and price, and a stock card for Nvidia with a live price chart" loading="lazy"></div><figcaption>Event and stock cards. The price<br>and chart are fetched live by Supafeed.</figcaption></figure>
+    <figure class="shot"><div class="phone"><img src="/work/supafeed/img/ios-feed-mid.webp" alt="A cafe card, a product card with a sale price and rating, and a video card" loading="lazy"></div><figcaption>A place, a product on sale<br>and a video, each with its own layout.</figcaption></figure>
+    <figure class="shot"><div class="phone"><img src="/work/supafeed/img/ios-card-place.webp" alt="A cafe's detail page with hours, address and a private note from the agent explaining why it was picked" loading="lazy"></div><figcaption>The detail view, with the agent's<br>private note on why it picked this.</figcaption></figure>
+  </div>
+</section>
+
+<section class="wrap">
+  <h3>The hardest call was what the agent is not allowed to send</h3>
+  <p>Agents love to fill fields. So the contract says no in three places:</p>
+  <ul class="clean">
+    <li><strong>No prices on stock cards.</strong> An agent's price is stale in a minute. Supafeed fetches the live quote itself.</li>
+    <li><strong>No guesses.</strong> An unannounced date reads "Date not announced." A missing field shows nothing at all, because a wrong field misleads and a missing one doesn't.</li>
+    <li><strong>No layout.</strong> The agent can't add a button, a colour or a section.</li>
+  </ul>
+  <h3>The most consequential decision: keep three sources of truth apart</h3>
+  <p>A card holds facts from the agent and facts the server looked up (a venue's address, a movie's scores), and the model keeps a separate layer for your own edits. They're never merged. When the server finds a different venue than the agent posted, it doesn't overwrite; the card shows "Source says…" so you can see both. You always know who said what.</p>
+  <div class="note"><b>A note only you see.</b> Each card can carry a one-line "why" from your agent, like <em>"You saved two modular synth videos this week."</em> It stays private even if you share the card.</div>
+</section>
+
+<!-- Feature 2 -->
+<section class="wrap fhead" id="agents">
+  <div class="kicker">Feature 2/4</div>
+  <h2>Onboarding in one sentence</h2>
+  <p>Most apps onboard a person. Supafeed has to onboard a person <em>and</em> an agent, and the agent does most of the setup. I didn't want anyone copying API keys, and I didn't want a long form. The agent already knows its person, so the app should let it do the talking.</p>
+  <p>For most agents, you send one line:</p>
+  <div class="msg">Read supafeed.app/agents.md and make me a private feed.</div>
+</section>
+
+<section class="wide">
+  <div class="steps" role="list" aria-label="How setup works">
+    <div class="step" role="listitem"><div class="who p">You</div><div class="t">Send your agent one line</div></div>
+    <div class="step" role="listitem"><div class="who a">Agent</div><div class="t">Reads agents.md and asks what the feed is for</div></div>
+    <div class="step" role="listitem"><div class="who a">Agent</div><div class="t">Connects and shows you a code, like K7QM-4TZP</div></div>
+    <div class="step" role="listitem"><div class="who p">You</div><div class="t">Approve it on your phone with Face ID</div></div>
+    <div class="step" role="listitem"><div class="who a">Agent</div><div class="t">Posts its first cards, then offers a schedule</div></div>
+  </div>
+</section>
+
+<section class="wrap">
+  <h3>When your user is an agent, the docs are the interface</h3>
+  <p>agents.md is written for a model, not a developer. It tells the agent to interview its person about <em>purpose</em>, not topics: "AI" is a topic; "interface ideas I can use in my own product" is an assignment. It asks the agent to say the plan back before starting, and to offer a schedule only after the first batch lands.</p>
+  <h3>Agents were my test users</h3>
+  <p>I ran real agents through the flow and watched where they broke. Each break became a fix:</p>
+  <ul class="clean">
+    <li><strong>My own OpenClaw failed its very first status check.</strong> Cloudflare blocked its default user agent. An hour later the docs told every agent to send a proper one.</li>
+    <li><strong>Muse opened the approval link in an in-app browser</strong> that lost the code after sign-in. Now agents always give the code as well as the link, and there's a page where you can type it.</li>
+  </ul>
+  <p>The docs changed 28 times in 13 days. Each change is versioned, so an agent working from older instructions is told when to read them again.</p>
+</section>
+
+<section class="band tint">
+  <div class="wrap" style="margin-bottom:34px">
+    <h3 style="margin-top:0">One question, different paths</h3>
+    <p>Agents connect differently. OpenClaw chats through a small connector running beside it (so far, only on my own Mac). Muse lives in a cloud machine that nothing can call into, so it's designed to check in about once a minute through a bridge it builds itself; that bridge isn't running yet. So the intro asks one question first, <strong>"Which agent do you use?"</strong>, and each answer leads to the right setup message and an honest status page.</p>
+  </div>
+  <div class="gallery">
+    <figure class="shot"><div class="phone"><img src="/work/supafeed/img/ios-intro-pick-muse.webp" alt="The intro asks which agent you use: OpenClaw, Muse, Hermes, another agent, or none yet" loading="lazy"></div><figcaption>One question first.</figcaption></figure>
+    <figure class="shot"><div class="phone"><img src="/work/supafeed/img/ios-intro-muse-setup.webp" alt="The setup message to send Muse, with Copy and Send buttons" loading="lazy"></div><figcaption>The exact message to send,<br>written for that agent.</figcaption></figure>
+    <figure class="shot"><div class="phone"><img src="/work/supafeed/img/ios-intro-muse-status.webp" alt="A live status page waiting for Muse: Feed, First cards and Chat, each still pending" loading="lazy"></div><figcaption>A live status page that<br>waits instead of pretending.</figcaption></figure>
+    <figure class="shot"><div class="phone"><img src="/work/supafeed/img/ios-approve.webp" alt="The approval sheet: zucc wants to connect to Supafeed, code K7QM-4TZP, Approve with Face ID" loading="lazy"></div><figcaption>Approving the agent's code<br>with Face ID.</figcaption></figure>
+  </div>
+</section>
+
+<!-- Feature 3 -->
+<section class="wrap fhead f3wide" id="f3">
+  <div class="kicker">Feature 3/4</div>
+  <h2>Edit discovery</h2>
+  <div class="fsplit">
+    <div>
+      <p>A week in, I couldn't remember on my phone what I'd asked my agent to look for. Was it still hunting for hackathons? How often? Could I pause the one about synths? The website had a brief editor from day one; the iPhone didn't.</p>
+      <p>Each agent keeps a <strong>brief</strong>: the things it looks for, how often, how many cards each time, and an optional end date. You and the agent edit the same brief. A slide-over on the Feed opens <strong>Edit discovery</strong>, which shows every task in plain words ("Once a day around 7 PM · 1 card"). Tap one to change how often, pause it, or stop it.</p>
+    </div>
+    <figure class="shot"><div class="phone"><img src="/work/supafeed/img/ios-discovery.webp" alt="Edit discovery: a list of tasks per agent, like SF hackathons with prizes, every time your agent checks, 2 cards; one task is paused" loading="lazy"></div></figure>
+  </div>
+  <h3>The hardest call: the app can't run the schedule</h3>
+  <p>The agent's clock lives on the agent's own machine, so the app can't change it directly. When you change a task's timing, the app marks the schedule out of date. The next time the agent checks in, it's told to update its own job. The website's editor says so in one line, so nobody thinks a change took effect when it hasn't yet.</p>
+  <h3>Never a fake green</h3>
+  <p>An agent saying "I've set up a daily job" proves nothing: a test run can work while the unattended job lacks a permission it needs. So an agent's status comes from what the server has <em>seen</em>, in seven states from "Waiting" to "Collecting," and it reads "Scheduled" until one of its scheduled runs actually finishes.</p>
+</section>
+
+<section class="band mint">
+  <div class="gallery">
+    <figure class="shot"><div class="phone"><img src="/work/supafeed/img/ios-slideover.webp" alt="The Feed's slide-over with an Edit discovery button above favorites, sections and hashtags" loading="lazy"></div><figcaption>Edit discovery sits at the top<br>of the Feed's slide-over.</figcaption></figure>
+    <figure class="shot"><div class="phone"><img src="/work/supafeed/img/ios-discovery-edit.webp" alt="Editing a task: name, what counts as a good find, how often, around a set time, cards each time, stop on a date" loading="lazy"></div><figcaption>How often, how many,<br>and until when.</figcaption></figure>
+    <figure class="shot"><div class="phone"><img src="/work/supafeed/img/ios-today.webp" alt="Today: a plan for Thursday with standup, a dentist appointment with a leave-by time, and the synth night, plus three priorities" loading="lazy"></div><figcaption>The same agent fills Today<br>with a plan for your day.</figcaption></figure>
+  </div>
+</section>
+
+<!-- Feature 4 -->
+<section class="wrap fhead" id="native">
+  <div class="kicker">Feature 4/4</div>
+  <h2>Talk to your agent</h2>
+  <p>A feed is one-way. Sometimes you want something now: "find me a quiet bar near the venue."</p>
+  <p>The ✦ button in the tab bar is always there. Tap it to type; hold it to talk; let go to send. Your agent answers in a chat that shows the same native cards as the feed, plus questions with buttons, forms, permission requests and live progress while it works.</p>
+  <h3>The bar I built twice in one day</h3>
+  <p>iOS 26's tab bar can't open into a multi-line message box, so I drew my own Liquid Glass bar. The first version broke scrolling and was reverted the same day. The second is built to measurements I read from the running system bar, with nothing estimated. That Saturday, ten commits touched that one file.</p>
+  <h3>Learning a gesture rule the hard way</h3>
+  <p>Hold-to-talk kept dying a second in, while my finger was still down, and sent nothing. I added a trace to the bar and found the cause: 300 ms into a hold, the app switched to the chat tab, which rebuilt the bar, which removed the button under my finger, so iOS cancelled the touch.</p>
+  <div class="trace" role="img" aria-label="A trace log: hold began, the tab switched to chat after 300 milliseconds, the bar was rebuilt, and the touch was released while the finger was still down">hold   began            source=agentButton
+hold   listening        +300ms
+tab    → ask            bar rebuilt under the finger
+press  <span class="hl">released lifted=false</span>   ← iOS took the touch away</div>
+  <p class="cap" style="margin:-12px 0 22px;padding:0;text-align:left">Reconstructed from the bar's trace. "released lifted=false" is the line quoted in the fix.</p>
+  <p class="pull">The rule that came out of it: never move, rebuild or reshape the view under a finger. Show feedback beside it, and navigate on release.</p>
+  <p>Now a panel appears above the bar while you hold, and the tab changes only when you let go.</p>
+  <h3>"Ready" means proven</h3>
+  <p>"Connected" used to mean the agent's key worked. That isn't chat. Now <strong>"Chat ready"</strong> means a round trip: the server sends a one-time check, the agent's connector answers only after reaching the agent's actual session, and only then does the app say ready. An agent that polls, like Muse, never shows "ready." It shows when it last checked in.</p>
+</section>
+
+<section class="band ivory">
+  <div class="gallery">
+    <figure class="shot"><div class="phone"><img src="/work/supafeed/img/ios-hold.webp" alt="Holding the sparkle button: a panel above the tab bar shows the words being heard, with Release to send, slide up to cancel" loading="lazy"></div><figcaption>Hold ✦ to talk. The words appear<br>beside your finger, not under it.</figcaption></figure>
+    <figure class="shot"><div class="phone"><img src="/work/supafeed/img/ios-chat-2.webp" alt="Agent chat: a cafe card inline, a question asking to book a table with Book it and Not now buttons, and a task showing its progress" loading="lazy"></div><figcaption>The agent's chat shows real cards,<br>questions and live progress.</figcaption></figure>
+    <figure class="shot"><div class="phone"><img src="/work/supafeed/img/ios-connect-openclaw.webp" alt="The Agent connection sheet for OpenClaw: feed connected, chat setup needed, and the setup message to copy" loading="lazy"></div><figcaption>Each agent's connection sheet<br>states exactly what's working.</figcaption></figure>
+  </div>
+</section>
+
+<section class="wrap">
+  <h2>The design system</h2>
+  <p>Supafeed's identity is a mirrored double-e that smiles, set inside the wordmark, in cobalt, peach, ink and ivory. I cut three taglines for being cute and kept the one that says what it does:</p>
+  <div class="cut"><span>Good things. Just for you.</span><span>The good stuff</span><span>Less lost in chat. More part of your life.</span><span class="keep">Feeds and Dashboards created by your agent</span></div>
+  <div class="brandrow">
+    <div class="brandmark"><img class="word" src="/work/supafeed/img/wordmark.svg" alt="The Supafeed wordmark"><img src="/work/supafeed/img/icon.svg" alt="The Supafeed app icon" style="height:72px;border-radius:16px"></div>
+    <div class="swatches" role="list" aria-label="Palette">
+      <div class="sw" role="listitem" style="background:#4358CD;color:#fff"><b>Cobalt</b>#4358CD<br>Actions</div>
+      <div class="sw" role="listitem" style="background:#F0C9B4;color:#20262B"><b>Peach</b>#F0C9B4<br>Art only</div>
+      <div class="sw" role="listitem" style="background:#20262B;color:#fff"><b>Ink</b>#20262B<br>Text</div>
+      <div class="sw" role="listitem" style="background:#F7F4EE;color:#20262B;box-shadow:inset 0 0 0 1px #E6E2DA"><b>Ivory</b>#F7F4EE<br>Canvas</div>
+      <div class="sw" role="listitem" style="background:#A2AFFF;color:#20262B"><b>Light cobalt</b>#A2AFFF<br>Dark mode</div>
+    </div>
+  </div>
+  <p>The system is mostly rules:</p>
+  <ul class="clean">
+    <li><strong>Cobalt is the one action colour.</strong> Peach is for artwork only, never a background; as text it fails contrast (1.39:1 on ivory).</li>
+    <li><strong>Glass for controls, solid for content.</strong> Bars and buttons are Liquid Glass; cards are opaque so photos and prices stay readable.</li>
+    <li><strong>One component per card kind,</strong> with one shared header (kind, agent, time) so you always know what you're looking at and who found it.</li>
+    <li><strong>Plain words.</strong> It's called the Feed, not "Finds." Items are cards. Labels say what something is doing, in the words you'd use.</li>
+  </ul>
+</section>
+
+<section class="wrap">
+  <h2>One evening of real use</h2>
+  <p>On the night of October 7 I used the app the way anyone would, and fixed what broke before 1 AM:</p>
+  <div class="table-wrap"><table class="table t3">
+    <thead><tr><th>What I noticed</th><th>Why</th><th>What changed</th></tr></thead>
+    <tbody>
+      <tr><td>Hold-to-talk stopped a second in and sent nothing</td><td>The tab switched under my finger, so iOS ended the touch</td><td>It listens until you let go</td></tr>
+      <tr><td>The chat mic sent an audio file</td><td>It used a recorder, not hold-to-talk</td><td>Every mic in the app holds to talk</td></tr>
+      <tr><td>Feedback said "Couldn't send" after sending</td><td>The app misread the server's reply</td><td>The reply is read correctly</td></tr>
+      <tr><td>The "Eat" tab was all events</td><td>Events had no tab of their own</td><td>Events and Food got their own tabs</td></tr>
+      <tr><td>A weekly event vanished after one date</td><td>Events had no idea of repeating</td><td>Weekly and monthly ones roll on, yearly ones come back next year, one-time ones still leave</td></tr>
+      <tr><td>I couldn't see what my agent was hunting for</td><td>The brief could only be edited on the website</td><td>Edit discovery on the iPhone</td></tr>
+    </tbody>
+  </table></div>
+  <p>All six were merged by 1 AM. Three of them weren't really bugs. They were about <em>when</em>: when to send, when to switch, when to let an event go.</p>
+
+  <div class="chart" role="img" aria-label="Pull requests merged per day, September 26 to October 8, 2026: 19, 4, 14, 10, 5, 4, 4, 24, 5, 0, 0, 7, 10. Total 106.">
+    <h4>13 days, 106 pull requests</h4>
+    <small>Merged per day, Pacific time</small>
+    <svg id="prchart" viewBox="0 0 600 190" preserveAspectRatio="xMidYMid meet"></svg>
+  </div>
+</section>
+
+<section class="wrap">
+  <h2>What this project taught me</h2>
+  <p>I set out to design an app for a person. I ended up designing for two users with opposite needs: a person who wants calm, finished things, and an agent that needs exact rules and honest feedback.</p>
+  <p>My best decisions were about <strong>what not to show</strong>: no guessed facts, no fake "connected," no layout from the agent. The more capable the agent, the more the interface has to be the part that refuses to pretend.</p>
+  <p class="maxim">Design the boundary, not just the screen.</p>
+</section>
+
+<section class="wrap">
+  <h2>Looking back, honestly</h2>
+  <div class="honest"><span>One household</span><span>No customers yet</span><span>Built with coding agents</span><span>OpenClaw chat: my Mac only</span><span>Muse chat: our side only</span></div>
+  <p>This is early. One household uses it (mine), and it has no customers yet. One designer built it in 13 days by directing coding agents; that's how it got this far this fast, and the product calls were mine. OpenClaw chat only works where its connector is installed, which today means my Mac. Muse's chat is designed and our half of it is live, but Muse hasn't built its half yet.</p>
+  <p>What I'd do differently: put steering on the phone in the first week. The research said to make the agent's plan visible, yet the iPhone could show the agent's posts 12 days before it let you steer what the agent looks for. And I'd put the app in front of five other people before the brand got its third name.</p>
+</section>
+
+<section class="wrap">
+  <h2>See it live</h2>
+  <p>Supafeed is live at supafeed.app, and the iPhone app is in public beta on TestFlight. The page agents read is public too.</p>
+  <p style="display:flex;gap:12px;flex-wrap:wrap"><a class="btn" href="https://supafeed.app/">Visit supafeed.app →</a><a class="btn ghost" href="https://testflight.apple.com/join/CJ72G2F8">Get the iPhone beta</a><a class="btn ghost" href="https://supafeed.app/agents.md">Read agents.md</a></p>
+</section>
+
+</main>
+
+<footer>
+  <div class="l1">You read to the end.</div>
+  <div class="l2">An agent would have summarized it.</div>
+  <p>Glad you didn't. Say hi: <a href="mailto:theodoreyd@gmail.com">theodoreyd@gmail.com</a></p>
+  <hr>
+  <div class="sig"><b>Ted Dessert</b> © 2026</div>
+</footer>
+
+<script>
+(function(){
+  var data=[["9/26",19],["27",4],["28",14],["29",10],["30",5],["10/1",4],["2",4],["3",24],["4",5],["5",0],["6",0],["7",7],["8",10]];
+  var svg=document.getElementById('prchart'), W=600, H=190, top=18, base=160, max=24, n=data.length, gap=10, bw=(W-gap*(n-1))/n, ns='http://www.w3.org/2000/svg';
+  function el(t,a,txt){var e=document.createElementNS(ns,t);for(var k in a)e.setAttribute(k,a[k]);if(txt!=null)e.textContent=txt;svg.appendChild(e);return e}
+  el('line',{x1:0,x2:W,y1:base,y2:base,stroke:'#E6E7EB','stroke-width':1});
+  data.forEach(function(d,i){
+    var x=i*(bw+gap), h=d[1]/max*(base-top), y=base-h, peak=d[1]===24;
+    if(d[1]>0) el('rect',{x:x,y:y,width:bw,height:h,rx:6,fill:peak?'#4358CD':'#B9C2F3'});
+    el('text',{x:x+bw/2,y:d[1]>0?y-6:base-6,'text-anchor':'middle','class':'v'},d[1]>0?d[1]:'0');
+    el('text',{x:x+bw/2,y:base+18,'text-anchor':'middle'},d[0]);
+  });
+})();
+</script>
+</body>
+</html>

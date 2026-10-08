@@ -18,6 +18,12 @@ const nextConfig: NextConfig = {
   // save — so the check has to yield. Type safety comes from the studio's
   // own oracle + `tsc --noEmit`, not from next build.
   typescript: { ignoreBuildErrors: true },
+
+  // Case studies that are hand-built static pages live in public/work/<slug>/
+  // (index.html + img/). Serve them at /work/<slug> like the studio's pages.
+  async rewrites() {
+    return [{ source: '/work/supafeed', destination: '/work/supafeed/index.html' }];
+  },
 };
 
 export default nextConfig;
