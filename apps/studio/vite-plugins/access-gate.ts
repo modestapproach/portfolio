@@ -23,7 +23,37 @@
 
 import type { Plugin, Connect } from 'vite';
 import crypto from 'node:crypto';
-import type { ServerResponse } from 'node:http';
+import type { IncomingHttpHeaders, ServerResponse } from 'node:http';
+import { createRemoteJWKSet, jwtVerify } from 'jose';
+
+// Cloudflare Access mode. When the editor hostname sits behind a Cloudflare
+// Access application (Google sign-in, like every other *.teddessert.com app),
+// Access injects a signed JWT on every request it lets through. With both
+// variables set, the editor host admits exactly the requests carrying a valid
+// JWT for that application and never shows the token form. The embed hosts
+// keep their same-site exemption below, so they need no sign-in of their own:
+// Google's login page refuses to render inside an iframe anyway.
+const CF_ACCESS_TEAM = (process.env.REVYME_CF_ACCESS_TEAM ?? '').replace(/\/+$/, '');
+const CF_ACCESS_AUD = process.env.REVYME_CF_ACCESS_AUD ?? '';
+const accessJwks = CF_ACCESS_TEAM && CF_ACCESS_AUD
+  ? createRemoteJWKSet(new URL(`${CF_ACCESS_TEAM}/cdn-cgi/access/certs`))
+  : null;
+
+/** True when the request carries a Cloudflare Access JWT signed by the team
+ *  and issued for this application. Signature, issuer, audience and expiry
+ *  are all checked; the header alone proves nothing. */
+async function accessJwtOk(headers: IncomingHttpHeaders): Promise<boolean> {
+  if (!accessJwks) return false;
+  const raw = headers['cf-access-jwt-assertion'];
+  const jwt = Array.isArray(raw) ? raw[0] : raw;
+  if (!jwt) return false;
+  try {
+    await jwtVerify(jwt, accessJwks, { issuer: CF_ACCESS_TEAM, audience: CF_ACCESS_AUD });
+    return true;
+  } catch {
+    return false;
+  }
+}
 
 const COOKIE = 'revyme_access';
 /** Set alongside COOKIE by every grant. Its absence on a top-level document
@@ -117,6 +147,12 @@ const SIGN_IN_PAGE = `<!doctype html>
   <button type="submit">Unlock</button>
 </form>`;
 
+const ACCESS_PAGE = `<!doctype html>
+<meta charset="utf-8">
+<title>Studio access</title>
+<style>body{margin:0;min-height:100vh;display:grid;place-items:center;background:#0a0a0b;color:#8b8b96;font:14px/1.6 ui-sans-serif,system-ui,sans-serif;text-align:center}b{color:#ededf0}</style>
+<div><b>Sign in through Cloudflare Access.</b><br>Open the editor at its usual address and sign in with Google.</div>`;
+
 const FRAMED_PAGE = `<!doctype html>
 <meta charset="utf-8">
 <title>Studio access</title>
@@ -165,6 +201,18 @@ export function isAuthorizedRequest(req: { headers: import('node:http').Incoming
   return bearerOk(req.headers.authorization, token);
 }
 
+/** isAuthorizedRequest plus Cloudflare Access: what the Socket.IO handshake
+ *  calls, since the editor's socket arrives through Access like its pages. */
+export async function authorizeRequest(req: { headers: IncomingHttpHeaders }): Promise<boolean> {
+  if (!accessJwks && !process.env.REVYME_ACCESS_TOKEN) return true;
+  const host = String(req.headers.host ?? '');
+  if (/^(localhost|127\.0\.0\.1)(:\d+)?$/.test(host)) return true;
+  if (TAILNET_HOSTS.has(host.replace(/:\d+$/, ''))) return true;
+  if (await accessJwtOk(req.headers)) return true;
+  if (!process.env.REVYME_ACCESS_TOKEN) return false;
+  return isAuthorizedRequest(req);
+}
+
 /** `Authorization: Bearer <access token>` — the credential a non-browser
  *  client (an MCP client such as Claude Code) can present, since it has no
  *  way to run the cookie unlock chain. The raw token is compared, timing-
@@ -186,8 +234,8 @@ export function accessGate(): Plugin {
   };
 
   function mountGate(server: { middlewares: import('vite').Connect.Server }) {
-      if (!token) return; // inert on localhost
-      const expected = cookieValueFor(token);
+      if (!token && !accessJwks) return; // inert on localhost
+      const expected = token ? cookieValueFor(token) : '';
 
       server.middlewares.use((req, res, next) => {
         const host = String(req.headers.host ?? '');
@@ -230,6 +278,20 @@ export function accessGate(): Plugin {
         const isEmbedHost = PUBLIC_HOSTS.length > 0 && host !== PUBLIC_HOSTS[0] && PUBLIC_HOSTS.includes(host);
         const sfs = String(req.headers['sec-fetch-site'] ?? '');
         if (isEmbedHost && (sfs === 'same-site' || sfs === 'same-origin')) return next();
+
+        // Access mode: the editor host is admitted by its Access JWT alone.
+        // No token form, no cookie chain — the iframes ride the exemption above.
+        if (accessJwks) {
+          void accessJwtOk(req.headers).then((ok) => {
+            if (ok) return next();
+            if (token && bearerOk(req.headers.authorization, token)) return next();
+            res.statusCode = 403;
+            res.setHeader('content-type', 'text/html; charset=utf-8');
+            res.setHeader('cache-control', 'no-store');
+            res.end(ACCESS_PAGE);
+          });
+          return;
+        }
 
         // Non-browser clients (MCP) authenticate with the token as a bearer.
         if (bearerOk(req.headers.authorization, token)) return next();

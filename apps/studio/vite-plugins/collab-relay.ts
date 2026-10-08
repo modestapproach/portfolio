@@ -27,7 +27,7 @@
 import type { Plugin } from 'vite';
 import type { Server as HttpServer } from 'node:http';
 import { Server as IOServer, type Socket } from 'socket.io';
-import { isAuthorizedRequest } from './access-gate';
+import { authorizeRequest } from './access-gate';
 import { persistRemoteFile, setSaveBroadcaster } from './disk-project';
 
 interface ActiveUser {
@@ -61,12 +61,13 @@ function attach(httpServer: unknown): void {
     path: '/socket.io',
     serveClient: false,
     allowRequest: (req, cb) => {
-      const ok = isAuthorizedRequest(req);
-      if (!ok) {
-        // eslint-disable-next-line no-console
-        console.warn(`[collab-relay] refused handshake from ${req.socket.remoteAddress}`);
-      }
-      cb(null, ok);
+      void authorizeRequest(req).then((ok) => {
+        if (!ok) {
+          // eslint-disable-next-line no-console
+          console.warn(`[collab-relay] refused handshake from ${req.socket.remoteAddress}`);
+        }
+        cb(null, ok);
+      });
     },
   });
 
