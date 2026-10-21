@@ -154,12 +154,40 @@ describe('checkFile — tier 2 dialect', () => {
     expect(codes(checkFile(bad, { kind: 'component' }))).toContain('FORBIDDEN_IMPORT');
   });
 
+  it('allows next-themes — the Theme Toggle template and imported theme switches read useTheme from it', () => {
+    const code = `'use client';
+/** @label "Switch" */
+/** @comment "Theme switch" */
+/** @defaultWidth 40 */
+/** @defaultHeight 20 */
+/** @controls {} */
+import { useTheme } from 'next-themes';
+import { withResponsiveProps } from '@revyme/runtime';
+function Switch(props) {
+  const { resolvedTheme, setTheme } = useTheme();
+  return <div data-id={props['data-id']} onClick={() => setTheme(resolvedTheme === 'dark' ? 'light' : 'dark')} style={{ width: '40px', height: '20px', ...props.style }} />;
+}
+export default withResponsiveProps(Switch);
+`;
+    expect(codes(checkFile(code, { kind: 'code-component' }))).not.toContain('FORBIDDEN_IMPORT');
+  });
+
   it('flags gsap.* calls even without an import', () => {
     const code = CLEAN_COMPONENT.replace(
       'return (',
       `if (typeof window !== 'undefined') { gsap.to('[data-id="card"]', { x: 10 }); }\n  return (`,
     );
     expect(codes(checkFile(code, { kind: 'component' }))).toContain('GSAP_FORBIDDEN');
+  });
+
+  it('refuses a gsap import in a code component too — its licence forbids it in a visual builder', () => {
+    const code = CLEAN_COMPONENT.replace("import React", "import { gsap } from 'gsap';\nimport React");
+    expect(codes(checkFile(code, { kind: 'code-component' }))).toContain('GSAP_FORBIDDEN');
+  });
+
+  it('accepts the automatic JSX runtime a published module imports', () => {
+    const code = CLEAN_COMPONENT.replace("import React", "import { jsx as _jsx } from 'react/jsx-runtime';\nimport React");
+    expect(codes(checkFile(code, { kind: 'component' }))).not.toContain('FORBIDDEN_IMPORT');
   });
 
   it('flags duplicate data-ids with both line numbers', () => {
@@ -497,6 +525,92 @@ describe('checkFile — code components', () => {
   it('the built-in Aurora code component passes with ZERO violations (prime rule)', async () => {
     const { AURORA_BACKGROUND_COMPONENT } = await import('@/code/project/default-code-components/AuroraBackground');
     expect(checkFile(AURORA_BACKGROUND_COMPONENT, { kind: 'code-component' })).toEqual([]);
+
+    // The shader backgrounds shipped in the Insert panel are code components
+    // like any other: if one cannot be resolved, it drags into a page and is
+    // uneditable forever.
+    const backgrounds: [string, string][] = [
+      ['SilkRibbons', 'SILK_RIBBONS_COMPONENT'],
+      ['LightPillar', 'LIGHT_PILLAR_COMPONENT'],
+      ['IridescentFilm', 'IRIDESCENT_FILM_COMPONENT'],
+      ['GodRays', 'GOD_RAYS_COMPONENT'],
+      ['GrainField', 'GRAIN_FIELD_COMPONENT'],
+      ['NebulaField', 'NEBULA_FIELD_COMPONENT'],
+      ['DotWave', 'DOT_WAVE_COMPONENT'],
+      ['ContourMap', 'CONTOUR_MAP_COMPONENT'],
+      ['FluidGradient', 'FLUID_GRADIENT_COMPONENT'],
+      ['CyberGrid', 'CYBER_GRID_COMPONENT'],
+      ['RippleGrid', 'RIPPLE_GRID_COMPONENT'],
+      ['VoronoiCells', 'VORONOI_CELLS_COMPONENT'],
+      ['MetaballField', 'METABALL_FIELD_COMPONENT'],
+      ['HalftoneScreen', 'HALFTONE_SCREEN_COMPONENT'],
+      ['ScanlineCRT', 'SCANLINE_C_R_T_COMPONENT'],
+      ['Smoke', 'SMOKE_COMPONENT'],
+      ['Marble', 'MARBLE_COMPONENT'],
+      ['WarpTunnel', 'WARP_TUNNEL_COMPONENT'],
+      ['StarWarp', 'STAR_WARP_COMPONENT'],
+      ['HexGrid', 'HEX_GRID_COMPONENT'],
+      ['Lightning', 'LIGHTNING_COMPONENT'],
+      ['LiquidChrome', 'LIQUID_CHROME_COMPONENT'],
+      ['Bokeh', 'BOKEH_COMPONENT'],
+      ['RainGlass', 'RAIN_GLASS_COMPONENT'],
+      ['Fireflies', 'FIREFLIES_COMPONENT'],
+      ['Vortex', 'VORTEX_COMPONENT'],
+      ['Sunset', 'SUNSET_COMPONENT'],
+      ['Dunes', 'DUNES_COMPONENT'],
+      ['OilSlick', 'OIL_SLICK_COMPONENT'],
+      ['WaveStack', 'WAVE_STACK_COMPONENT'],
+    ];
+    for (const [file, key] of backgrounds) {
+      const mod = await import(`@/code/project/default-code-components/${file}`);
+      expect(checkFile(mod[key] as string, { kind: 'code-component' }), file).toEqual([]);
+    }
+  });
+
+  it('EVERY built-in code component passes (the agent installs them verbatim via add_built_in_component)', async () => {
+    // 16 of 92 failed before this test existed: ten in-flow fill canvases
+    // (CANVAS_FILL_FEEDBACK — the host grows without bound under a fill
+    // height) and four unguarded rAF loops (CODE_COMPONENT_STATIC_FALLBACK).
+    const { listBuiltInCodeComponents, installBuiltInCodeComponent, projectFS } = await import('@/code/project/project-fs');
+    const failing: string[] = [];
+    for (const c of listBuiltInCodeComponents()) {
+      installBuiltInCodeComponent(projectFS, c.tag);
+      const src = projectFS.readFile(c.path) ?? '';
+      const codesFound = [...new Set(checkFile(src, { kind: 'code-component', path: c.path }).map((v) => v.code))];
+      if (codesFound.length) failing.push(`${c.tag}: ${codesFound.join(', ')}`);
+    }
+    expect(failing).toEqual([]);
+  });
+
+  it('a code component may hold a <select>, computed text, a <style> and free motion props (black box)', () => {
+    const code = `'use client';
+
+/** @label "Picker" */
+/** @defaultWidth 200 */
+/** @defaultHeight 40 */
+/** @controls { "count": { "type": "number", "label": "Count", "default": 3 } } */
+
+import { motion } from 'framer-motion';
+import { withResponsiveProps } from '@revyme/runtime';
+
+function Picker({ count = 3, ...props }: { count?: number; [key: string]: any }) {
+  return (
+    <div {...props} style={{ position: 'relative', ...props.style }}>
+      <style>{\`@keyframes blink { 50% { opacity: 0 } }\`}</style>
+      <select onChange={() => {}}><option value="a">A</option></select>
+      <motion.div animate={{ x: count * 10 }} whileInView={{ opacity: 1 }}>{count * 2}</motion.div>
+    </div>
+  );
+}
+
+export default withResponsiveProps(Picker);
+`;
+    const found = codes(checkFile(code, { kind: 'code-component', path: 'components/Picker.tsx' }));
+    expect(found).not.toContain('INPUT_OUTSIDE_FORM');
+    expect(found).not.toContain('TEXT_EXPRESSION');
+    expect(found).not.toContain('RAW_STYLE_TAG');
+    expect(found).not.toContain('BARE_ANIMATE_OBJECT');
+    expect(found).not.toContain('APPEAR_NOT_ONCE');
   });
 
   it('code component internals do not need data-ids (black box edited via @controls)', () => {
@@ -1499,6 +1613,18 @@ ${body}
     expect(codes(checkFile(bad, { kind: 'page' }))).toContain('HANDLER_CONTENT_STATE');
   });
 
+  it("ALLOWS the builder's own form lifecycle — setFormState<Id>('loading') from onSubmit is what the Form State tool shows", () => {
+    const ok = `'use client';
+import React, { useState } from 'react';
+export default function Page() {
+  const [formStateContactform, setFormStateContactform] = useState('idle');
+  return <div data-id="root" data-name="Page" style={{ position: 'relative', width: '100%', height: 'auto' }}>
+    <form data-id="contact-form" data-name="Form" data-form='{"sendTo":[{"id":"d1","type":"email","recipient":"a@b.com"}]}' onSubmit={async (e) => { e.preventDefault(); setFormStateContactform('loading'); try { await fetch("/api/form", { method: "POST" }); setFormStateContactform('success'); } catch { setFormStateContactform('error'); } }} style={{ position: 'relative', display: 'flex', flexDirection: 'column' }}></form>
+  </div>;
+}`;
+    expect(codes(checkFile(ok, { kind: 'page' }))).not.toContain('HANDLER_CONTENT_STATE');
+  });
+
   it('ALLOWS the sanctioned shapes: event-value setter, clear-with-empty, setVariant, timers', () => {
     const ok = page(`    <input data-id="search-1" data-name="Search" type="text" style={{ position: 'relative', width: '100%' }} onChange={(e) => setSearchTitle(e.target.value)} />
     <button data-id="clear-1" data-name="Clear" style={{ position: 'relative' }} onClick={() => setSearchTitle('')}>Clear</button>
@@ -1599,5 +1725,64 @@ export default function Page() {
   </div>;
 }`;
     expect(codes(checkFile(bad, { kind: 'page' }))).toContain('SELECT_ICON_INLINE_BAKE');
+  });
+});
+
+describe('checkFile — objectList controls (a repeating list of records)', () => {
+  const file = (items: string) => `'use client';
+/** @controls {"items": ${items}} */
+export default function Faq({ items = [] }: { items?: { question: string }[] }) {
+  return <div data-id="faq">{items.length}</div>;
+}
+`;
+  const ok = '{"type":"objectList","label":"Questions","default":[],"item":{"controls":{"question":{"type":"text","label":"Question","default":""}}}}';
+
+  it('accepts a list whose item shape is declared', () => {
+    expect(codes(checkFile(file(ok), { kind: 'code-component' }))).not.toContain('CODE_COMPONENT_CONTROLS_INVALID');
+  });
+
+  // Without the item shape the popup has nothing to edit, and the row is dead.
+  it('rejects a list with no item controls', () => {
+    const bad = '{"type":"objectList","label":"Questions","default":[]}';
+    expect(codes(checkFile(file(bad), { kind: 'code-component' }))).toContain('CODE_COMPONENT_CONTROLS_INVALID');
+  });
+
+  it('rejects an item field the panel cannot render', () => {
+    const bad = '{"type":"objectList","label":"Q","default":[],"item":{"controls":{"q":{"type":"repeater","label":"Q","default":""}}}}';
+    expect(codes(checkFile(file(bad), { kind: 'code-component' }))).toContain('CODE_COMPONENT_CONTROLS_INVALID');
+  });
+
+  it('rejects a default that is not an array', () => {
+    const bad = '{"type":"objectList","label":"Q","default":"","item":{"controls":{"q":{"type":"text","label":"Q","default":""}}}}';
+    expect(codes(checkFile(file(bad), { kind: 'code-component' }))).toContain('CODE_COMPONENT_CONTROLS_INVALID');
+  });
+});
+
+describe('checkFile — a TypeScript code component is not a crash', () => {
+  // Babel's scope counts the annotation in `function C(props: Props)` as an
+  // unbound identifier even when the file declares `interface Props`. Types
+  // are erased before anything runs, so an imported TypeScript component was
+  // reported "would crash" while it compiled and rendered fine.
+  it('does not flag a type-only reference', () => {
+    const code = `'use client';
+interface MyComponentProps { width?: number }
+type Handler = (n: number) => void;
+
+export default function Reveal(props: MyComponentProps) {
+  const cb = props as MyComponentProps;
+  return <div data-id="r">{String(cb.width ?? 0)}</div>;
+}
+`;
+    expect(codes(checkFile(code, { kind: 'code-component' }))).not.toContain('WOULD_CRASH');
+  });
+
+  // …while a real dangling VALUE still is one.
+  it('still flags an identifier used as a value', () => {
+    const code = `'use client';
+export default function Reveal() {
+  return <div data-id="r">{missingThing}</div>;
+}
+`;
+    expect(codes(checkFile(code, { kind: 'code-component' }))).toContain('WOULD_CRASH');
   });
 });

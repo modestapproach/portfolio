@@ -5,7 +5,14 @@
 
 import { trace } from '@/shared/debug-trace';
 import { projectFS } from '../project/project-fs';
-import { settlePendingFanOutForHistory } from './mutation-queue';
+import { isCanvasBusy } from '@/code/stores/agent-run-lock-store';
+import { settlePendingFanOutForHistory, hasQueuedMutations, flushNow, getQueueActiveFilePath,
+  syncQueueCode, dropQueuedBranch } from './mutation-queue';
+import { seedNodesForCode } from '@/code/stores/store';
+import { clearBridgeReadCaches } from '@/canvas/canvas-bridge';
+import { triggerAutosave } from '@/backend/autosave';
+import { getDefaultStore } from 'jotai';
+import { projectVersionAtom } from '@/code/project/project-fs';
 
 const MAX_HISTORY = 100;
 const DEBOUNCE_MS = 300; // Group rapid changes (e.g., drag scrubbing)
@@ -41,6 +48,10 @@ export interface UiLocation {
   /** Manage Translations overlay: the locale it was showing, or null/absent
    *  when it was closed. */
   localizationLocale?: string | null;
+  /** Component-editing breadcrumb trail (ancestor files above the active
+   *  master). Undo/redo of a navigation-changing op (nested Make Component,
+   *  file ops) must restore it with the active file or the bar goes stale. */
+  breadcrumb?: string[];
 }
 
 interface HistoryEntry {
@@ -67,6 +78,11 @@ interface HistoryEntry {
    *  BOTH undo and redo, exactly like `activeFile`: it records where the edit
    *  was made, which is where either direction should show it. */
   uiLocation?: UiLocation;
+  /** Editor chrome once the operation SETTLED — redo restores this (the
+   *  post-op trail, e.g. inside the component Make Component created),
+   *  while undo restores `uiLocation` (pre-op). Absent on old entries →
+   *  redo falls back to `uiLocation`. */
+  uiLocationAfter?: UiLocation;
 }
 
 // ─── State ──────────────────────────────────────────────────────────────────
@@ -301,7 +317,7 @@ function commitPendingHistory(): void {
   const currentSnapshot = projectFS.getSnapshot();
   const finalDiffs = computeDiffs(lastSnapshot, currentSnapshot);
   if (finalDiffs.length > 0) {
-    undoStack.push({ diffs: finalDiffs, selBefore: pendingSelBefore ?? liveSelection(), selAfter: liveSelection(), activeFile: pendingActiveFile ?? liveActiveFile(), uiLocation: pendingUiLocation ?? liveUiLocation() });
+    undoStack.push({ diffs: finalDiffs, selBefore: pendingSelBefore ?? liveSelection(), selAfter: liveSelection(), activeFile: pendingActiveFile ?? liveActiveFile(), uiLocation: pendingUiLocation ?? liveUiLocation(), uiLocationAfter: liveUiLocation() });
     if (undoStack.length > MAX_HISTORY) undoStack.shift();
     lastSnapshot = currentSnapshot;
     redoStack = [];
@@ -353,7 +369,7 @@ export function pushHistoryImmediate(newCode: string): void {
   const diffs = computeDiffs(lastSnapshot, currentSnapshot);
   if (diffs.length === 0) return;
 
-  const entry: HistoryEntry = { diffs, selBefore: liveSelection(), selAfter: liveSelection(), activeFile: liveActiveFile(), uiLocation: liveUiLocation() };
+  const entry: HistoryEntry = { diffs, selBefore: liveSelection(), selAfter: liveSelection(), activeFile: liveActiveFile(), uiLocation: liveUiLocation(), uiLocationAfter: liveUiLocation() };
   undoStack.push(entry);
   if (undoStack.length > MAX_HISTORY) undoStack.shift();
   lastSnapshot = new Map(currentSnapshot);
@@ -362,7 +378,7 @@ export function pushHistoryImmediate(newCode: string): void {
   // post-flush `setSelectedIds([newId])` typically lands later in the same
   // call stack. Refresh `selAfter` on the next microtask so redo reselects
   // the created node, not the pre-op selection.
-  queueMicrotask(() => { entry.selAfter = liveSelection(); });
+  queueMicrotask(() => { entry.selAfter = liveSelection(); entry.uiLocationAfter = liveUiLocation(); });
   trace.action('history:push-immediate', { undoSize: undoStack.length, diffCount: diffs.length });
 }
 
@@ -400,6 +416,54 @@ export function pushHistoryFileOp(activeFileBefore: string): void {
     undoStack[undoStack.length - 1].activeFileBefore = activeFileBefore;
     trace.action('history:push-file-op', { activeFileBefore, activeFile: undoStack[undoStack.length - 1].activeFile });
   }
+}
+
+/**
+ * Record a pure NAVIGATION (no file changed) as its own history step.
+ *
+ * Clicking a breadcrumb segment moves the editor between a page and its
+ * component masters without touching a single file, so the diff-based pushes
+ * above produce nothing and Cmd+Z skipped straight past it — undoing an edit
+ * made minutes earlier on another file instead of walking the user back
+ * (report 2026-09-09). This entry carries no diffs at all: undo restores the
+ * `from` side (file + breadcrumb + selection), redo the `to` side, and the
+ * project content is untouched either way.
+ *
+ * Call AFTER the navigation has been applied, so the live state IS the
+ * destination. `from` describes where the user just left.
+ */
+export function pushHistoryNavigation(from: {
+  activeFile: string;
+  uiLocation?: UiLocation;
+  selection?: string[];
+}): void {
+  // Any pending edit seals as its OWN entry first — otherwise the navigation
+  // folds into it and one Cmd+Z would undo both.
+  sealPendingHistory();
+  const to = liveActiveFile();
+  const toUi = liveUiLocation();
+  if (from.activeFile === to
+    && JSON.stringify(from.uiLocation?.breadcrumb ?? []) === JSON.stringify(toUi.breadcrumb ?? [])) {
+    return; // went nowhere
+  }
+  const entry: HistoryEntry = {
+    diffs: [],
+    selBefore: from.selection ?? [],
+    selAfter: liveSelection(),
+    activeFile: to,
+    activeFileBefore: from.activeFile,
+    uiLocation: from.uiLocation ?? {},
+    uiLocationAfter: toUi,
+  };
+  undoStack.push(entry);
+  if (undoStack.length > MAX_HISTORY) undoStack.shift();
+  // A navigation changes no files, so the snapshot the next diff is measured
+  // against must stay exactly as it is.
+  redoStack = [];
+  trace.action('history:push-navigation', {
+    from: from.activeFile, to, undoSize: undoStack.length,
+    fromCrumb: from.uiLocation?.breadcrumb?.length ?? 0, toCrumb: toUi.breadcrumb?.length ?? 0,
+  });
 }
 
 /** Sync history when code changes from external source (Monaco typing) */
@@ -481,7 +545,7 @@ function restoreToFileAndSelection(targetFile: string, targetSel: string[]): voi
     // restore's visual is painted AND the allRects measure has landed, so
     // the reselect's React pass (~105ms — overlay + tool column) can't
     // push the visual late and the overlay positions from fresh rects.
-    // Typically ~60-70ms after the keypress (the Framer-parity "selection
+    // Typically ~60-70ms after the keypress (the the reference builder-parity "selection
     // follows undo instantly" feel, 2026-08-06). This timer is the
     // FALLBACK for renders that never complete (sandbox mid-rebuild,
     // dropped render): 300ms measured as safely after the deferred
@@ -498,6 +562,14 @@ function restoreToFileAndSelection(targetFile: string, targetSel: string[]): voi
 
 /** Undo — restore previous project state */
 export function undo(): boolean {
+  // Never while an agent run holds this branch: an undo would rewind files
+  // out from under the run's queued mutations and checkpoint diffs. A run on
+  // another branch owns disjoint maps, so undo stays available there. The
+  // agent has no undo tool, so every caller here is human.
+  if (isCanvasBusy()) {
+    trace.action('history:undo-refused-canvas-busy', {});
+    return false;
+  }
   // A drag-drop may have DEFERRED its setCode fan-out (+ pushHistory) — a
   // DROP-kind fan-out is forced NOW so this undo captures the drop, not the
   // state before it; a RESTORE-kind one is cancelled as superseded.
@@ -516,7 +588,7 @@ export function undo(): boolean {
   const forwardDiffs = applyDiffsReverse(entry.diffs);
   // Store forward diffs for redo — carry the SAME selection pair + page so
   // redo reselects `selAfter` on the right page and a later undo `selBefore`.
-  redoStack.push({ diffs: forwardDiffs, selBefore: entry.selBefore, selAfter: entry.selAfter, activeFile: entry.activeFile, activeFileBefore: entry.activeFileBefore, uiLocation: entry.uiLocation });
+  redoStack.push({ diffs: forwardDiffs, selBefore: entry.selBefore, selAfter: entry.selAfter, activeFile: entry.activeFile, activeFileBefore: entry.activeFileBefore, uiLocation: entry.uiLocation, uiLocationAfter: entry.uiLocationAfter });
   lastSnapshot = projectFS.getSnapshot();
 
   trace.action('history:undo', { undoSize: undoStack.length, redoSize: redoStack.length, diffCount: entry.diffs.length, paths: entry.diffs.map(d => d.path), activeFile: entry.activeFile, activeFileBefore: entry.activeFileBefore, hasBumpVersion: !!_bumpVersion });
@@ -535,6 +607,10 @@ export function undo(): boolean {
 
 /** Redo — restore next project state */
 export function redo(): boolean {
+  if (isCanvasBusy()) {
+    trace.action('history:redo-refused-canvas-busy', {});
+    return false;
+  }
   settlePendingFanOutForHistory(); // land a drop fan-out / cancel a restore one (see undo)
   commitPendingHistory(); // land any pending debounced change (may clear redoStack)
   if (redoStack.length === 0) {
@@ -547,13 +623,13 @@ export function redo(): boolean {
   // Apply diffs forward (restore new content)
   const reverseDiffs = applyDiffsForward(entry.diffs);
   // Store reverse diffs for undo — carry the selection pair + page forward.
-  undoStack.push({ diffs: reverseDiffs, selBefore: entry.selBefore, selAfter: entry.selAfter, activeFile: entry.activeFile, activeFileBefore: entry.activeFileBefore, uiLocation: entry.uiLocation });
+  undoStack.push({ diffs: reverseDiffs, selBefore: entry.selBefore, selAfter: entry.selAfter, activeFile: entry.activeFile, activeFileBefore: entry.activeFileBefore, uiLocation: entry.uiLocation, uiLocationAfter: entry.uiLocationAfter });
   lastSnapshot = projectFS.getSnapshot();
 
   trace.action('history:redo', { undoSize: undoStack.length, redoSize: redoStack.length, diffCount: entry.diffs.length, activeFile: entry.activeFile });
   // Navigate to the page the change belongs to, restore code, reselect the
   // post-op selection (e.g. the re-created node from a redone paste).
-  restoreUiLocation(entry.uiLocation);
+  restoreUiLocation(entry.uiLocationAfter ?? entry.uiLocation);
   restoreToFileAndSelection(entry.activeFile, entry.selAfter);
   return true;
 }
@@ -566,4 +642,163 @@ export function getHistoryState(): { canUndo: boolean; canRedo: boolean; undoSiz
     undoSize: undoStack.length,
     redoSize: redoStack.length,
   };
+}
+
+/**
+ * Drop both history stacks and re-baseline against the CURRENT ProjectFS.
+ *
+ * Used when the editor's file truth is replaced wholesale rather than edited
+ * — switching branch workspaces, for instance. Undo must not be able to step
+ * back across that boundary into another workspace's files, and the next
+ * diff has to be taken against what is on screen now, not what was there
+ * before the switch. Unlike `initHistory` this keeps the wired callbacks.
+ */
+export function clearHistoryStacks(): void {
+  undoStack = [];
+  redoStack = [];
+  lastSnapshot = projectFS.getSnapshot();
+  if (debounceTimer) { clearTimeout(debounceTimer); debounceTimer = null; }
+  _historyDirty = false;
+  pendingSelBefore = null;
+  pendingActiveFile = null;
+  trace.action('history:clear-stacks', {});
+}
+
+export interface RestoreSnapshotOptions {
+  /** File the queue + node cache track (default: the wired active file, else
+   *  the queue's own tracked path). The queue base is re-seeded from this
+   *  file's restored content — without it the next flush resurrects
+   *  pre-restore code. */
+  activeFile?: string;
+  /** Selection to validate against the restored node map and apply. Default:
+   *  re-validate the live selection (clears ids the restore removed). */
+  selection?: string[];
+  /** 'rebaseline' (default): reset the history baseline to the restored state
+   *  so the next push diffs against it — no phantom entry covering the
+   *  restore itself. 'none': leave stacks/baseline untouched (undo/redo own
+   *  their entries; they borrow only the queue re-sync). */
+  history?: 'rebaseline' | 'none';
+  reason?: string;
+  /** Persist the restored state (default true → debounced autosave). */
+  autosave?: boolean;
+}
+
+/** Reset the history BASELINE to the current ProjectFS without touching the
+ *  stacks — the next push diffs against what is on screen now. */
+export function rebaselineHistory(): void {
+  if (debounceTimer) { clearTimeout(debounceTimer); debounceTimer = null; }
+  _historyDirty = false;
+  pendingSelBefore = null;
+  pendingActiveFile = null;
+  lastSnapshot = projectFS.getSnapshot();
+  trace.action('history:rebaseline', {});
+}
+
+
+/**
+ * THE unique snapshot-restore path (Porte 5 / D-T3). Every full-snapshot
+ * restore — revert-turn, redo-turn, batch rollback, commit rollback, file
+ * switch — goes through here so queue, caches, selection, history baseline,
+ * version and persistence move together. A raw `projectFS.loadSnapshot`
+ * rewinds the FS but leaves the queue base, the node cache, the bridge read
+ * caches and the history baseline stale: the next flush / push then
+ * resurrects the pre-restore content on top of the restore (Porte 5 §2).
+ *
+ * Never throws: a bounce or a missing wiring must never abort the restore —
+ * each step degrades to a traceable no-op instead.
+ */
+export function restoreSnapshot(snap: Map<string, string>, opts: RestoreSnapshotOptions = {}): void {
+  const reason = opts.reason ?? 'restore';
+  // 1. Land-or-supersede any deferred fan-out (a DROP-kind fan-out flushes so
+  //    the restore lands on top of it; a RESTORE-kind one is superseded).
+  settlePendingFanOutForHistory();
+  // 2. Land unflushed queued mutations BEFORE sealing history: the flush's
+  //    onFlush pushes them (debounced) and step 3 captures them as their own
+  //    entry. Restoring over an unflushed queue lets the next drain replay
+  //    pre-restore mutations onto the restored base (batch-ressuscité).
+  try {
+    if (hasQueuedMutations()) flushNow();
+  } catch { /* a bounce must never abort the restore */ }
+  // 3. Seal pre-restore pending edits as their own entry — never folded into
+  //    post-restore diffs, never silently discarded by step 7's rebaseline.
+  sealPendingHistory();
+  // 4. The restore itself (notifies subscribers + bumps the version atom).
+  projectFS.loadSnapshot(snap);
+  // 5. Re-seed the queue base + the node cache from the restored active file.
+  const activeFile = opts.activeFile || liveActiveFile() || getQueueActiveFilePath() || '';
+  const code = activeFile ? (snap.get(activeFile) ?? projectFS.readFile(activeFile)) : null;
+  if (code != null) {
+    syncQueueCode(code);
+    try {
+      seedNodesForCode(code);
+    } catch { /* parse-tolerant: the cache stays stale, the render re-derives */ }
+  }
+  // 6. Drop stale bridge read caches (the cache key is vpPrefix:nodeId — the
+  //    same data-id may exist in another file with other coordinates).
+  try {
+    clearBridgeReadCaches();
+  } catch { /* headless / unwired bridge */ }
+  // 7. Canvas-first restore when the lifecycle is wired (queue sync + node
+  //    seed + iframe patch render + deferred fan-out + token refresh).
+  try {
+    onRestore?.(snap);
+  } catch { /* unwired (tests, agent headless) — steps 5-6 already synced */ }
+  // 8. Selection: never point at nodes the restore removed.
+  if (opts.selection) {
+    applyRestoredSelection(opts.selection);
+  } else if (_setSelection && _getNodeIds) {
+    applyRestoredSelection(liveSelection());
+  }
+  // 9. Rebaseline history (unless the caller owns the stacks).
+  if (opts.history !== 'none') {
+    rebaselineHistory();
+  }
+  // 10. Version bump + persist + trace.
+  _bumpVersion?.();
+  if (opts.autosave !== false) {
+    triggerAutosave();
+  }
+  // Ib-8 n°7: every new write path traces file + epoch (author/branchId are
+  // Porte 8 — queue tagging does not exist yet in phase 1).
+  let epoch = -1;
+  try {
+    epoch = getDefaultStore().get(projectVersionAtom);
+  } catch { /* unwired store in some tests */ }
+  trace.action('history:restore-snapshot', {
+    reason,
+    files: snap.size,
+    activeFile,
+    history: opts.history ?? 'rebaseline',
+    epoch,
+  });
+}
+
+/**
+ * Branch-scoped rollback (Porte 8): rewind a branch map to `snap` for
+ * batch/chain compensation on branches. Deliberately NARROWER than
+ * restoreSnapshot: drops the branch's queued entries (anti-resurrection),
+ * replaces the branch map (no canvas patch, no selection validation, no
+ * history touch — per-branch stacks arrive in (vii)), persists. Never
+ * throws (rollback paths must not throw); returns the refusal instead.
+ */
+export function restoreBranchSnapshot(
+  branchId: string,
+  snap: Map<string, string>,
+  opts: { activeFile?: string; reason?: string } = {},
+): string | null {
+  try {
+    dropQueuedBranch(branchId);
+    const err = projectFS.loadBranchSnapshot(branchId, snap);
+    if (err) return err;
+    triggerAutosave();
+  } catch (e) {
+    return e instanceof Error ? e.message : String(e);
+  }
+  trace.action('history:restore-branch-snapshot', {
+    reason: opts.reason ?? 'restore',
+    branch: branchId,
+    files: snap.size,
+    activeFile: opts.activeFile ?? null,
+  });
+  return null;
 }

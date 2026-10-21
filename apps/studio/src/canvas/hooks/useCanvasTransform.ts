@@ -32,6 +32,19 @@ import { cameraMoveOps } from '@/canvas/camera-move-store';
 import { trace, observeDOM } from '@/shared/debug-trace';
 import type { PostMessageBridge } from '@/canvas-sandbox/bridge-host';
 
+/** Marker for canvas chrome portalled OUTSIDE the canvas container that must
+ *  still zoom/pan the canvas under the wheel (see the passthrough below). */
+export const CANVAS_WHEEL_MARKER = 'data-canvas-wheel';
+
+/** True when a wheel event's target is marked chrome living outside `container`
+ *  (events inside the container already reach its own listener). */
+export function isCanvasChromeWheel(target: EventTarget | null, container: Element): boolean {
+  const el = target instanceof Element ? target : null;
+  if (!el || container.contains(el)) return false;
+  return el.closest(`[${CANVAS_WHEEL_MARKER}]`) !== null;
+}
+
+
 export interface UseCanvasTransformOptions {
   containerRef: React.RefObject<HTMLDivElement | null>;
   contentRef: React.RefObject<HTMLDivElement | null>;
@@ -177,18 +190,24 @@ export function useCanvasTransform(opts: UseCanvasTransformOptions) {
     // This prevents browser auto-scroll AND gives reliable button-matched up/down.
     const detachMiddlePan = attachMiddleMousePan(container, setPanCursor);
 
-    // Wheel events INSIDE the iframe don't bubble to parent — sandbox forwards
-    // them via postMessage. Synthesize a WheelEvent here so handleWheel works
-    // unchanged. Coordinates from the message are iframe-local; add the
-    // iframe's screen offset so handleWheel's container-relative math is correct.
+    // Wheel events INSIDE the iframe don't bubble to parent — the sandbox
+    // forwards them via postMessage (canvas-sandbox/wheel-forward.ts). They only
+    // land there while text / vector edit flips the iframe to pointer-events:
+    // auto. Synthesize a WheelEvent here so handleWheel works unchanged.
+    // Coordinates from the message are iframe-local; add the iframe's screen
+    // offset so handleWheel's container-relative math is correct.
     const onIframeWheel = (e: MessageEvent) => {
       if (!e.data || e.data.type !== 'wheel') return;
       const iframe = iframeRef.current;
       if (!iframe) return;
+      // Only the canvas iframe drives the camera — not a plugin or preview frame.
+      if (e.source !== iframe.contentWindow) return;
       const ir = iframe.getBoundingClientRect();
       const synthetic = new WheelEvent('wheel', {
         deltaX: e.data.deltaX,
         deltaY: e.data.deltaY,
+        // Pixels vs lines decides pinch vs mouse-wheel zoom speed (isTrackpadPinch).
+        deltaMode: e.data.deltaMode ?? 0,
         ctrlKey: e.data.ctrlKey,
         metaKey: e.data.metaKey,
         clientX: e.data.clientX + ir.left,
@@ -198,11 +217,24 @@ export function useCanvasTransform(opts: UseCanvasTransformOptions) {
     };
     window.addEventListener('message', onIframeWheel);
 
+    // Canvas CHROME portalled to document.body (connection handles, the
+    // Add Variant / Add Vector cards) sits visually over the canvas but
+    // OUTSIDE the container, so a pinch or wheel while the cursor rests on
+    // it never reaches the listener above — the browser zoomed the whole page
+    // instead of the canvas (live find 2026-09-07). Chrome opts in with the
+    // `data-canvas-wheel` marker; route those events into the same handler.
+    const onChromeWheel = (e: WheelEvent) => {
+      if (!isCanvasChromeWheel(e.target, container)) return;
+      handleWheel(e, container.getBoundingClientRect());
+    };
+    window.addEventListener('wheel', onChromeWheel, { passive: false, capture: true });
+
     return () => {
       trace.action('canvas-transform:wheel-detach', {});
       container.removeEventListener('wheel', onWheel);
       detachMiddlePan();
       window.removeEventListener('message', onIframeWheel);
+      window.removeEventListener('wheel', onChromeWheel, { capture: true } as any);
     };
   }, []); // eslint-disable-line react-hooks/exhaustive-deps
 }

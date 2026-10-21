@@ -17,29 +17,32 @@ import { parse } from '@babel/parser';
 import type { NodePath } from '@babel/traverse';
 import * as t from '@babel/types';
 import { trace } from '@/shared/debug-trace';
-import { isSvgTag } from '@/shared/constants';
+import { isSvgTag, isTextTag } from '@/shared/constants';
+import { formattedBranchesOfDangerAttr } from '@/shared/rich-message';
 import { parseJSXToNodes } from '@/code/parsing/parser';
 import { parseComponentCursorCalls } from '@/code/parsing/cursor-parser';
-import { parseCodeComponentDefaultSize } from '@/code/components/controls-parser';
+import { parseCodeComponentDefaultSize, parseComponentControlsMeta, hasComponentControls, CONTROL_TYPES } from '@/code/components/controls-parser';
 import { validateGeneratedCode } from '@/code/mutation/mutation-queue';
-import { traverse, TRANSPARENT_TAGS, jsxTagName, jsxAttrs, stringAttr, hasAttr, needsDataId, isAllowedTextExpression, isCodeComponentSource } from './checks/shared';
+import { traverse, TRANSPARENT_TAGS, jsxTagName, jsxAttrs, stringAttr, hasAttr, needsDataId, isAllowedTextExpression, isCodeComponentSource, booleanPropNames } from './checks/shared';
 import type { FileKind, OracleViolation } from './checks/shared';
 import { checkStyleObject, styleValueIncludes } from './checks/style-object';
 import { SELECT_ICON_ATTR, parseSelectIconSpec } from '@/editor/tools/InputTool/select-icon';
 import { checkVariantDialect, checkVariantTernaryPrimary } from './checks/variant-dialect';
 import { checkScrollDialect } from './checks/scroll-dialect';
 import { checkPageVariableTypes, checkEventVariables, checkComponentFluidWidth } from './checks/element-identity';
+import { checkDuplicateAttributes, checkInlineDataUris } from './checks/attribute-hygiene';
 import { checkSlotComponentInlineChildren, checkUnresolvableTernary, checkGridNeedsTemplate, checkGridChildSpan, checkCanvasFillFeedback, checkPaddingNeedsLayout, checkFlexChildOrder, checkOrderIsString, checkFlexChildShrink, checkFlexRowChildFullWidth, checkImageBackgroundFrame, checkNoLayoutParentRelativeChild, checkMediaColumnFlipRebase } from './checks/layout-rules';
 import { checkCanvasConfig } from './checks/canvas-config';
 import { checkOverlayDialect } from './checks/overlay-dialect';
-import { checkSvgShapeDialect } from './checks/svg-shape-dialect';
+import { checkSvgShapeDialect, checkShapeVariantDForm } from './checks/svg-shape-dialect';
 import { checkMotionAppearHidden, checkMotionTransformDrift } from './checks/motion-appear';
+import { checkCodeOverrides } from './checks/code-override';
 import { checkMotionPropsNeedMotionTag } from './checks/motion-tag';
 import { checkTranslationDialect } from './checks/translation-dialect';
 import { checkMediaBandDialect, checkDuplicateBreakpointStack } from './checks/media-band-dialect';
 import { checkComponentLinks, checkPageLinks } from './checks/link-rules';
 import { checkCmsRowNavMarker, checkCmsCollectionDialect, checkCmsNavDialect } from './checks/cms-dialect';
-import { checkCmsLocaleFilter, checkCmsI18nDirectAccess, checkCmsMapResolves, checkCmsStyleBindingsResolve } from './checks/cms-locale-dialect';
+import { checkCmsLocaleFilter, checkCmsI18nDirectAccess, checkCmsMapResolves, checkCmsStyleBindingsResolve, checkInlineMapUnsupported } from './checks/cms-locale-dialect';
 import { checkResolutionFidelity } from './checks/fidelity';
 import { checkStyleSurface, checkTextStyleOnFrame, checkElementSurface, checkLoopCarrier, checkPageExports, checkExpressionDataAttrs } from './checks/surface-dialect';
 import { checkConditionalRenderDialect, checkHandWrittenMediaQuery, checkUnreadableHandlers, checkPageHooks, checkHandlerBodies } from './checks/conditional-render-dialect';
@@ -55,12 +58,24 @@ export { ensureNodeDimensions } from './checks/node-dimensions';
 // (live false positive 2026-06-10: user-inserted SeYuSe icon set bounced).
 const IMPORT_ALLOWLIST = [
   /^react$/, /^react-dom$/, /^framer-motion$/,
+  // The automatic JSX runtime: a module the reference builder publishes is compiled with it,
+  // so it imports `jsx`/`jsxs` from here instead of using JSX syntax.
+  /^react\/jsx-runtime$/, /^react\/jsx-dev-runtime$/,
+  // Motion One, wired into the code-component MODULE_MAP.
+  /^@motionone\//, /^motion$/,
   /^next\//, /^@revyme\/runtime$/, /^@\/components\//,
   /^@\/icons\//,
+  // Code overrides — `import { withX } from '@/overrides/<File>'` feeds `<Override with={withX}>`.
+  /^@\/overrides\//,
   // next-intl — the localization dialect MANDATES `import { useTranslations }
   // from 'next-intl'` for every t() page (TRANSLATION_HOOK_MISSING), so the
   // import must pass or a translated page can never be resubmitted.
   /^next-intl$/,
+  // next-themes — the builder's own Theme Toggle template and an imported
+  // theme switch read `useTheme` from it; it resolves on the live site
+  // through the site's ThemeProvider and on the canvas through the code
+  // component runtime's stub.
+  /^next-themes$/,
   // Marketplace share bundles (the Copy-URL pipeline's CDN). The MCP's
   // marketplace browse tool hands the model these URLs so it can compose
   // FREE community components/vector sets straight into a design — the
@@ -78,7 +93,7 @@ const IMPORT_ALLOWLIST = [
 /** Comment blocks that are FEATURE ANNOTATIONS, not prose — always allowed.
  *  @propMeta + @pageVariables are the page-variables feature's blocks (live
  *  prime-rule find 2026-06-10: a builder-written page bounced NO_COMMENTS). */
-const ANNOTATION_RE = /@name|@controls|@label|@comment|@canvas|@propMeta|@pageVariables|@cmsPage|@useResponsiveText/;
+const ANNOTATION_RE = /@name|@controls|@label|@comment|@canvas|@propMeta|@pageVariables|@cmsPage|@useResponsiveText|@responsiveList-(begin|end)/;
 
 /** Internal paint/typography props that never belong on a component INSTANCE
  *  tag — the wrapper carries placement only; these either double-apply or
@@ -110,6 +125,10 @@ function isEditorMediaStyleBlock(el: t.JSXElement): boolean {
   const child = real[0];
   if (!t.isJSXExpressionContainer(child) || !t.isTemplateLiteral(child.expression)) return false;
   const css = child.expression.quasis.map((q) => q.value.raw).join('');
+  // An EMPTY block is the editor's own leftover: removing the last breakpoint
+  // (or the last override) empties the block but keeps the tag. Nothing in it
+  // can be misread, so it passes.
+  if (css.trim() === '') return true;
   const skipBlock = (open: number): number => {
     let depth = 1;
     let j = open + 1;
@@ -149,6 +168,12 @@ function isEditorMediaStyleBlock(el: t.JSXElement): boolean {
       const sel = css.slice(i, open).trim();
       if (!/^\[data-id="[^"]+"\](?:::?[a-z-]+(?:\([^)]*\))?)+$/.test(sel)
         && !/^:lang\([^)]+\)\s*\[data-id="[^"]+"\]$/.test(sel)
+        // The PER-VARIANT border overlay, exactly as borderOverlaySelector
+        // writes it (generator-styles updateBorderOverlayStyle, which also
+        // stamps the `data-variant={variant}` carrier on the root). Generator
+        // output like the base rule above — it was simply never allowed here,
+        // so a master with a variant-scoped border bounced its own oracle.
+        && !/^\[data-variant="([^"]+)"\]\s\[data-id="([^"]+)"\]::after,\s*\[data-id="\2"\]\[data-variant="\1"\]::after$/.test(sel)
         // The Input tool's select CARET rule — the ONE tag-qualified data-id
         // form the editor owns (updateSelectCaretRuleInCode; read back via the
         // data-select-icon attr). Bare un-qualified `[data-id] { }` rules stay
@@ -178,6 +203,8 @@ export function checkFile(
   // for direct/standalone checks → those new-node rules stay silent.
   const existingDataIds = opts.existingDataIds;
   const v: OracleViolation[] = [];
+  // Computed once per file, not per style object: the walk is over the whole AST.
+  let fileBooleanProps: Set<string> | undefined;
 
   // ── tier 1 — SYNTAX ────────────────────────────────────────────────────────
   let ast: t.File;
@@ -193,6 +220,7 @@ export function checkFile(
       message: `The file does not parse: ${e.message ?? 'unknown parse error'}. Return the complete corrected file.`,
     }];
   }
+  fileBooleanProps = booleanPropNames(ast);
 
   // ── tier 2 — DIALECT ───────────────────────────────────────────────────────
 
@@ -230,6 +258,11 @@ export function checkFile(
     if (hookFn && hookFn.index !== undefined) exemptRanges.push([hookFn.index, hookFn.index + hookFn[0].length]);
     const mqHook = code.match(/function useMediaQuery\([\s\S]*?\n\}/);
     if (mqHook && mqHook.index !== undefined) exemptRanges.push([mqHook.index, mqHook.index + mqHook[0].length]);
+    // …and the per-breakpoint collection-list resolver fence (cms-responsive-gen).
+    const listFence = code.match(/\/\/ @responsiveList-begin[\s\S]*?\/\/ @responsiveList-end/);
+    if (listFence && listFence.index !== undefined) exemptRanges.push([listFence.index, listFence.index + listFence[0].length]);
+    const listHook = code.match(/function useResponsiveListConfig\([\s\S]*?\n\}/);
+    if (listHook && listHook.index !== undefined) exemptRanges.push([listHook.index, listHook.index + listHook[0].length]);
     for (const c of ast.comments ?? []) {
       if (ANNOTATION_RE.test(c.value)) continue;
       const cs = c.start ?? -1;
@@ -384,6 +417,46 @@ export function checkFile(
         message: `Missing /** @controls {…} */ annotation. Code components declare their editable props as a @controls JSON block (types: slider, color, text, number, toggle, select) plus /** @label "…" */.`,
       });
     }
+    // CODE_COMPONENT_CONTROLS_INVALID — a @controls block the panel cannot
+    // read. The parser swallows a JSON error and returns null, so the
+    // component installed with ZERO controls and nobody knew why (audit G3).
+    // Same for a control without a type / with an unknown type: the panel has
+    // no editor for it and silently skips the row.
+    if (hasComponentControls(code)) {
+      const meta = parseComponentControlsMeta(code);
+      const controlsLine = code.slice(0, code.search(/@controls/)).split('\n').length;
+      if (!meta) {
+        v.push({
+          code: 'CODE_COMPONENT_CONTROLS_INVALID', tier: 2, line: controlsLine,
+          message: `The /** @controls {…} */ block is not valid JSON (line ${controlsLine}) — the panel shows NO controls for this component. Use double-quoted keys and strings, no trailing commas, no comments, and close it with "} */". Each control: "name": { "type": "slider|number|color|text|toggle|select|upload|imageList|objectList|font|slot|group|transition", "label": "…", "default": … }.`,
+        });
+      } else {
+        const bad: string[] = [];
+        const walk = (controls: Record<string, { type?: string; label?: string; default?: unknown; controls?: Record<string, unknown>; item?: { controls?: Record<string, unknown> } }>, prefix: string) => {
+          for (const [name, def] of Object.entries(controls)) {
+            if (!def || typeof def !== 'object') { bad.push(`${prefix}${name}: not an object`); continue; }
+            if (!def.type) bad.push(`${prefix}${name}: no "type"`);
+            else if (!(CONTROL_TYPES as readonly string[]).includes(def.type)) bad.push(`${prefix}${name}: unknown type "${def.type}"`);
+            else if (def.type !== 'slot' && def.type !== 'group' && def.default === undefined) bad.push(`${prefix}${name}: no "default"`);
+            if (def.type === 'group' && def.controls) walk(def.controls as Record<string, { type?: string }>, `${prefix}${name}.`);
+            // An objectList's item shape is the fields of each object in the
+            // array; without it the popup has nothing to edit.
+            if (def.type === 'objectList') {
+              if (!def.item?.controls || !Object.keys(def.item.controls).length) bad.push(`${prefix}${name}: objectList needs "item": { "controls": {…} }`);
+              else walk(def.item.controls as Record<string, { type?: string }>, `${prefix}${name}[].`);
+              if (def.default !== undefined && !Array.isArray(def.default)) bad.push(`${prefix}${name}: objectList "default" must be an array`);
+            }
+          }
+        };
+        walk(meta.controls as Record<string, { type?: string }>, '');
+        if (bad.length) {
+          v.push({
+            code: 'CODE_COMPONENT_CONTROLS_INVALID', tier: 2, line: controlsLine,
+            message: `@controls (line ${controlsLine}) has entries the panel cannot render: ${bad.join('; ')}. Every control needs a "type" from slider|number|color|text|toggle|select|upload|imageList|objectList|font|slot|group|transition, a "label" and (except slot / group) a "default" that matches the prop's default in the signature.`,
+          });
+        }
+      }
+    }
     // CODE_COMPONENT_STATIC_FALLBACK — the editor canvas renders code components statically; an
     // unguarded rAF loop runs in every canvas replica (or paints nothing).
     if (/requestAnimationFrame\s*\(/.test(code) && !/useStaticCanvas/.test(code)) {
@@ -447,7 +520,7 @@ export function checkFile(
       if (!IMPORT_ALLOWLIST.some((re) => re.test(src))) {
         v.push({
           code: 'FORBIDDEN_IMPORT', tier: 2, line: path.node.loc?.start.line,
-          message: `Cannot import "${src}" — it does not resolve in this builder. Allowed imports: react, react-dom, framer-motion, next/*, @revyme/runtime, @/components/*, @/icons/*, and marketplace share bundles (https://assets.revyme.app/components|vectors/<name>@<hash>.js — discover free ones via the marketplace browse tool). CSS imports are forbidden: all styling is inline style objects (that is what the properties panel edits).`,
+          message: `Cannot import "${src}" — it does not resolve in this builder. Allowed imports: react, react-dom, framer-motion, next/*, next-themes, @revyme/runtime, @/components/*, @/icons/*, @/overrides/*, and marketplace share bundles (https://assets.revyme.app/components|vectors/<name>@<hash>.js — discover free ones via the marketplace browse tool). CSS imports are forbidden: all styling is inline style objects (that is what the properties panel edits).`,
         });
       }
     },
@@ -477,12 +550,18 @@ export function checkFile(
       if (!t.isArrowFunctionExpression(fn) && !t.isFunctionExpression(fn)) return;
 
       const EXEMPT = new Set(['setVariant', 'setTimeout', 'setInterval']);
+      // The builder's OWN form wiring drives the form's lifecycle variable
+      // (`setFormState<Id>('loading' | 'success' | 'error')`) from onSubmit —
+      // that state is not hidden content, it is what the Form State tool shows
+      // and maps to the submit button's variants. Flagging it made every form
+      // the builder itself creates fail this rule (capability suite, 2026-09-22).
+      const isFormLifecycle = (n: string) => /^setFormState[A-Z0-9]/.test(n);
       const setters = new Set<string>();
       let contentLiteralCall: string | null = null;
       path.traverse({
         CallExpression(cp: NodePath<t.CallExpression>) {
           const c = cp.node.callee;
-          if (!t.isIdentifier(c) || !/^set[A-Z]/.test(c.name) || EXEMPT.has(c.name)) return;
+          if (!t.isIdentifier(c) || !/^set[A-Z]/.test(c.name) || EXEMPT.has(c.name) || isFormLifecycle(c.name)) return;
           setters.add(c.name);
           for (const arg of cp.node.arguments) {
             const isContentString = t.isStringLiteral(arg) && arg.value !== '';
@@ -527,6 +606,9 @@ export function checkFile(
       // shape is fully editor-visible (parseContainerRules round-trips it), so
       // it must pass. Anything else (element selectors, classes, keyframes)
       // stays forbidden on components.
+      // (A code component may carry its own <style> — keyframes for a cursor
+      // blink — the editor never opens it; see NO_COMMENTS above.)
+      if (tag === 'style' && isCodeComponent) return;
       if (tag === 'style' && kind !== 'page' && !isEditorMediaStyleBlock(path.node)) {
         v.push({
           code: 'RAW_STYLE_TAG', tier: 2, line,
@@ -638,8 +720,11 @@ export function checkFile(
       }
       // Inputs inside a form must carry a `name` — FormData keys by name, so an
       // unnamed field is never submitted (the form collects nothing).
-      if (tag === 'input' || tag === 'textarea' || tag === 'select' ||
-          tag === 'motion.input' || tag === 'motion.textarea' || tag === 'motion.select') {
+      // Code components are exempt: the Form tool never opens their internals,
+      // and a <select> there is a control of the component (LocaleSwitcher),
+      // not a field the builder submits.
+      if (!isCodeComponent && (tag === 'input' || tag === 'textarea' || tag === 'select' ||
+          tag === 'motion.input' || tag === 'motion.textarea' || tag === 'motion.select')) {
         const inputType = (stringAttr(attrs, 'type') || '').toLowerCase();
         const isButtonish = inputType === 'submit' || inputType === 'button' || inputType === 'reset' || inputType === 'image';
         const insideForm = !!path.findParent((p) => {
@@ -762,7 +847,34 @@ export function checkFile(
       // when a CMS detail page used dangerouslySetInnerHTML for the body and it
       // showed blank in the builder.
       const dangerHtmlAttr = attrs.find((a) => a.name.name === 'dangerouslySetInnerHTML');
-      if (dangerHtmlAttr) {
+      // EXCEPTION — the builder's RICH translation shape on a TEXT tag:
+      // `dangerouslySetInnerHTML={{ __html: t.raw('key') }}` with no children.
+      // The message is sanitized inline HTML the panel's editor produced; the
+      // parser resolves it (richTranslation) and the canvas paints it.
+      const isRichTranslationShape = (() => {
+        if (!dangerHtmlAttr || !isTextTag(tag)) return false;
+        const val: any = dangerHtmlAttr.value;
+        const obj = val?.type === 'JSXExpressionContainer' ? val.expression : null;
+        if (!obj || obj.type !== 'ObjectExpression' || obj.properties.length !== 1) return false;
+        const pr: any = obj.properties[0];
+        const isHtmlKey = pr.type === 'ObjectProperty' && ((pr.key.type === 'Identifier' && pr.key.name === '__html') || (pr.key.type === 'StringLiteral' && pr.key.value === '__html'));
+        const call = pr?.value;
+        return isHtmlKey && call?.type === 'CallExpression' && call.callee?.type === 'MemberExpression'
+          && call.callee.property?.type === 'Identifier' && call.callee.property.name === 'raw'
+          && call.callee.object?.type === 'Identifier' && call.arguments?.length === 1 && call.arguments[0]?.type === 'StringLiteral'
+          && path.node.children.every((c: any) => c.type === 'JSXText' && !c.value.trim());
+      })();
+      // EXCEPTION — a FORMATTED TEXT variable on a TEXT tag: `dangerouslySetInnerHTML={{ __html: prop }}`
+      // with no children, where `prop` is a parameter of the component (its default is the inline
+      // HTML the Content control's rich editor produced) — or, per variant, a variant ternary of such
+      // params and literal HTML. The parser binds it (formattedTextVariable).
+      const isFormattedVariableShape = (() => {
+        if (!dangerHtmlAttr || !isTextTag(tag)) return false;
+        const branches = formattedBranchesOfDangerAttr(dangerHtmlAttr.value);
+        if (!branches || Object.values(branches.vars).some((name) => path.scope.getBinding(name)?.kind !== 'param')) return false;
+        return path.node.children.every((c: any) => c.type === 'JSXText' && !c.value.trim());
+      })();
+      if (dangerHtmlAttr && !isRichTranslationShape && !isFormattedVariableShape) {
         const idForMsg = dataId ?? 'field-body';
         v.push({
           code: 'DANGEROUS_INNER_HTML', tier: 2, line, elementId: dataId,
@@ -825,10 +937,15 @@ export function checkFile(
         if (!isCodeComponent) {
           checkStyleObject(styleAttr.value.expression, dataId, v, {
             fixedAllowed: kind !== 'page' || parentDataId === 'root' || isOverlay,
+            // A `display` driven by one of the file's own boolean props is a
+            // per-instance toggle the builder resolves when it expands the
+            // master — not someone hiding with CSS.
+            booleanProps: fileBooleanProps,
             // The bg-video child is builder-authored and not a canvas node, so the
             // Position tool never edits its pins — `inset: '0'` is the correct
             // spelling for "fill my parent" there (Renderer.syncBgVideoChild).
             builderOwned: hasAttr(attrs, 'data-bg-video'),
+            templateRoot: isTemplate && dataId === 'root',
           });
         }
 
@@ -934,7 +1051,10 @@ export function checkFile(
       //   Hover/Tap = whileHover/whileTap
       // Bare animate={{...}} (an object, no repeat, no whileInView) renders as a
       // one-shot entrance but the tool reads it as a broken Loop — bounce it.
-      const animateAttr = attrs.find((a) => a.name.name === 'animate');
+      // A code component's internals are never read by the AnimationTool (it
+      // is a black box), so its motion props are free-form — a Carousel's
+      // animate={{ x }} is not a broken Loop.
+      const animateAttr = isCodeComponent ? undefined : attrs.find((a) => a.name.name === 'animate');
       if (animateAttr && t.isJSXExpressionContainer(animateAttr.value) && t.isObjectExpression(animateAttr.value.expression)) {
         // LOOP_KEYFRAME_ARRAY — the Loop editor speaks SINGLE numeric targets;
         // keyframe arrays render (motion feature) but the parser drops array
@@ -972,7 +1092,7 @@ export function checkFile(
 
       // Appear must be one-shot: whileInView without viewport={{ once: true }}
       // replays on every scroll-past and the tool can't round-trip it.
-      const wivAttr = attrs.find((a) => a.name.name === 'whileInView');
+      const wivAttr = isCodeComponent ? undefined : attrs.find((a) => a.name.name === 'whileInView');
       if (wivAttr && t.isJSXExpressionContainer(wivAttr.value) && t.isObjectExpression(wivAttr.value.expression)) {
         const viewportAttr = attrs.find((a) => a.name.name === 'viewport');
         const hasOnce = !!(viewportAttr && t.isJSXExpressionContainer(viewportAttr.value)
@@ -1016,8 +1136,10 @@ export function checkFile(
         }
       }
 
-      // TEXT_EXPRESSION — children expressions outside the accepted binding forms
-      for (const child of path.node.children) {
+      // TEXT_EXPRESSION — children expressions outside the accepted binding forms.
+      // A code component's text is its own (a counter renders {value}); the
+      // text tool never opens it, so the rule is a false positive there.
+      for (const child of isCodeComponent ? [] : path.node.children) {
         if (!t.isJSXExpressionContainer(child)) continue;
         const expr = child.expression;
         if (t.isJSXEmptyExpression(expr)) continue;
@@ -1163,6 +1285,11 @@ export function checkFile(
     checkScrollDialect(ast, v);
   }
 
+  // ── CODE OVERRIDES — `<Override with={withX}>` wraps one element, names an import.
+  if (code.includes('<Override')) {
+    checkCodeOverrides(ast, v);
+  }
+
   // ── MOTION PROPS ON A PLAIN TAG — silent everywhere the author can see.
   //    Cheap source precheck so files with no motion props never traverse.
   if (/\b(?:layout|variants|animate|initial|whileHover|whileTap|whileInView|onTap|onHoverStart|drag)\s*=/.test(code)) {
@@ -1190,6 +1317,13 @@ export function checkFile(
   if (/@pageVariables/.test(code)) {
     checkPageVariableTypes(code, v);
   }
+  // ── ATTRIBUTE HYGIENE — a duplicated JSX attribute (only the last copy
+  //    applies) and large inline base64 data URIs (shipped uncached in every
+  //    page view). Cheap string scans; no AST walk. A CODE COMPONENT's data
+  //    URIs (the built-in shaders' noise textures) ship in the JS bundle,
+  //    which is cached — not in each page's HTML — so they are exempt. ─────
+  checkDuplicateAttributes(code, v);
+  if (!isCodeComponent && code.includes(';base64,')) checkInlineDataUris(code, v);
   // ── COMPONENT LINKS (design components) — every element is motion.* for the
   //    FLIP/variant system, so a navigating link must be MotionLink =
   //    motion.create(Link): a plain <Link> won't animate, and <motion.a href>/
@@ -1251,6 +1385,7 @@ export function checkFile(
   //    RESOLVE (panel shows nothing, gestures mis-route). ────────────────────
   if ((kind === 'page' || kind === 'component') && /<(?:motion\.)?svg[\s/>]/.test(code)) {
     checkSvgShapeDialect(ast, v);
+    checkShapeVariantDForm(code, v);
   }
 
   // ── OVERLAY DIALECT (dropdowns / popovers / modals) — the overlay panel,
@@ -1357,6 +1492,10 @@ export function checkFile(
       // caught here rather than shipping as a section that is live on the site
       // and dead in the editor.
       checkCmsMapResolves(code, ast, nodes, v, kind);
+      // The inline repeater (a local array mapped to JSX) was retired — only
+      // CMS collection lists repeat. Anything else rendered via .map() is dead
+      // in the editor.
+      checkInlineMapUnsupported(code, ast, v, kind);
       // A CMS field inside a style value must come back as a styleBinding, or
       // the CMS panel shows no binding and the value becomes uneditable.
       checkCmsStyleBindingsResolve(code, ast, nodes, v, kind);
@@ -1365,7 +1504,10 @@ export function checkFile(
       // the catch-all for shapes no named rule predicted.
       checkResolutionFidelity(code, ast, nodes, v, kind);
 
-      if (nodes.size === 0) {
+      // A CODE component is code, not canvas markup — a module compiled from a
+      // site's own source is a tree of `_jsx(...)` calls with no data-ids, and
+      // the builder renders it by COMPILING it rather than by parsing nodes.
+      if (nodes.size === 0 && kind !== 'code-component') {
         v.push({
           code: 'RESOLVE_EMPTY', tier: 3,
           message: `The builder's parser found no editable elements in this file. The component must return a JSX tree of elements carrying data-id attributes.`,
@@ -1377,6 +1519,43 @@ export function checkFile(
           code: 'PAGE_ROOT_REQUIRED', tier: 3,
           message: `The page has no element with data-id="root". The canvas mounts the page AT the root element — without it nothing renders. The outermost element must be <div data-id="root" data-name="…" style={{ position: 'relative', width: '100%' }}> wrapping everything else.`,
         });
+      }
+
+      // ── PAGE ROOT = THE ARTBOARD, NOT A CSS BOX ──
+      // The root element IS the viewport tile: its size comes from the @canvas
+      // viewports entry (width/height in px), and the canvas mounts the page AT
+      // it. A viewport-relative size therefore resolves against the BROWSER
+      // WINDOW, not the artboard — on the canvas the root becomes as tall as
+      // the editor window (not the 900px tile), the Size panel shows a height
+      // that disagrees with the declared viewport, and the live site disagrees
+      // with both. `height: '100vh'` on a page root is the exact shape that hit
+      // this (live find 2026-09-06). The full-height SECTION is the native form:
+      // keep the root px/auto and give an inner <section data-id="…"> the 100vh
+      // — the Size panel has a real vh unit for width/height, so that child
+      // stays editable.
+      // The template LayoutClient is EXEMPT: its root is the outer shell that
+      // legitimately owns viewport sizing and clipping (minHeight: '100vh' is
+      // its normal form), which is the same carve-out the sibling
+      // TEMPLATED_PAGE_ROOT_STYLED rule makes just below.
+      if (kind === 'page' && !isTemplate && nodes.has('root')) {
+        const rootStyles = nodes.get('root')!.styles ?? {};
+        const VP_UNIT = /\d\s*(vh|vw|svh|lvh|dvh|svw|lvw|dvw|vmin|vmax)\b/i;
+        const SIZE_KEYS = ['width', 'height', 'minWidth', 'minHeight', 'maxWidth', 'maxHeight'];
+        const vpKeys = SIZE_KEYS.filter((k) => typeof rootStyles[k] === 'string' && VP_UNIT.test(rootStyles[k]));
+        const h = rootStyles.height;
+        // height: px | auto only. A PERCENTAGE height on the root is the same
+        // defect by another spelling — it resolves against whatever the canvas
+        // happens to mount the tile into, so it is not the artboard either.
+        const badH = typeof h === 'string' && h.trim() !== '' && h.trim() !== 'auto'
+          && !/^-?\d*\.?\d+px$/.test(h.trim()) && !VP_UNIT.test(h);
+        if (vpKeys.length > 0 || badH) {
+          const shown = [...new Set([...vpKeys, ...(badH ? ['height'] : [])])]
+            .map((k) => `${k}: '${rootStyles[k]}'`).join(', ');
+          v.push({
+            code: 'PAGE_ROOT_VIEWPORT_SIZE', tier: 2, elementId: 'root',
+            message: `The page root (data-id="root") is the ARTBOARD, so its size comes from the @canvas viewports entry — ${shown} does not belong on it. Viewport units (vh/vw/svh/dvh/…) on the root resolve against the BROWSER WINDOW instead of the artboard, so the canvas tile, the Size panel and the live site all disagree about how tall the page is; a percentage height has no artboard to be a percentage OF. The root takes height: '<n>px' or 'auto', and width: '100%' or '<n>px' — nothing else. For a full-viewport hero, keep the root as it was and put the height on a SECTION CHILD: <section data-id="hero" data-name="Hero" style={{ position: 'relative', width: '100%', height: '100vh' }}> … </section>. The Size panel has a real vh unit for a child's width/height, so that section stays editable; the root does not.`,
+          });
+        }
       }
 
       // A page INSIDE a template route group (path like app/(Group)/…/page.client.tsx)
@@ -1421,11 +1600,38 @@ export function checkFile(
     if (crash) {
       v.push({
         code: 'WOULD_CRASH', tier: 3,
-        message: `This file would crash at runtime: ${crash}. Every referenced identifier must be declared in the file or imported; remove or declare the offender and return the complete corrected file.`,
+        message: `This file would crash at runtime: ${crash}. Every referenced identifier must be declared (above its first use) in the file or imported; remove, move or declare the offender and return the complete corrected file.`,
       });
     }
   }
 
   trace.action('oracle:check-file', { kind, violations: v.length, codes: v.map((x) => x.code) });
   return v;
+}
+
+/** Sync-agent flush bounce set (T1a/T3). Pure — unit-tested in killer-corpus. */
+export function isAgentBlockingOracleViolation(code: string): boolean {
+  // Import-shape is shadow, never bounce (T3) — every other FORBIDDEN_* stays
+  // blocking (e.g. FORBIDDEN_ALIGN_VALUE).
+  if (isOracleImportViolation(code)) return false;
+  if (
+    code === 'SYNTAX_ERROR' ||
+    code === 'MISSING_DATA_ID' ||
+    code === 'DISPLAY_TOGGLE_VISIBILITY' ||
+    code === 'TEXT_EXPRESSION' ||
+    code === 'UNRESOLVABLE_TERNARY' ||
+    code === 'WOULD_CRASH' ||
+    code.startsWith('FORBIDDEN_')
+  ) {
+    return true;
+  }
+  return AGENT_CRASH_CODES.has(code);
+}
+
+/** I4a crash-family codes that bounce the agent sync flush (T3). */
+const AGENT_CRASH_CODES = new Set(['PAGE_ROOT_REQUIRED', 'RESOLVE_EMPTY', 'RESOLVE_THROW']);
+
+/** Import-shape codes: shadow at flush, blocking at gate (T3). */
+export function isOracleImportViolation(code: string): boolean {
+  return code === 'FORBIDDEN_IMPORT' || code === 'GSAP_FORBIDDEN';
 }

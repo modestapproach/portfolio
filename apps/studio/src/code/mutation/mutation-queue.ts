@@ -15,6 +15,8 @@
 // The queue processes mutations in order, applies them to the code string,
 // and flushes to codeAtom when idle.
 
+import { liftCodeOverrides, restoreCodeOverrides, pruneUnusedOverrideImports, setCodeOverridesInCode, type CodeOverrideRef } from '../generation/code-override-gen';
+import { SCROLL_TARGET_EXPR } from '@/shared/scroll-target';
 import { getAllCachedNodes, getNodeFromCache, canvasInteractingAtom, setPreferCacheSnapshot } from '@/code/stores/store';
 import { registerExternalWriteRefresh } from './external-write-registry';
 import { sanitizeDataName } from '@/shared/id-utils';
@@ -24,10 +26,12 @@ import { canvasRootFlowReset } from '@/shared/flex-helpers';
 // those use canvasInteractingAtom). drag-state-store is a leaf module.
 import { dragStateOps } from '@/canvas/drag/drag-state-store';
 import { getDefaultStore } from 'jotai';
-import { healMissingLocaleHook } from '@/code/generation/scoped-expr';
+import { healMissingLocaleHook, hoistRenderGatesInCode } from '@/code/generation/scoped-expr';
 import { trace } from '@/shared/debug-trace';
+import { isAgentWriteOpen, isBranchLocked } from '@/code/stores/agent-run-lock-store';
 import { parse } from '@babel/parser';
 import _traverse from '@babel/traverse';
+import { findUseBeforeDeclare, describeUseBeforeDeclare } from './use-before-declare';
 import { isViewerMode } from '../stores/viewer-mode-store';
 const traverse = (typeof _traverse === 'function' ? _traverse : (_traverse as any).default) as typeof _traverse;
 import {
@@ -38,6 +42,7 @@ import {
   resolveMediaGateTernariesInCode,
   inlineCanvasNodePropRefsInCode,
   stripCanvasNodeMotionRefsInCode,
+  flattenCanvasNodeVariantStylesInCode,
   stashCanvasNodeConnectionsInCode,
   updateNodeTextInCode,
   updateVariantTextInCode,
@@ -49,6 +54,7 @@ import {
   replaceNodeTextContent,
   stripInlineSpanStyleInCode,
   healDanglingModuleJsxInCode,
+  enforceSingleRotationChannelInCode,
   healStyleBlockSelectorAttrsInCode,
   addNodeInCode,
   addCanvasNodeInCode,
@@ -118,6 +124,7 @@ import {
   dedupeFormStateDeclarations,
   dormantizeFormBindingsInCanvas,
   formStateVar,
+  ensureFormStateHook,
   formStateSetter,
   type FormStateMapping,
 } from '../generation/form-state-gen';
@@ -142,7 +149,9 @@ import {
   updateSelectCaretRuleInCode,
   removePseudoStyleInCode,
 } from '../generation/generator-styles';
-import { createVariableInCode, createConditionalVariableInCode, removeVariableInCode, createTextVariableInCode, removeTextVariableInCode, bindTextNodeAsPageVarInCode, bindTextVariableForVariantInCode, createLinkAttrVariableInCode, removeLinkAttrVariableInCode, setBorderOverlayVariableForVariant, setInlineVariableForVariant, removeVariantStyleVariableInCode, setComponentPropDefaultInCode, createTypedVariableInCode, addBarePropToFunctionInCode, deleteComponentVariableInCode, renameComponentVariableInCode } from '../features/variable-ops';
+import { isFormattedTextNodeInCode, setFormattedTextBranchInCode, type FormattedBranchOp } from '../features/variable-ops';
+import { sanitizeRichMessage } from '@/shared/rich-message';
+import { bindTextNodeToPropInCode, createVariableInCode, createConditionalVariableInCode, removeVariableInCode, createTextVariableInCode, createFormattedTextVariableInCode, removeTextVariableInCode, bindTextNodeAsPageVarInCode, bindTextVariableForVariantInCode, createLinkAttrVariableInCode, removeLinkAttrVariableInCode, setBorderOverlayVariableForVariant, setInlineVariableForVariant, removeVariantStyleVariableInCode, setComponentPropDefaultInCode, createTypedVariableInCode, addBarePropToFunctionInCode, deleteComponentVariableInCode, renameComponentVariableInCode } from '../features/variable-ops';
 import { addPageVariableInCode, removePageVariableInCode, updatePageVariableInCode } from '../features/page-variables';
 import { applyDeleteVariablePipeline } from '../features/delete-variable-pipeline';
 import { setPropDescriptionInCode, setPropTypeInCode, setPropOptionsInCode, setPropLabelInCode, setPropNumberMetaInCode, setPropVariantOfInCode, getPropType, getPropDescription, getPropOptions, getPropLabel, getPropVariantOf } from '../components/prop-meta';
@@ -155,9 +164,9 @@ import { setResponsiveTextVariableInCode, resetResponsiveTextVariableInCode, set
 import { addPageInteractionInCode, removePageInteractionInCode } from '../generation/page-interactions-gen';
 import { addCloseOverlayInCode, removeCloseOverlayInCode, setCloseOverlayDelayInCode, overlayCloseSetter } from '../generation/close-overlay-gen';
 import type { InteractionTrigger } from '../features/page-interactions';
-import { makeIntoMapInCode, addMapItemInCode, removeMapItemInCode, updateMapItemInCode, addMapFieldInCode, bindStyleToMapInCode, unbindStyleFromMapInCode, bindPropToMapInCode, unbindPropFromMapInCode, bindToCmsCollectionInCode, unbindFromCmsCollectionInCode, changeCollectionSourceInCode, bindCmsFieldOnDropInCode, bindCmsNavLinkOnDropInCode, setCmsNavHrefInCode, getEnclosingMapIteratorForNode } from '../generation/map-gen';
+import { unbindStyleFromMapInCode, bindPropToMapInCode, unbindPropFromMapInCode, bindToCmsCollectionInCode, unbindFromCmsCollectionInCode, changeCollectionSourceInCode, bindCmsFieldOnDropInCode, bindCmsNavLinkOnDropInCode, setCmsNavHrefInCode, getEnclosingMapIteratorForNode } from '../generation/map-gen';
 import { dormantizeCmsBindings, rehydrateCmsBindings, clearCmsOrphanInCode, healDanglingCanvasNodeBindings, detachCmsSubtreeWithValues } from '../generation/cms-detach-gen';
-import { resolveCmsRowForNodeInCode } from '../generation/cms-row-resolve';
+import { resolveDetailPageRow, resolveCmsRowForNodeInCode } from '../generation/cms-row-resolve';
 import { dormantizeComponentVarBindings, rehydrateComponentVarBindings, clearVarOrphanInCode, isCanvasNode } from '../generation/component-var-detach-gen';
 import { dormantizeTranslationBinding, rehydrateTranslationBinding } from '../generation/i18n-gen';
 import { localizeCollectionListsInCode } from '../generation/cms-locale-gen';
@@ -169,7 +178,7 @@ import {
   createCollectionListInCode, bindFieldInCode, unbindFieldInCode,
   updateCollectionListConfigInCode,
 } from '../generation/cms-gen';
-import { setPaginationInCode, removePaginationInCode, ensureLoadMoreComponentFile, ensureSpinnerComponentFile, readPaginationMarker, pruneOrphanedPaginationHooks } from '../generation/cms-pagination-gen';
+import { setPaginationInCode, removePaginationInCode, ensureLoadMoreComponentFile, ensureSpinnerComponentFile, readPaginationMarker, pruneOrphanedPaginationHooks, paginationUiParentId } from '../generation/cms-pagination-gen';
 import { addSearchFieldInCode, setSearchInputVariableInCode } from '../generation/cms-search-field-gen';
 import { writeResponsiveListConfigInCode, type ResponsiveListConfig } from '../generation/cms-responsive-gen';
 import { duplicateCollectionListToCanvasInCode } from '../generation/cms-paste-gen';
@@ -195,7 +204,7 @@ import { addTextAnimInCode, updateTextAnimInCode, removeTextAnimFromCode, nodeHa
 import { setTextOverrideInCode, removeTextOverrideInCode } from '../generation/text-override-gen';
 import { parseCanvasConfig } from '../project/canvas-config';
 import { DEFAULT_VIEWPORTS } from '../stores/viewport-store';
-import { createOverlayInCode, createCanvasOverlayInCode, cloneOverlayToCanvasTriggerInCode, updateOverlayPositionInCode, updateOverlayConfigInCode, updateOverlayTriggerInCode, removeOverlayInCode, extractOverlayToCanvasInCode, rehydrateOverlayFromCanvasInCode, healDanglingOverlayState, pruneOverlayDuplicatesInCode, liftNestedCanvasOverlaysToRoot, stripOverlaysNestedInOverlaysInCode, syncOverlayAppearTransformInCode, healMissingOverlayEffectsInCode, healUnwrappedOverlayInCode, healMisplacedOverlayInCode } from '../generation/overlay-gen';
+import { createOverlayInCode, createCanvasOverlayInCode, cloneOverlayToCanvasTriggerInCode, updateOverlayPositionInCode, updateOverlayConfigInCode, updateOverlayTriggerInCode, removeOverlayInCode, extractOverlayToCanvasInCode, rehydrateOverlayFromCanvasInCode, healDanglingOverlayState, pruneOverlayDuplicatesInCode, liftNestedCanvasOverlaysToRoot, stripOverlaysNestedInOverlaysInCode, syncOverlayAppearTransformInCode, healMissingOverlayEffectsInCode, healUnwrappedOverlayInCode, healMisplacedOverlayInCode, removeOverlayNodeInCode } from '../generation/overlay-gen';
 import { setChildEventFireInCode, removeChildEventFireInCode, type EventFireTrigger } from '../generation/event-fire-gen';
 import { parseOverlayTriggerCalls } from '../parsing/overlay-parser';
 import { wrapInFitSVGInCode, unwrapFitSVGInCode } from '../generation/fit-text-gen';
@@ -230,7 +239,7 @@ export type Mutation =
    *  toggle, doesn't pass deltas). Empty list → unwraps to plain rendering. */
   | { type: 'setVariantVisibility'; nodeId: string; hiddenVariants: string[]; allVariants: string[] }
   /** Set conditional order in style based on variant state (for layout FLIP reorder). */
-  | { type: 'setConditionalOrder'; nodeId: string; orderMap: Record<string, number> }
+  | { type: 'setConditionalOrder'; nodeId: string; orderMap: Record<string, number>; pinVariants?: string[] }
   /** Set a layout-affecting style prop as an inline `style` ternary keyed on the
    *  variant (so framer-motion `layout` FLIP engages instead of snapping). */
   | { type: 'setConditionalStyle'; nodeId: string; prop: string; variantName: string; value: string }
@@ -246,6 +255,7 @@ export type Mutation =
   /** Replica drag-out of a CMS collection list: COPY the literal `.map()` subtree
    *  into `canvasNodes` (id-renamed by `suffix`, map + bindings preserved). The
    *  original stays in the page; the caller hides it on the source replica. */
+  | { type: 'setCodeOverrides'; nodeId: string; overrides: CodeOverrideRef[] }
   | { type: 'duplicateCollectionToCanvas'; nodeId: string; source: string; suffix: string; styles: Record<string, string> }
   /** Move an element to a new position within its parent (reorder children). */
   | { type: 'reorder'; nodeId: string; parentId: string; index: number }
@@ -262,7 +272,9 @@ export type Mutation =
    *  `{variant === 'x' ? 'a' : 'b'}` ternary child for the given variant. */
   | { type: 'updateVariantText'; nodeId: string; variantName: string; text: string }
   | { type: 'detachTextVariableForVariant'; nodeId: string; variantName: string; propName: string; literal: string }
-  | { type: 'bindTextVariableForVariant'; nodeId: string; variantName: string; propName: string; propDefault: string }
+  | { type: 'bindTextVariableForVariant'; nodeId: string; variantName: string; propName: string; propDefault: string; formatted?: boolean }
+  /** One per-variant edit to a FORMATTED text node (bind / literal / detach / clear — see FormattedBranchOp). */
+  | { type: 'setFormattedTextBranch'; nodeId: string; variantName: string; op: FormattedBranchOp }
   /** Replace all children of an element with parsed HTML content. */
   | { type: 'updateChildrenHTML'; nodeId: string; html: string }
   /** Flatten a per-span text mark (color, fontWeight, …) on a rich-text node:
@@ -320,7 +332,9 @@ export type Mutation =
    * the function signature. Twin of `createVariable` for text content
    * instead of style values.
    */
-  | { type: 'createTextVariable'; nodeId: string; propName: string; defaultValue: string }
+  | { type: 'createTextVariable'; nodeId: string; propName: string; defaultValue: string; /** Formatted text (bold/italic/links) — see createFormattedTextVariableInCode. */ formatted?: boolean }
+  /** Bind a text node to an EXISTING component prop (`{prop}`), default untouched. */
+  | { type: 'bindTextVariable'; nodeId: string; propName: string }
   /** Inline a text variable back to literal JSX text + remove the prop. */
   | { type: 'removeTextVariable'; nodeId: string; propName: string; defaultValue: string; deleteProp?: boolean }
   /** PAGE text variable: bind a text node to a settable @pageVariables state var (useState),
@@ -418,9 +432,9 @@ export type Mutation =
   | { type: 'setVariantAttr'; nodeId: string; variant: string; attr: string; value: string; baseValue: string }
   // ─── Border / SVG mutations ─────────────────────────────────────────────
   /** Set a CSS ::after pseudo-element overlay for complex borders (gradient borders, multi-layer). */
-  | { type: 'updateBorderOverlay'; nodeId: string; afterCSS: string }
+  | { type: 'updateBorderOverlay'; nodeId: string; afterCSS: string; variant?: string | null }
   /** Remove the ::after border overlay from an element. */
-  | { type: 'removeBorderOverlay'; nodeId: string }
+  | { type: 'removeBorderOverlay'; nodeId: string; variant?: string | null }
   /** Update arbitrary HTML attributes (aria-label, role, tabindex, etc.) on any element. Empty string removes the attribute. */
   | { type: 'updateHtmlAttrs'; nodeId: string; attrs: Record<string, string> }
   /** Set/clear a CMS navigation binding on an element — writes an expression-valued `href` resolving the current/adjacent detail item, plus the `data-cms-nav` marker. `mode: 'none'` clears it. */
@@ -543,24 +557,15 @@ export type Mutation =
   | { type: 'unbindInstanceEvent'; nodeId: string; propName: string }
   // ─── Inline .map() / Repeater mutations ─────────────────────────────────
   /** Convert an element into an inline .map() repeater with data array */
-  | { type: 'makeIntoMap'; nodeId: string; varName?: string }
   | { type: 'bindToCmsCollection'; nodeId: string; collectionSlug: string }
   | { type: 'unbindFromCmsCollection'; nodeId: string }
   | { type: 'changeCollectionSource'; parentNodeId: string; newSlug: string; fieldRemap?: Record<string, string> }
-  /** Add an item to an existing inline .map() data array */
-  | { type: 'addMapItem'; varName: string; item: Record<string, string> }
-  /** Remove an item from an inline .map() data array by index */
-  | { type: 'removeMapItem'; varName: string; index: number }
-  /** Update an item in an inline .map() data array by index */
-  | { type: 'updateMapItem'; varName: string; index: number; item: Record<string, string> }
-  /** Add a new field to all items in an inline .map() data array */
-  | { type: 'addMapField'; varName: string; fieldName: string; defaultValue?: string }
-  /** Bind a style property to map data: inline value → item.fieldName */
-  | { type: 'bindStyleToMap'; nodeId: string; varName: string; styleProp: string; fieldName: string; currentValue: string }
   /** Unbind a style property from map data: item.fieldName → inline value */
   | { type: 'unbindStyleFromMap'; nodeId: string; varName: string; styleProp: string; fieldName: string; inlineValue: string }
-  /** Bind a component prop to map data: static value → item.fieldName */
+  /** Bind a component-instance prop (inside a CMS collection list) to a row field:
+   *  `propName={item.fieldName}` (`urlWrap` → `propName={\`url(${item.fieldName})\`}`). */
   | { type: 'bindPropToMap'; nodeId: string; varName: string; propName: string; fieldName: string; currentValue: string; urlWrap?: boolean }
+  /** Strip a bound `propName={…}` off a component instance (→ the component default). */
   | { type: 'unbindPropFromMap'; nodeId: string; propName: string }
   /** Clear ONE orphaned CMS prop binding (the "Missing" pill ×) → revert to default. */
   | { type: 'clearCmsOrphan'; nodeId: string; propName: string }
@@ -608,14 +613,14 @@ export type Mutation =
   | { type: 'deleteFile'; filePath: string }
   // ─── FIT text (SVG foreignObject wrap/unwrap) ──────────────────────────
   /** Wrap a text element in SVG foreignObject for FIT text mode */
-  | { type: 'wrapFitText'; nodeId: string; viewBox: { width: number; height: number; fontSize: number; marginTop?: number } }
+  | { type: 'wrapFitText'; nodeId: string; viewBox: { width: number; height: number; fontSize: number; marginTop?: number }; width?: string }
   /** Unwrap a text element from its SVG foreignObject FIT wrapper */
   | { type: 'unwrapFitText'; nodeId: string }
   // ─── Pseudo rules (::before / ::after / ::placeholder) ────────────────
   /** Write or update a ::before/::after/::placeholder CSS rule in the <style> block */
-  | { type: 'updatePseudoStyle'; nodeId: string; pseudo: 'before' | 'after' | 'placeholder'; styles: Record<string, string> }
+  | { type: 'updatePseudoStyle'; nodeId: string; pseudo: 'before' | 'after' | 'placeholder' | 'checked' | 'focus'; styles: Record<string, string> }
   /** Remove a ::before/::after/::placeholder rule from the <style> block */
-  | { type: 'removePseudo'; nodeId: string; pseudo: 'before' | 'after' | 'placeholder' }
+  | { type: 'removePseudo'; nodeId: string; pseudo: 'before' | 'after' | 'placeholder' | 'checked' | 'focus' }
   /** Write (raw declaration body) or remove (null) the select caret rule
    *  `select[data-id="…"] { … }` — the Input tool's Icon control. Lives in
    *  the <style> block so the node's inline backgroundImage stays the Fill
@@ -746,6 +751,8 @@ const FLUSH_DELAY_MS = 16; // ~1 frame
  * defined`.
  */
 const IMPORT_AFFECTING_TYPES = new Set([
+  // `<Override>` needs the runtime import; the override file import is written by the generator.
+  'setCodeOverrides',
   'updateMotionProp', 'removeMotionProp', 'removeMotionScopeBranch',
   'updateScrollAnim', 'removeScrollAnim', 'updateScrollDirection', 'removeScrollDirection',
   'updateScrollSpeed', 'removeScrollSpeed', 'updateLoop', 'removeLoop',
@@ -786,6 +793,10 @@ const IMPORT_AFFECTING_TYPES = new Set([
   // Page variable bind/unbind insert/remove useState — syncImports needs to
   // pick up the React hook addition/removal.
   'bindStylePageVariable', 'unbindStylePageVariable', 'removePageVariable',
+  // A text page variable / a declared page variable sync a `useState` hook
+  // too — the SYNC flush wrote the hook without its import (the async path
+  // healed it a tick later; the agent's post-write oracle saw WOULD_CRASH).
+  'createTextPageVariable', 'removeTextPageVariable', 'addPageVariable', 'updatePageVariable', 'addCollectionSearchField', 'setSearchInputVariable', 'ensureTemplateVarParam',
   // Per-viewport style-variable binding emits a `useMediaQuery` gate (which uses
   // useState/useEffect) into the page body — syncImports must add those React hooks.
   'bindResponsiveStyleVariable', 'unbindResponsiveStyleVariable',
@@ -919,11 +930,35 @@ export function syncQueueCode(code: string): void {
   }
 }
 
+/** True between a flush computing its code and writing it (the async path's
+ *  idle-callback gap). An outside write landing then is ignored by
+ *  `syncQueueCode` and overwritten by the flush — live collaboration holds
+ *  remote writes back until this clears. */
+export function isMutationQueueProcessing(): boolean {
+  return isProcessing;
+}
+
 /**
  * Queue a mutation. The mutation is applied to the code string asynchronously.
  * The caller should have already updated the DOM for instant visual feedback.
  */
-export function queueMutation(mutation: Mutation): void {
+/**
+ * Branch scope for a queued write / drain.
+ *
+ * PARTIALLY HONOURED. The lock gate below is live: a write aimed at a locked
+ * branch is refused today. The DRAIN is not yet partitioned — one queue, one
+ * group — so `flushNow(scope)` still drains everything pending rather than
+ * only that (branchId, file) group. Concurrent runs on different branches
+ * therefore are not yet isolated; that lands with the agent port, together
+ * with the `{author, file, branchId}` entry routing it needs.
+ */
+export interface QueueScope {
+  author?: 'human' | 'agent';
+  file?: string;
+  branchId?: string;
+}
+
+export function queueMutation(mutation: Mutation, scope?: QueueScope): void {
   // View-only gate. Every write path in the editor (drag, resize, style
   // panel, keyboard shortcuts, AI agent tools, etc.) funnels through
   // here, so one early-return at the bottom of the stack disables ALL
@@ -931,6 +966,17 @@ export function queueMutation(mutation: Mutation): void {
   // re-enforces this via requireEditAccess — defense in depth.
   if (isViewerMode()) {
     trace.fn('queueMutation:blocked-viewer', { type: mutation.type });
+    return;
+  }
+  // BRANCH LOCK gate. An agent run owns its branch for the whole run; a write
+  // aimed at a locked branch from OUTSIDE an agent write window is refused
+  // (same shape and trace as the viewer gate). Writes inside the agent's own
+  // window always pass — the lock exists to keep other authors out, not the
+  // run itself. With no branches and no run, `isBranchLocked` is false and
+  // this is a no-op for every existing write path.
+  const targetBranch = scope?.branchId ?? projectFS.getActiveBranchId();
+  if (!isAgentWriteOpen() && isBranchLocked(targetBranch)) {
+    trace.action('mutation-queue:refused-branch-locked', { type: mutation.type, branch: targetBranch });
     return;
   }
   queue.push(mutation);
@@ -970,9 +1016,16 @@ export function queueMutation(mutation: Mutation): void {
 /**
  * Queue multiple mutations at once (e.g., multi-select drag).
  */
-export function queueMutations(mutations: Mutation[]): void {
+export function queueMutations(mutations: Mutation[], scope?: QueueScope): void {
   if (isViewerMode()) {
     trace.fn('queueMutations:blocked-viewer', { count: mutations.length });
+    return;
+  }
+  // The same entry-branch gate as queueMutation — a multi-drag on a branch
+  // an agent run holds must not slip past it (it did until 2026-09-22).
+  const targetBranch = scope?.branchId ?? projectFS.getActiveBranchId();
+  if (!isAgentWriteOpen() && isBranchLocked(targetBranch)) {
+    trace.action('mutation-queue:refused-branch-locked', { count: mutations.length, branch: targetBranch });
     return;
   }
   queue.push(...mutations);
@@ -1060,7 +1113,9 @@ export function refreshDeferredFlushWithExternalWrite(code: string): void {
 // (see external-write-registry.ts).
 registerExternalWriteRefresh(refreshDeferredFlushWithExternalWrite);
 
-export function flushNow(): void {
+/** Drain now. `scope` is accepted for call-site compatibility with the
+ *  branch-aware API; the drain is not partitioned yet (see QueueScope). */
+export function flushNow(scope?: QueueScope): void {
   // Cancel any pending timers
   if (flushTimer !== null) {
     cancelAnimationFrame(flushTimer);
@@ -1122,6 +1177,9 @@ export function flushNow(): void {
     // what the syntax gate below decides about the PAGE code — announce them.
     bumpVersionForGlobalsCssMutations(mutations);
     code = reglideInsertedParents(code, mutations);
+    // A `__mqN` / `__activeLocale` gate below a hook that reads it renders in the
+    // canvas and crashes the live site — lift it (text pre-check; parses only on a hit).
+    code = hoistRenderGatesInCode(code);
     // Heal any overlay runtime orphaned by a structural mutation BEFORE import
     // sync (so the re-declared useState keeps the React import). PRUNE first —
     // drop duplicate/orphan overlay elements left by a fragile canvas↔viewport
@@ -1155,7 +1213,12 @@ export function flushNow(): void {
     // committed the live binding (canvas showed item-0's resolved data on mouse-up,
     // only fixed by a later async processQueue). Mirrors the processQueue heal.
     if (code.indexOf('const canvasNodes') !== -1) {
-      code = healDanglingCanvasNodeBindings(code);
+      code = healDanglingCanvasNodeBindings(code, resolveDetailPageRow(code));
+      // A drag-out writes the rotation into BOTH channels across two mutations
+      // of one flush (the move's fold, then the drag's own transform), and the
+      // canvas applies both — doubling the angle. Collapse to one here, where
+      // the whole batch is visible.
+      code = enforceSingleRotationChannelInCode(code);
       // A search field / dynamic CMS filter pasted onto the canvas references a
       // page useState var at module scope → "X is not defined". Neutralize it.
       code = dormantizePageVarBindingsInCanvas(code);
@@ -1433,9 +1496,12 @@ function extractCodeExcerpt(code: string, errorMessage: string): string | undefi
 /** @internal Exported for testing. */
 export function validateGeneratedCode(code: string): string | null {
   // Fast semantic checks first (cheap, catch AI-specific mistakes)
-  // Detect character-indexed properties pattern: AI spread a JSON string as object keys
-  // Pattern: 3+ consecutive numeric keys like `0: '...', 1: '...', 2: '...'`
-  if (/\b\d+:\s*['"][^'"]*['"],\s*\d+:\s*['"]/.test(code)) {
+  // Detect character-indexed properties pattern: AI spread a JSON string as object keys.
+  // The signature is SEQUENTIAL keys from zero (`0: 'a', 1: 'b', 2: 'c'`). The
+  // previous "any two adjacent numeric keys" test also matched the builder's own
+  // responsive-text overrides keyed by viewport width (`375: "…", 768: "…"`), so
+  // the SECOND per-viewport text edit on a node was blocked (live find 2026-09-07).
+  if (/\b0:\s*['"][^'"]*['"],\s*1:\s*['"][^'"]*['"],\s*2:\s*['"]/.test(code)) {
     return 'Generated code contains character-indexed properties — AI sent properties as a string instead of an object';
   }
 
@@ -1462,6 +1528,21 @@ export function validateGeneratedCode(code: string): string | null {
     // `initial` next to an Appear effect's initial — the appear died at
     // runtime and the canvas missed the variant wiring).
     let dupAttr: { name: string; line?: number } | null = null;
+    // DUPLICATE data-id — the SAME node written into the file twice. Every
+    // structural generator locates a node by its data-id, so a duplicate makes
+    // the document ambiguous: the parser registers two nodes, the layers tree
+    // shows two rows, and the next edit resolves to whichever copy it finds
+    // first. Nothing downstream can repair it, because there is no longer a
+    // fact about which one is real.
+    //
+    // This is a SAFETY NET, not a fix: it exists because the ways a node can be
+    // duplicated are open-ended (a removal that silently no-ops on a wrapper
+    // shape the splice does not recognise, leaving the clone to be inserted
+    // anyway — the CMS "Load More" and overlay duplication, 2026-09-19). Each
+    // such splice bug still has to be fixed at source; this stops the corrupt
+    // file being ACCEPTED while that happens, turning silent corruption into a
+    // refused mutation.
+    let dupId: { id: string; line?: number } | null = null;
     traverse(ast, {
       JSXOpeningElement(path: any) {
         if (dupAttr) return;
@@ -1478,14 +1559,65 @@ export function validateGeneratedCode(code: string): string | null {
       const d = dupAttr as { name: string; line?: number };
       return `Duplicate JSX attribute \`${d.name}\` on the element at line ${d.line ?? '?'} — React keeps only the LAST one while the editor reads the FIRST, so they permanently disagree. Merge the two values into one attribute.`;
     }
+    {
+      // Collected in one pass; only STRING-literal ids are comparable (a
+      // computed `data-id={expr}` belongs to a .map() row and is legitimately
+      // repeated per record at runtime, never in source).
+      const seenIds = new Map<string, number | undefined>();
+      traverse(ast, {
+        JSXOpeningElement(path: any) {
+          if (dupId) return;
+          for (const attr of path.node.attributes) {
+            if (attr.type !== 'JSXAttribute' || attr.name?.type !== 'JSXIdentifier') continue;
+            if (attr.name.name !== 'data-id') continue;
+            if (attr.value?.type !== 'StringLiteral') continue;
+            const id = attr.value.value as string;
+            if (seenIds.has(id)) {
+              dupId = { id, line: attr.loc?.start.line };
+              return;
+            }
+            seenIds.set(id, attr.loc?.start.line);
+          }
+        },
+      });
+      if (dupId !== null) {
+        const d = dupId as { id: string; line?: number };
+        const first = seenIds.get(d.id);
+        return `Duplicate data-id \`${d.id}\` — the same node appears twice (first at line ${first ?? '?'}, again at line ${d.line ?? '?'}). Every edit resolves a node by its data-id, so two copies make the document ambiguous: the layers panel shows the node twice and later edits hit an arbitrary one. The move/reorder that produced this removed the original from one place and inserted a copy in another without deleting it.`;
+      }
+    }
+    // A TYPE is not a runtime reference. Babel's scope counts the annotation
+    // in `function C(props: MyComponentProps)` as an unbound identifier even
+    // though the file declares `interface MyComponentProps` — types are
+    // erased before anything runs, so an imported TypeScript code component
+    // was reported as "would crash" when it compiles and renders fine.
+    // Only a name used in a VALUE position can crash.
+    const valueRefs = new Set<string>();
+    traverse(ast, {
+      TSTypeAnnotation(p: any) { p.skip(); },
+      TSTypeReference(p: any) { p.skip(); },
+      TSTypeAliasDeclaration(p: any) { p.skip(); },
+      TSInterfaceDeclaration(p: any) { p.skip(); },
+      TSTypeParameterDeclaration(p: any) { p.skip(); },
+      TSTypeParameterInstantiation(p: any) { p.skip(); },
+      TSAsExpression(p: any) { p.get('typeAnnotation').skip?.(); },
+      Identifier(p: any) { valueRefs.add(p.node.name); },
+      JSXIdentifier(p: any) { valueRefs.add(p.node.name); },
+    });
     traverse(ast, {
       Program(p) {
-        dangling = Object.keys((p.scope as any).globals || {}).filter((n) => !KNOWN_GLOBALS.has(n));
+        dangling = Object.keys((p.scope as any).globals || {})
+          .filter((n) => !KNOWN_GLOBALS.has(n) && valueRefs.has(n));
       },
     });
     if (dangling.length) {
       return `References undefined identifier${dangling.length > 1 ? 's' : ''}: ${dangling.slice(0, 4).join(', ')}${dangling.length > 4 ? ` (+${dangling.length - 4} more)` : ''} — would crash at runtime`;
     }
+    // Declared — but LATER than a use that runs during render (a hook's deps
+    // array above the `const` it names). Passes everything above, renders in
+    // the canvas, and throws on the live site (CF 1101, 2026-10-06).
+    const tdz = findUseBeforeDeclare(ast);
+    if (tdz) return describeUseBeforeDeclare(tdz);
   } catch (e) {
     // Scope crawl failed — fall back to the syntax-only check above, but DON'T swallow
     // silently: this is the undefined-identifier safety net, and a silent failure here
@@ -1517,7 +1649,9 @@ export function validateGeneratedCode(code: string): string | null {
   // blocked + reverted, like a syntax error. Cheap regex pass, gated on the
   // hook's presence.
   if (code.includes('useScroll(')) {
-    const targetRe = /useScroll\(\s*\{[^)]*?\b(?:target|container)\s*:\s*([A-Za-z_$][\w$]*)/g;
+    // The target may be variant-gated (`cond ? ref : undefined`) — group 1 is
+    // the REF either way, never the condition's first identifier.
+    const targetRe = new RegExp(String.raw`useScroll\(\s*\{[^)]*?\b(?:target|container)\s*:\s*` + SCROLL_TARGET_EXPR, 'g');
     let m: RegExpExecArray | null;
     const missing: string[] = [];
     while ((m = targetRe.exec(code)) !== null) {
@@ -1568,12 +1702,30 @@ const KNOWN_GLOBALS = new Set<string>([
   'Image', 'Audio', 'Video', 'Event', 'CustomEvent', 'KeyboardEvent', 'MouseEvent',
   'IntersectionObserver', 'ResizeObserver', 'MutationObserver', 'PerformanceObserver',
   'getComputedStyle', 'matchMedia', 'DOMParser', 'Node', 'Element', 'HTMLElement',
+  // DOM element / drawing classes — referenced at runtime (`instanceof`) and
+  // in TS type positions the scope walk still counts (`useRef<HTMLDivElement>`,
+  // `x as HTMLCanvasElement`); a code component using them was bounced as
+  // WOULD_CRASH (2026-09-09).
+  'HTMLDivElement', 'HTMLSpanElement', 'HTMLCanvasElement', 'HTMLImageElement', 'HTMLVideoElement',
+  'HTMLAudioElement', 'HTMLInputElement', 'HTMLTextAreaElement', 'HTMLButtonElement', 'HTMLAnchorElement',
+  'HTMLParagraphElement', 'HTMLHeadingElement', 'HTMLIFrameElement', 'HTMLSelectElement', 'HTMLFormElement',
+  'HTMLLabelElement', 'HTMLUListElement', 'HTMLLIElement', 'HTMLTableElement', 'HTMLSourceElement',
+  'SVGElement', 'SVGSVGElement', 'SVGPathElement', 'CanvasRenderingContext2D', 'WebGLRenderingContext',
+  'WebGL2RenderingContext', 'ImageData', 'Path2D', 'DOMRect', 'DOMMatrix', 'OffscreenCanvas', 'ImageBitmap',
+  'requestIdleCallback', 'cancelIdleCallback', 'structuredClone', 'queueMicrotask',
   'NodeList', 'Range', 'Selection', 'crypto', 'performance', 'CSS', 'AbortController',
   // more browser APIs
   'alert', 'confirm', 'prompt', 'scrollTo', 'scrollBy', 'getSelection', 'Worker',
   'Notification', 'caches', 'indexedDB', 'TextEncoder', 'TextDecoder', 'AbortSignal',
   'PointerEvent', 'TouchEvent', 'WheelEvent', 'DragEvent', 'FocusEvent', 'InputEvent',
   'AnimationEvent', 'TransitionEvent', 'DataTransfer', 'ClipboardEvent', 'CSSStyleSheet',
+  // Web Animations. `Animation` is both a runtime feature check
+  // (`typeof Animation !== "undefined"`, which is how a component asks whether
+  // it can hardware-accelerate) and a TS type (`useRef<Animation>`) — the same
+  // two positions the DOM classes above are used in. Without it an imported
+  // marquee could not be published at all: "References undefined identifier:
+  // Animation".
+  'Animation', 'KeyframeEffect', 'AnimationTimeline', 'DocumentTimeline', 'AnimationPlaybackEvent',
   // React / runtime
   'React', 'Fragment', 'process', 'module', 'exports', 'require',
 ]);
@@ -1846,6 +1998,8 @@ export function syncImports(code: string): string {
   // new ones.
   const FRAMEWORK_TAGS = new Set([
     'Link', 'Image', 'Fragment', 'AnimatePresence', 'MotionConfig', 'LayoutGroup',
+    // Code-override wrapper — a `@revyme/runtime` export, not a components/ file.
+    'Override',
     'React', 'Suspense',
     // `MotionLink` is a local `const MotionLink = motion.create(Link)` — NOT a
     // `@/components/MotionLink` file. Excluding it stops the auto-import pass
@@ -2055,6 +2209,8 @@ function processQueue(): void {
   // what validation below decides about the PAGE code — announce them.
   bumpVersionForGlobalsCssMutations(mutations);
   code = reglideInsertedParents(code, mutations);
+  // Gates below their readers crash the live site — see the flushNow twin.
+  code = hoistRenderGatesInCode(code);
 
   // Prune duplicate/orphan overlay elements (ghost from a canvas↔viewport
   // round-trip), THEN heal overlay runtime orphaned by a structural mutation
@@ -2090,7 +2246,10 @@ function processQueue(): void {
   // CMS element dragged out of a paginated list before the iterator-detection fix) →
   // dormantize it (placeholder + Missing) so it stops blocking EVERY later mutation.
   if (codeChanged && code.indexOf('const canvasNodes') !== -1) {
-    code = healDanglingCanvasNodeBindings(code);
+    code = healDanglingCanvasNodeBindings(code, resolveDetailPageRow(code));
+    // Same one-channel collapse as the synchronous drag-commit path above: the
+    // rotation must not land in `rotate` AND `transform`, or it applies twice.
+    code = enforceSingleRotationChannelInCode(code);
     // A whole <form> dragged onto the canvas carries onSubmit + FormSubmit
     // initialVariant + responsive-attr __mq gates that reference page-fn vars
     // out of scope in module-scope canvasNodes → dormantize them (no crash).
@@ -2149,7 +2308,26 @@ function processQueue(): void {
     code = healDriftedConnectionHandlersInCode(code);
   }
   const validationError = codeChanged ? validateGeneratedCode(code) : null;
-  if (validationError) {
+  // Only block damage THIS flush caused — the same contract `flushNow` has
+  // carried since 2026-07-25 (see the comment at its own gate). If the file was
+  // ALREADY invalid going in, rolling back repairs nothing and instead refuses
+  // every subsequent action, leaving the user stuck on a broken page with no way
+  // to edit out of it. The heal passes above are what actually repair such a
+  // file; this gate exists to stop NEW corruption, not to quarantine old.
+  //
+  // This matters immediately for the duplicate-`data-id` check added to
+  // `validateGeneratedCode`: pages already carrying a duplicate from the
+  // move/reorder splice bugs would otherwise become entirely uneditable the
+  // moment the check shipped.
+  const wasAlreadyInvalid = validationError ? validateGeneratedCode(currentCode) : null;
+  if (validationError && wasAlreadyInvalid) {
+    trace.error('mutation-queue:validation-failed-preexisting', {
+      error: validationError,
+      preexisting: wasAlreadyInvalid,
+      mutationTypes: mutations.map(m => m.type),
+    });
+  }
+  if (validationError && !wasAlreadyInvalid) {
     const detail: MutationErrorDetail = {
       message: validationError,
       mutationTypes: mutations.map(m => m.type),
@@ -2258,6 +2436,20 @@ function healDuplicateLayoutAttrs(code: string): string {
 }
 
 function applyMutation(code: string, mutation: Mutation): string {
+  // Code overrides: lift every `<Override>` wrapper so generators see the plain
+  // JSX they were written for, then put each back around its element (a
+  // deleted element drops its wrapper). See code-override-gen.ts.
+  if (code.includes('<Override') && mutation.type !== 'setCodeOverrides') {
+    const { code: plain, lifted } = liftCodeOverrides(code);
+    if (lifted.size > 0) {
+      const next = applyMutationUnwrapped(plain, mutation);
+      return next === plain ? code : pruneUnusedOverrideImports(restoreCodeOverrides(next, lifted));
+    }
+  }
+  return applyMutationUnwrapped(code, mutation);
+}
+
+function applyMutationUnwrapped(code: string, mutation: Mutation): string {
   if (!mutationAffectsScroll(mutation)) return applyMutationCore(code, mutation);
   // Decompose → apply on the separate form → recompose conflicts. This is what
   // makes stacking effects "just work" like the reference: adding a 2nd effect that
@@ -2393,6 +2585,9 @@ function applyMutationCore(code: string, mutation: Mutation): string {
             const stateVar = formStateVar(fid);
             next = wireFormSubmitInCode(next, fid, formStateSetter(stateVar));
             next = convertSubmitButtonInCode(next, fid, stateVar);
+            // The handler references the setter whether or not a button was
+            // there to convert — declare the hook regardless.
+            next = ensureFormStateHook(next, fid);
           }
           if (formIds.length) {
             try {
@@ -2437,6 +2632,9 @@ function applyMutationCore(code: string, mutation: Mutation): string {
         }
         return next;
       }
+
+      case 'setCodeOverrides':
+        return setCodeOverridesInCode(code, mutation.nodeId, mutation.overrides);
 
       case 'reorder':
         return reorderNodeInCode(code, mutation.nodeId, mutation.parentId, mutation.index);
@@ -2621,7 +2819,14 @@ function applyMutationCore(code: string, mutation: Mutation): string {
             ? detachCmsSubtreeWithValues(moved, mutation.nodeId, srcMapIter, srcCmsRow)
             : dormantizeCmsBindings(moved, mutation.nodeId, srcMapIter);
         }
-        if (dstMapIter) {
+        // Rehydrate whenever the node is back INSIDE the component render —
+        // not only inside a `.map()`. A CMS detail (`[slug]`) page binds
+        // against one `item` declared in the component body, so `dstMapIter`
+        // is null there and a node dragged back in from the canvas kept its
+        // dormant stash and its frozen baked text (report 2026-09-09).
+        // `canvasNodes` is module scope, where no iterator exists, so a node
+        // that landed THERE must stay dormant — that is the only exclusion.
+        if (dstMapIter || !isCanvasNode(moved, mutation.nodeId)) {
           moved = rehydrateCmsBindings(moved, mutation.nodeId);
         }
         if (!mutation.canvasNode && mutation.newParentId) {
@@ -2678,6 +2883,11 @@ function applyMutationCore(code: string, mutation: Mutation): string {
           // && <el>}` — all referencing FUNCTION-scope idents that don't exist at module scope → the validator
           // blocks the drag. Strip them (a canvas node is a static free element; it never variant-animates).
           moved = stripCanvasNodeMotionRefsInCode(moved);
+          // The per-node flatten above heals only the dragged node. A dragged SUBTREE carries its
+          // children's `variant === 'v' ? … : …` styles out too, and they reference the same
+          // out-of-scope identifier — sweep every canvas node for the style half, exactly as the
+          // line above does for the attr half.
+          moved = flattenCanvasNodeVariantStylesInCode(moved);
           // A variant CONNECTION on the dragged-out node is an `on*={() => setVariant('v')}` handler — undefined
           // at module scope. Pull the target into `data-conn-target` on the canvas node (renders the arrow on the
           // canvas to that variant + restores the live handler on drag-back) and strip the crashing handler.
@@ -2712,10 +2922,27 @@ function applyMutationCore(code: string, mutation: Mutation): string {
       }
 
       case 'updateVariantText':
+        // A formatted node's variant text is HTML inside its `__html` ternary.
+        if (isFormattedTextNodeInCode(code, mutation.nodeId)) {
+          return setFormattedTextBranchInCode(code, mutation.nodeId, mutation.variantName, { kind: 'literal', html: sanitizeRichMessage(mutation.text) });
+        }
         return updateVariantTextInCode(code, mutation.nodeId, mutation.variantName, mutation.text);
       case 'detachTextVariableForVariant':
+        // Formatted: freeze THIS variant to the HTML it shows now (the `literal` the caller read is the
+        // default's plain text — the generator reads the variant's own value instead).
+        if (isFormattedTextNodeInCode(code, mutation.nodeId)) {
+          return setFormattedTextBranchInCode(code, mutation.nodeId, mutation.variantName, { kind: 'detach' });
+        }
         return detachTextVariableForVariantInCode(code, mutation.nodeId, mutation.variantName, mutation.propName, mutation.literal);
+      case 'setFormattedTextBranch':
+        return setFormattedTextBranchInCode(code, mutation.nodeId, mutation.variantName, mutation.op);
       case 'bindTextVariableForVariant': {
+        // FORMATTED on this variant: a new formatted variable, an existing one, or any variable on a node
+        // that is already formatted (its text lives in `__html`, not in `{…}` children).
+        if (mutation.formatted || getPropType(code, mutation.propName) === 'formattedText' || isFormattedTextNodeInCode(code, mutation.nodeId)) {
+          const bound = setFormattedTextBranchInCode(code, mutation.nodeId, mutation.variantName, { kind: 'var', prop: mutation.propName });
+          return mutation.formatted ? setPropTypeInCode(bound, mutation.propName, 'formattedText') : bound;
+        }
         const boundCode = bindTextVariableForVariantInCode(code, mutation.nodeId, mutation.variantName, mutation.propName, mutation.propDefault);
         // A text-content variable is the Plain Text type (same as createTextVariable).
         return setPropTypeInCode(boundCode, mutation.propName, 'plainText');
@@ -2763,12 +2990,31 @@ function applyMutationCore(code: string, mutation: Mutation): string {
       }
 
       case 'removeNode': {
+        // Deleting the Load More instance / infinite-scroll sentinel IS
+        // "remove pagination" for its list: the element lives inside the
+        // `{vis < slug.length && …}` guard, so stripping only the JSX left
+        // `{vis < blog.length && }` — a parse error that blocked the delete
+        // (2026-09-08). Route through the full teardown instead.
+        const paginatedList = paginationUiParentId(code, mutation.nodeId);
+        if (paginatedList) {
+          trace.action('mutation:removeNode-pagination-ui', { nodeId: mutation.nodeId, listId: paginatedList });
+          return pruneOrphanedPaginationHooks(removePaginationInCode(code, paginatedList));
+        }
         // Strip the element, then drop any connection whose trigger element is
         // now gone (its onTap went with the element; the `connections` entry +
         // arrow would otherwise linger as dead data). Presence-based so it also
         // covers deleting a parent of the trigger. No-op for non-component
         // files / when every sourceNode still exists.
-        const afterRemove = removeNodeInCode(code, mutation.nodeId);
+        //
+        // A runtime OVERLAY element is one mechanism with its state, effect and
+        // trigger wiring — tear it down whole first (the canvas Delete key already
+        // routes it through removeOverlay). The plain strip alone dropped the
+        // state but kept the effect, and the structural heal re-declared the
+        // state BELOW that effect → TDZ crash on the live site (CF 1101,
+        // 2026-10-06). The agent's delete_node and every other raw removeNode
+        // sender land here. No-op for anything that isn't a runtime overlay.
+        const withoutOverlay = removeOverlayNodeInCode(code, mutation.nodeId);
+        const afterRemove = removeNodeInCode(withoutOverlay, mutation.nodeId);
         // Deleting a paginated collection list removes its JSX (incl. the
         // `.slice()`), but leaves its body hooks (useState/useRef/useEffect)
         // orphaned — and those keep referencing the deleted list's slug, which
@@ -2871,7 +3117,7 @@ function applyMutationCore(code: string, mutation: Mutation): string {
         // An EVENT variable is a component CALLBACK prop (standard component event),
         // NOT a data prop — add it BARE (`{ eventName }`, no string default) so a child
         // can fire it (`onClick={eventName}`) and the page instance can pass a handler
-        // (`eventName={() => setOverlayOpen(true)}`). Other types get a typed literal default.
+        // (`eventName={() => setOverlayOpen(!overlayOpen)}`). Other types get a typed literal default.
         const withProp = mutation.varType === 'event'
           ? addBarePropToFunctionInCode(code, mutation.name, 'none')
           : createTypedVariableInCode(code, mutation.name, mutation.literalKind, mutation.defaultValue);
@@ -2916,7 +3162,23 @@ function applyMutationCore(code: string, mutation: Mutation): string {
         if (oldVariantOf) c = setPropVariantOfInCode(c, mutation.newName, oldVariantOf);
         return c;
       }
+      case 'bindTextVariable':
+        return bindTextNodeToPropInCode(code, mutation.nodeId, mutation.propName);
+
       case 'createTextVariable': {
+        // FORMATTED text variable: the content (marks and all) becomes an HTML prop rendered through
+        // `dangerouslySetInnerHTML={{ __html: prop }}`, typed `formattedText`. Not for free canvas nodes
+        // (their prop reference is module-scope — the dormant form below only knows `{prop}` children):
+        // those fall through to the plain variable.
+        if (mutation.formatted && !isCanvasNode(code, mutation.nodeId)) {
+          const withFormatted = createFormattedTextVariableInCode(code, mutation.nodeId, mutation.propName);
+          if (withFormatted !== code) return setPropTypeInCode(withFormatted, mutation.propName, 'formattedText');
+        }
+        // "Set Variable" with an EXISTING formatted variable binds it in its own shape — and must neither
+        // re-type it plainText nor reset its default to this node's text (the create path below does both).
+        if (!mutation.formatted && getPropType(code, mutation.propName) === 'formattedText' && !isCanvasNode(code, mutation.nodeId)) {
+          return bindTextNodeToPropInCode(code, mutation.nodeId, mutation.propName);
+        }
         // A text-content variable IS the Plain Text type — tag it in @propMeta so it reads as
         // 'plainText' everywhere (icon/modal resolve from the type, not CSS-prop inference), exactly like
         // a Plain Text variable created from the "+" picker. The only difference is what it's bound to:
@@ -3185,16 +3447,16 @@ function applyMutationCore(code: string, mutation: Mutation): string {
         return setVariantVisibilityInCode(code, mutation.nodeId, mutation.hiddenVariants, mutation.allVariants);
 
       case 'setConditionalOrder':
-        return setConditionalOrderInCode(code, mutation.nodeId, mutation.orderMap);
+        return setConditionalOrderInCode(code, mutation.nodeId, mutation.orderMap, mutation.pinVariants);
 
       case 'setConditionalStyle':
         return setConditionalStyleInCode(code, mutation.nodeId, mutation.prop, mutation.variantName, mutation.value);
 
       case 'updateBorderOverlay':
-        return updateBorderOverlayStyle(code, mutation.nodeId, mutation.afterCSS);
+        return updateBorderOverlayStyle(code, mutation.nodeId, mutation.afterCSS, mutation.variant);
 
       case 'removeBorderOverlay':
-        return removeBorderOverlayStyle(code, mutation.nodeId);
+        return removeBorderOverlayStyle(code, mutation.nodeId, mutation.variant);
 
       case 'updateHtmlAttrs': {
         let next = updateHtmlAttrsInCode(code, mutation.nodeId, mutation.attrs);
@@ -3511,8 +3773,6 @@ function applyMutationCore(code: string, mutation: Mutation): string {
         return setInstancePropBaseInCode(code, mutation.nodeId, mutation.componentName, mutation.prop, JSON.stringify(mutation.value));
 
       // ─── Inline .map() / Repeater mutations ──────────────────────────────
-      case 'makeIntoMap':
-        return makeIntoMapInCode(code, mutation.nodeId, mutation.varName);
       case 'bindToCmsCollection':
         return bindToCmsCollectionInCode(code, mutation.nodeId, mutation.collectionSlug);
       case 'unbindFromCmsCollection':
@@ -3534,16 +3794,6 @@ function applyMutationCore(code: string, mutation: Mutation): string {
         // lists (they keep referencing a no-longer-imported slug → crash).
         return pruneOrphanedPaginationHooks(out);
       }
-      case 'addMapItem':
-        return addMapItemInCode(code, mutation.varName, mutation.item);
-      case 'removeMapItem':
-        return removeMapItemInCode(code, mutation.varName, mutation.index);
-      case 'updateMapItem':
-        return updateMapItemInCode(code, mutation.varName, mutation.index, mutation.item);
-      case 'addMapField':
-        return addMapFieldInCode(code, mutation.varName, mutation.fieldName, mutation.defaultValue);
-      case 'bindStyleToMap':
-        return bindStyleToMapInCode(code, mutation.nodeId, mutation.varName, mutation.styleProp, mutation.fieldName, mutation.currentValue);
       case 'unbindStyleFromMap':
         return unbindStyleFromMapInCode(code, mutation.nodeId, mutation.varName, mutation.styleProp, mutation.fieldName, mutation.inlineValue);
       case 'bindPropToMap':
@@ -3645,7 +3895,7 @@ function applyMutationCore(code: string, mutation: Mutation): string {
 
       // ─── FIT text (SVG foreignObject wrap/unwrap) ───────────────────────────
       case 'wrapFitText':
-        return wrapInFitSVGInCode(code, mutation.nodeId, mutation.viewBox);
+        return wrapInFitSVGInCode(code, mutation.nodeId, mutation.viewBox, { width: mutation.width });
       case 'unwrapFitText':
         return unwrapFitSVGInCode(code, mutation.nodeId);
 
@@ -3658,3 +3908,58 @@ function applyMutationCore(code: string, mutation: Mutation): string {
     return code;
   }
 }
+
+/**
+ * Point the editor at `path` and re-seed the mutation queue from that file's
+ * content on `branchId` (default: the active branch).
+ *
+ * `setActiveFilePath` alone leaves the queue holding the PREVIOUS file's code,
+ * so the next generator would splice into the wrong source. Reading through
+ * `readBranchFiles` (not `projectFS.readFile`) lets a caller seed from a
+ * branch it is not currently sitting on — which is what a workspace switch
+ * does, one map at a time.
+ */
+export function switchQueueFile(path: string, opts: { branchId?: string } = {}): void {
+  setActiveFilePath(path);
+  const branchId = opts.branchId ?? projectFS.getActiveBranchId();
+  const content = projectFS.readBranchFiles(branchId)?.get(path) ?? null;
+  if (content != null) {
+    syncQueueCode(content);
+    trace.action('mutation-queue:switch-queue-file', { path, branchId });
+  } else {
+    trace.action('mutation-queue:switch-queue-file-missing', { path, branchId });
+  }
+}
+
+/** The file path the queue's `currentCode` base tracks. Read-only accessor for
+ *  `restoreSnapshot` (Porte 5 / D-T3): after a snapshot restore the queue base
+ *  must be re-seeded from the restored content of THIS file — without a
+ *  getter the restore path cannot know which file the queue tracks. */
+export function getQueueActiveFilePath(): string {
+  return _activeFilePath;
+}
+
+/**
+ * Drop queued mutations aimed at `branchId`, returning how many were dropped.
+ *
+ * Our queue is NOT branch-partitioned (entries are plain mutations, not
+ * `{mutation, route}` records), so "the entries for branch X" is only
+ * answerable for the ACTIVE branch — everything queued targets whatever
+ * branch is active when it drains. Asking about any other branch therefore
+ * drops nothing and says so, rather than silently discarding another
+ * workspace's pending work. When the drain becomes partitioned this reads the
+ * route instead and the callers do not change.
+ */
+export function dropQueuedBranch(branchId: string): number {
+  if (branchId !== projectFS.getActiveBranchId()) {
+    trace.action('mutation-queue:drop-branch-noop', { branch: branchId, reason: 'not-active' });
+    return 0;
+  }
+  const dropped = queue.length;
+  if (dropped > 0) {
+    queue.length = 0;
+    trace.action('mutation-queue:drop-branch-entries', { branch: branchId, dropped });
+  }
+  return dropped;
+}
+

@@ -6,7 +6,7 @@
 // the canvas double-positions the card visually.
 
 import { describe, it, expect } from 'vitest';
-import { parseProjectFile, clearComponentParseCache, resolveInstancePropOverrides } from './project-parser';
+import { parseProjectFile, clearComponentParseCache, resolveInstancePropOverrides, readMasterRootDisplay } from './project-parser';
 import { InMemoryProjectFS } from '@/code/project/project-fs';
 
 describe('toggle conditional prop resolves by JS truthiness (canvas matches live)', () => {
@@ -1498,5 +1498,261 @@ export default withResponsiveProps(Card);
     // …instance 2 did NOT inherit it (clone isolated the cached pristine parse).
     expect(title2!.responsiveBindings).toBeUndefined();
     expect(title1).not.toBe(title2);
+  });
+});
+
+// ─── default-only variant values survive expansion ──────────────────────────
+// The builder's FormSubmit keeps the root's backgroundColor ONLY in
+// rootVariants.default (the base style has none). Live paints it through
+// animate={['default', variant]}; the expansion cleared motionVariants for a
+// parent-driven instance without baking the default entry, so the canvas
+// showed a native grey <button> while live was blue (2026-09-08).
+const SUBMIT_TSX = `'use client';
+import React, { useState } from 'react';
+import { motion, LayoutGroup } from 'framer-motion';
+import { withResponsiveProps } from '@revyme/runtime';
+const variantConfig = [
+  { name: 'default', label: 'Default', x: 0, y: 0, isPrimary: true },
+  { name: 'loading', label: 'Loading', x: 320, y: 0 },
+];
+const rootVariants = {
+  default: { backgroundColor: '#3b82f6', opacity: 1, pointerEvents: 'auto' },
+  'loading': { backgroundColor: '#3b82f6', opacity: 1, pointerEvents: 'none' },
+};
+function FormSubmit({ style, label = 'Submit', initialVariant = 'default', ...rest }) {
+  const [variant, setVariant] = useState(initialVariant);
+  return <LayoutGroup>
+    <motion.button layout={true} data-id="formsubmit-root" {...rest} type="submit"
+      variants={rootVariants} initial={['default', initialVariant]} animate={['default', variant]}
+      style={{ position: 'relative', width: '200px', padding: '12px 24px', border: 'none', display: 'flex', ...style }}>
+      <p data-id="formsubmit-label" style={{ color: '#ffffff', position: 'relative' }}>{label}</p>
+    </motion.button>
+  </LayoutGroup>;
+}
+export default withResponsiveProps(FormSubmit);
+`;
+const SUBMIT_PAGE_TSX = `'use client';
+import React, { useState } from 'react';
+import FormSubmit from '@/components/FormSubmit';
+export default function Page() {
+  const [fs, setFs] = useState('idle');
+  return <div data-id="root" style={{ position: 'relative', width: '100%' }}>
+    <form data-id="form-1" style={{ display: 'flex', flexDirection: 'column', position: 'relative' }}>
+      <FormSubmit initialVariant={fs === 'loading' ? 'loading' : 'default'} data-id="button-1" label={"Send"} style={{ width: "100%", order: '0' }} />
+      <FormSubmit initialVariant="loading" data-id="button-2" label={"Go"} style={{ width: "100%", order: '1' }} />
+    </form>
+  </div>;
+}
+`;
+describe('project-parser: default variant entry is baked into the expanded instance root', () => {
+  const fs = () => new InMemoryProjectFS(new Map([
+    ['app/page.tsx', SUBMIT_PAGE_TSX],
+    ['components/FormSubmit.tsx', SUBMIT_TSX],
+  ]));
+  it('a page-state-driven instance paints the default entry (blue), not the native grey', () => {
+    const nodes = parseProjectFile('app/page.tsx', fs());
+    const root = nodes.get('button-1:formsubmit-root')!;
+    expect(root).toBeDefined();
+    expect(root.styles.backgroundColor).toBe('#3b82f6');
+    expect(root.styles.pointerEvents).toBe('auto');
+    // the instance's own style override still wins over the master
+    expect(root.styles.width).toBe('100%');
+    // parent-driven instance: variants stay cleared (no accidental name-match)
+    expect(Object.keys(root.motionVariants ?? {})).toEqual([]);
+  });
+  it('a plain non-default initialVariant bakes default ⊕ chosen (framer animate order)', () => {
+    const nodes = parseProjectFile('app/page.tsx', fs());
+    const root = nodes.get('button-2:formsubmit-root')!;
+    expect(root.styles.backgroundColor).toBe('#3b82f6');
+    expect(root.styles.pointerEvents).toBe('none');
+  });
+});
+
+describe('project-parser: the instance tag\'s `display: none` stays on the WRAPPER', () => {
+  // The replica-entry hide baseline for instances is an inline `display: 'none'`
+  // on the tag (instance-replica-visibility.ts). The Renderer lets `none`
+  // through its wrapper allow-list and the entered viewport's band unhide
+  // targets the wrapper's data-id — so the root must keep the MASTER's
+  // display, or the embed stays blank on the one viewport it should show.
+  it('display:none on the tag → wrapper none, root keeps the master display', () => {
+    const fs = new InMemoryProjectFS(new Map([
+      ['app/page.tsx', `
+        import React from 'react';
+        import Card from '@/components/Card';
+        export default function Page() {
+          return (
+            <div data-id="root">
+              <Card data-id="card1" style={{ position: 'relative', display: 'none' }} />
+            </div>
+          );
+        }
+      `],
+      ['components/Card.tsx', CARD_TSX],
+    ]));
+    const nodes = parseProjectFile('app/page.tsx', fs);
+    expect(nodes.get('card1')!.styles.display).toBe('none');
+    expect(nodes.get('card1:card')!.styles.display).toBe('flex');
+  });
+
+  it('any OTHER display on the tag still flows onto the root (authored customisation)', () => {
+    const fs = new InMemoryProjectFS(new Map([
+      ['app/page.tsx', `
+        import React from 'react';
+        import Card from '@/components/Card';
+        export default function Page() {
+          return (
+            <div data-id="root">
+              <Card data-id="card1" style={{ position: 'relative', display: 'grid' }} />
+            </div>
+          );
+        }
+      `],
+      ['components/Card.tsx', CARD_TSX],
+    ]));
+    const nodes = parseProjectFile('app/page.tsx', fs);
+    expect(nodes.get('card1:card')!.styles.display).toBe('grid');
+  });
+
+  it('readMasterRootDisplay reads the root\'s base display from the component file', () => {
+    const fs = new InMemoryProjectFS(new Map([['components/Card.tsx', CARD_TSX]]));
+    expect(readMasterRootDisplay(fs, 'components/Card.tsx')).toBe('flex');
+    expect(readMasterRootDisplay(fs, 'components/Missing.tsx')).toBeUndefined();
+  });
+});
+
+describe('project-parser: a nested instance with a FIXED variant under a per-tile outer instance', () => {
+  // An imported FAQ (2026-09-16): the page's FAQ instance switches variant per tile
+  // (tablet → variant-1, phone → variant-2). Inside its phone box each FAQ Item
+  // is `<FAQItem initialVariant="variant-1">` — Closed, on EVERY tile — and the
+  // item's answer is `{variant !== 'variant-1' && …}`. The outer map stamped on
+  // the item's wrapper speaks the FAQ's variant names, and resolving the item's
+  // own hidden set against it showed every answer on the mobile tile ('variant-2'
+  // is not 'variant-1'); the tablet tile only passed because both components
+  // happened to call that variant 'variant-1'.
+  const INNER_GATED_TSX = `
+import React from 'react';
+import { motion, LayoutGroup, AnimatePresence } from 'framer-motion';
+import { withResponsiveProps } from '@revyme/runtime';
+
+/** @name "Inner" */
+
+const variantConfig = [
+  { name: 'default', label: 'Open', x: 0, y: 0, isPrimary: true },
+  { name: 'variant-1', label: 'Closed', x: 200, y: 0 },
+];
+
+const innerVariants = {
+  default: { backgroundColor: '#aaaaaa' },
+  'variant-1': { backgroundColor: '#ff0000' },
+};
+
+function Inner({ style, initialVariant = 'default' }) {
+  return (
+    <LayoutGroup>
+      <motion.div data-id="inner-root" variants={innerVariants} initial={initialVariant} animate={initialVariant} style={{
+        position: 'relative',
+        width: '160px',
+        backgroundColor: '#aaaaaa',
+        ...style,
+      }}>
+        <p data-id="inner-question" style={{ position: 'relative' }}>Question</p>
+        <AnimatePresence mode="popLayout">
+        {initialVariant !== 'variant-1' && (
+        <motion.p data-id="inner-answer" key="inner-answer" style={{ position: 'relative' }}>Answer</motion.p>
+        )}
+        </AnimatePresence>
+      </motion.div>
+    </LayoutGroup>
+  );
+}
+
+export default withResponsiveProps(Inner);
+`;
+  const OUTER_FIXED_TSX = `
+import React from 'react';
+import { motion, LayoutGroup } from 'framer-motion';
+import { withResponsiveProps } from '@revyme/runtime';
+import Inner from '@/components/Inner';
+
+/** @name "Outer" */
+
+const variantConfig = [
+  { name: 'default', label: 'Desktop', x: 0, y: 0, isPrimary: true },
+  { name: 'variant-1', label: 'Tablet', x: 400, y: 0 },
+  { name: 'variant-2', label: 'Phone', x: 800, y: 0 },
+];
+
+function Outer({ style, initialVariant = 'default' }) {
+  return (
+    <LayoutGroup>
+      <motion.div data-id="outer-root" style={{
+        position: 'relative',
+        width: '300px',
+        ...style,
+      }}>
+        <Inner data-id="inner" initialVariant="variant-1" style={{ position: 'relative' }} />
+      </motion.div>
+    </LayoutGroup>
+  );
+}
+
+export default withResponsiveProps(Outer);
+`;
+  const PAGE_TSX = `
+import React from 'react';
+import Outer from '@/components/Outer';
+
+export default function Page() {
+  return (
+    <div data-id="root" style={{ position: 'relative' }}>
+      <Outer data-id="faq" data-responsive='{"1199":{"initialVariant":"variant-1"},"809":{"initialVariant":"variant-2"},"_bp":[1199,809]}' style={{ position: 'relative' }} />
+    </div>
+  );
+}
+`;
+
+  it('bakes the child variant and its visibility instead of resolving them against the parent map', () => {
+    const fs = new InMemoryProjectFS(new Map([
+      ['app/page.tsx', PAGE_TSX],
+      ['components/Outer.tsx', OUTER_FIXED_TSX],
+      ['components/Inner.tsx', INNER_GATED_TSX],
+    ]));
+    const nodes = parseProjectFile('app/page.tsx', fs);
+    const wrapper = nodes.get('faq:inner');
+    expect(wrapper).toBeDefined();
+    // The outer map still rides the wrapper (parent-keyed root hides need it)…
+    expect(wrapper!.responsiveVariantMap).toEqual({ 1199: 'variant-1', 809: 'variant-2' });
+    const root = nodes.get('faq:inner:inner-root');
+    expect(root).toBeDefined();
+    // …but the child's Closed variant is baked on every tile: styles carry it, and no child-keyed
+    // motion entry is left for a parent variant name to match by accident.
+    expect(root!.styles.backgroundColor).toBe('#ff0000');
+    expect(root!.motionVariants ?? {}).toEqual({});
+    // The answer is hidden on Closed: static display none, and NO child-keyed hidden set for the
+    // phone tile ('variant-2' in the FAQ's names) to resolve as "visible".
+    const answer = nodes.get('faq:inner:inner-answer');
+    expect(answer).toBeDefined();
+    expect(answer!.styles.display).toBe('none');
+    expect(answer!.hiddenOnVariants ?? undefined).toBeUndefined();
+    // The question is untouched.
+    expect(nodes.get('faq:inner:inner-question')!.styles.display).not.toBe('none');
+  });
+
+  it('keeps resolving a nested instance whose variant follows the parent (ternary) per tile', () => {
+    const OUTER_TERNARY = OUTER_FIXED_TSX.replace(
+      `initialVariant="variant-1"`,
+      `initialVariant={initialVariant === 'variant-2' ? 'variant-1' : 'default'}`,
+    );
+    const fs = new InMemoryProjectFS(new Map([
+      ['app/page.tsx', PAGE_TSX],
+      ['components/Outer.tsx', OUTER_TERNARY],
+      ['components/Inner.tsx', INNER_GATED_TSX],
+    ]));
+    const nodes = parseProjectFile('app/page.tsx', fs);
+    const answer = nodes.get('faq:inner:inner-answer');
+    expect(answer).toBeDefined();
+    // Closed only on the phone: hidden set remapped into the PARENT's names, nothing baked.
+    expect(answer!.styles.display).not.toBe('none');
+    expect([...(answer!.hiddenOnVariants ?? [])]).toEqual(['variant-2']);
   });
 });

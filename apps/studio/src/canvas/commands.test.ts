@@ -377,40 +377,71 @@ describe('deleteNode', () => {
 // Note: node-ops mock already declared above with all needed mocks
 
 describe('toggleLock', () => {
+  // Lock is a WHOLE-NODE property: the padlock and the hit-test both read the
+  // BASE `pointerEvents`, so the write must land on the base inline style no
+  // matter which viewport row / variant is active — never through the
+  // viewport-routed `updateNodeStyles` (a tablet-row lock used to land in the
+  // tablet @media band and flip nothing, 2026-09-09).
   let mockUpdateNodeStyles: ReturnType<typeof vi.fn>;
+  let mockQueueMutation: ReturnType<typeof vi.fn>;
 
   beforeEach(async () => {
     const nodeOps = await import('./node-ops');
     mockUpdateNodeStyles = nodeOps.updateNodeStyles as ReturnType<typeof vi.fn>;
     mockUpdateNodeStyles.mockClear();
+    const mq = await import('@/code/mutation/mutation-queue');
+    mockQueueMutation = mq.queueMutation as ReturnType<typeof vi.fn>;
+    mockQueueMutation.mockClear();
+    const { getDefaultStore } = await import('jotai');
+    const { codeAtom } = await import('@/code/stores/store');
+    getDefaultStore().set(codeAtom, '');
   });
 
-  it('locks an unlocked node (sets pointerEvents to none)', () => {
+  it('locks an unlocked node on the BASE style (sets pointerEvents to none), not via the viewport router', () => {
     const contentEl = document.createElement('div');
     const nodesMap = buildMap([makeNode('n1', null, [], { pointerEvents: '' })]);
     toggleLock('n1', contentEl, nodesMap);
-    expect(mockUpdateNodeStyles).toHaveBeenCalledWith({
-      id: 'n1',
-      styles: { pointerEvents: 'none' },
-      contentEl,
-    });
+    expect(mockQueueMutation).toHaveBeenCalledWith({ type: 'updateStyles', nodeId: 'n1', styles: { pointerEvents: 'none' } });
+    expect(mockUpdateNodeStyles).not.toHaveBeenCalled();
+    // No per-tile write when no tile carries an override.
+    expect(mockQueueMutation.mock.calls.some(c => c[0].type === 'updateContainerStyle')).toBe(false);
   });
 
-  it('unlocks a locked node (clears pointerEvents)', () => {
+  it('unlocks a locked node (clears pointerEvents on the base)', () => {
     const contentEl = document.createElement('div');
     const nodesMap = buildMap([makeNode('n1', null, [], { pointerEvents: 'none' })]);
     toggleLock('n1', contentEl, nodesMap);
-    expect(mockUpdateNodeStyles).toHaveBeenCalledWith({
-      id: 'n1',
-      styles: { pointerEvents: '' },
-      contentEl,
-    });
+    expect(mockQueueMutation).toHaveBeenCalledWith({ type: 'updateStyles', nodeId: 'n1', styles: { pointerEvents: '' } });
+  });
+
+  it('never touches a per-viewport `pointer-events` band — the Styles > Pointer row owns those', async () => {
+    // Nothing distinguishes an authored per-breakpoint value from one the old
+    // viewport-routed lock left behind, so clearing either way silently
+    // destroyed the user's own setting on lock+unlock.
+    const { getDefaultStore } = await import('jotai');
+    const { codeAtom } = await import('@/code/stores/store');
+    getDefaultStore().set(codeAtom, `export default function Page(){ return (<div data-id="root"><div data-id="n1" style={{ position: 'relative' }} /><style>{\`
+    @media (max-width: 768px) and (min-width: 375.02px) {
+      [data-id="n1"] { pointer-events: none !important; }
+    }
+\`}</style></div>); }`);
+    const contentEl = document.createElement('div');
+    for (const base of ['', 'none']) {
+      mockQueueMutation.mockClear();
+      toggleLock('n1', contentEl, buildMap([makeNode('n1', null, [], { pointerEvents: base })]));
+      expect(mockQueueMutation).toHaveBeenCalledWith({
+        type: 'updateStyles', nodeId: 'n1', styles: { pointerEvents: base === 'none' ? '' : 'none' },
+      });
+      expect(mockQueueMutation.mock.calls.some(c => c[0].type === 'updateContainerStyle')).toBe(false);
+      expect(mockQueueMutation.mock.calls.some(c => c[0].type === 'updateVariantStyle')).toBe(false);
+    }
   });
 
   it('does nothing for unknown node', () => {
     const contentEl = document.createElement('div');
     const nodesMap = buildMap([]);
     toggleLock('nonexistent', contentEl, nodesMap);
+    expect(mockQueueMutation).not.toHaveBeenCalled();
     expect(mockUpdateNodeStyles).not.toHaveBeenCalled();
   });
 });
@@ -512,6 +543,27 @@ describe('wrap frame — clips overflow only when wrapping text', () => {
     const map = buildMap([makeNode('page', null, ['t1', 'd1']), absText('t1'), absDiv('d1')]);
     wrapInLayout(['t1', 'd1'], map, dummyEl);
     expect(framedStyles()?.overflow).toBe('visible');
+  });
+
+  // A written `rgba(0, 0, 0, 0)` made Fill → Add open the picker at 0% alpha, so
+  // every colour picked stayed invisible (user report 2026-10-15). No fill at all.
+  it('the wrapper carries NO backgroundColor — Shift+A, Shift+Alt+A, flow and absolute', () => {
+    const absMap = () => buildMap([makeNode('page', null, ['t1', 'd1']), absText('t1'), absDiv('d1')]);
+    for (const wrap of [
+      () => wrapInLayout(['t1'], absMap(), dummyEl),
+      () => wrapInFrame(['t1'], absMap(), dummyEl),
+      () => wrapInLayout(['t1', 'd1'], absMap(), dummyEl),
+      () => wrapInFrame(['t1', 'd1'], absMap(), dummyEl),
+      () => wrapInLayout(['f1'], buildMap([
+        makeNode('page', null, ['f1'], { display: 'flex', flexDirection: 'column' }),
+        makeNode('f1', 'page', [], { position: 'relative', width: '100px', height: '40px' }),
+      ]), dummyEl),
+    ]) {
+      q.mockClear();
+      wrap();
+      expect(framedStyles()).toBeDefined();
+      expect(framedStyles()).not.toHaveProperty('backgroundColor');
+    }
   });
 });
 
@@ -1023,5 +1075,126 @@ describe('wrapInFrame / wrapInLayout — bbox falls back to live rects', () => {
     const id = wrapInFrame(['f1', 'f2'], map, dummyEl);
     expect(id).not.toBeNull();
     expect(framed()).toMatchObject({ left: '100px', top: '100px', width: '500px', height: '350px' });
+  });
+});
+
+// ─── Make Component on an ABSOLUTE bare text (live find 2026-09-07) ─────────
+// The text was `position: absolute` on the page. keepFlowChildren wrapped it
+// in a px-sized frame with the text still absolute at 0,0 → the master root
+// (hug → max-content/min-content + overflow hidden) measured 0×0 and the text
+// was invisible. The wrapper must hug and the text must become a flow child.
+// ─── Create Layout follows the selection's axis (user report 2026-10-19) ────
+// Shift+A on two canvas frames sitting side by side stacked them into a column.
+// A free-positioned selection already has a direction on screen: side by side
+// → row, stacked → column, and the children enter in visual order on that axis.
+describe('wrapInLayout — free-positioned selection keeps its direction', () => {
+  const dummyEl = {} as unknown as HTMLElement;
+  let q: ReturnType<typeof vi.fn>;
+
+  beforeEach(async () => {
+    const mutQueue = await import('@/code/mutation/mutation-queue');
+    q = mutQueue.queueMutation as ReturnType<typeof vi.fn>;
+    q.mockClear();
+    mockCanvasRects.clear();
+  });
+
+  const calls = () => q.mock.calls.map(c => c[0]);
+  const framed = () => calls().find(m => m.type === 'addNode' || m.type === 'addCanvasNode')?.node?.styles as Record<string, string> | undefined;
+  const moveOrder = () => calls().filter(m => m.type === 'move').map(m => m.nodeId);
+  const canvasNode = (id: string, styles: Record<string, string>, children: string[] = []) =>
+    ({ ...makeNode(id, null, children, { position: 'absolute', ...styles }), isCanvasNode: true } as unknown as CanvasNode);
+  const absChild = (id: string, styles: Record<string, string>) =>
+    makeNode(id, 'sec', [], { position: 'absolute', ...styles });
+
+  /** The reported pair: two canvas frames, same top, a gap between them. */
+  const sideBySide = () => buildMap([
+    canvasNode('blue', { left: '0px', top: '0px', width: '174px', height: '93px' }),
+    canvasNode('pink', { left: '220px', top: '0px', width: '230px', height: '93px' }),
+  ]);
+
+  it('two canvas frames side by side → flex ROW', () => {
+    wrapInLayout(['blue', 'pink'], sideBySide(), dummyEl);
+    expect(framed()).toMatchObject({ display: 'flex', flexDirection: 'row' });
+  });
+
+  it('absolute siblings stacked vertically → flex column (unchanged)', () => {
+    const map = buildMap([
+      makeNode('sec', null, ['a', 'b'], { position: 'relative' }),
+      absChild('a', { left: '0px', top: '0px', width: '200px', height: '50px' }),
+      absChild('b', { left: '10px', top: '80px', width: '200px', height: '50px' }),
+    ]);
+    wrapInLayout(['a', 'b'], map, dummyEl);
+    expect(framed()).toMatchObject({ flexDirection: 'column' });
+  });
+
+  it('a tall box top-aligned beside a short one is still a row', () => {
+    // Centers are 180px apart vertically, only 150px horizontally — a center
+    // comparison calls this a column. Neither box sits below the other.
+    const map = buildMap([
+      makeNode('sec', null, ['tall', 'short'], { position: 'relative' }),
+      absChild('tall', { left: '0px', top: '0px', width: '100px', height: '400px' }),
+      absChild('short', { left: '150px', top: '0px', width: '100px', height: '40px' }),
+    ]);
+    wrapInLayout(['tall', 'short'], map, dummyEl);
+    expect(framed()).toMatchObject({ flexDirection: 'row' });
+  });
+
+  it('children enter left-to-right in a row, whatever the selection order', () => {
+    wrapInLayout(['pink', 'blue'], sideBySide(), dummyEl);
+    expect(moveOrder()).toEqual(['blue', 'pink']);
+  });
+
+  it('children enter top-to-bottom in a column, whatever the selection order', () => {
+    const map = buildMap([
+      makeNode('sec', null, ['a', 'b', 'c'], { position: 'relative' }),
+      absChild('a', { left: '0px', top: '200px', width: '100px', height: '40px' }),
+      absChild('b', { left: '0px', top: '0px', width: '100px', height: '40px' }),
+      absChild('c', { left: '0px', top: '100px', width: '100px', height: '40px' }),
+    ]);
+    wrapInLayout(['a', 'b', 'c'], map, dummyEl);
+    expect(moveOrder()).toEqual(['b', 'c', 'a']);
+  });
+
+  it('measured boxes (a hugging frame) infer the direction too', () => {
+    mockCanvasRects.set('left', { left: 0, top: 0, width: 150, height: 80 });
+    mockCanvasRects.set('right', { left: 200, top: 0, width: 150, height: 120 });
+    const map = buildMap([
+      canvasNode('left', { left: '0px', top: '0px', width: '150px', height: '80px' }),
+      canvasNode('right', { left: '200px', top: '0px', width: '150px', height: 'auto' }, ['k']),
+      makeNode('k', 'right', []),
+    ]);
+    wrapInLayout(['right', 'left'], map, dummyEl);
+    expect(framed()).toMatchObject({ flexDirection: 'row' });
+    expect(moveOrder()).toEqual(['left', 'right']);
+  });
+
+  it('Create Frame (no layout) keeps selection order — paint order is not a stack', () => {
+    wrapInFrame(['pink', 'blue'], sideBySide(), dummyEl);
+    expect(framed()!.flexDirection).toBeUndefined();
+    expect(moveOrder()).toEqual(['pink', 'blue']);
+  });
+});
+
+describe('wrapInFrame — keepFlowChildren on a single ABSOLUTE text', () => {
+  const dummyEl = {} as unknown as HTMLElement;
+  it('hugging wrapper + relative child', async () => {
+    const mutQueue = await import('@/code/mutation/mutation-queue');
+    const q = mutQueue.queueMutation as ReturnType<typeof vi.fn>;
+    q.mockClear();
+    const map = buildMap([
+      makeNode('root', null, ['t'], { position: 'relative' }),
+      { id: 't', type: 'p', name: 'Text', parentId: 'root', children: [], textContent: 'Hello',
+        styles: { position: 'absolute', left: '41.58%', top: '396px', width: 'max-content', height: 'auto' } } as unknown as CanvasNode,
+    ]);
+    wrapInFrame(['t'], map, dummyEl, undefined, { keepFlowChildren: true });
+    const calls = q.mock.calls.map(c => c[0]);
+    const f = calls.find(m => m.type === 'addNode')?.node?.styles as Record<string, string>;
+    expect(f.position).toBe('absolute');      // wrapper inherits the text's placement
+    expect(f.left).toBe('41.58%');
+    expect(f.width).toBe('auto');             // …and HUGS its flow child
+    expect(f.height).toBe('auto');
+    const ms = calls.find(m => m.type === 'move' && m.nodeId === 't')?.styles as Record<string, string>;
+    expect(ms.position).toBe('relative');
+    expect(ms.left).toBe(''); expect(ms.top).toBe('');
   });
 });

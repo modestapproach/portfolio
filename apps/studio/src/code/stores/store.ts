@@ -9,7 +9,7 @@
 
 import { atom, getDefaultStore } from 'jotai';
 import { parseJSXToNodes, type CanvasNode } from '../parsing/parser';
-import { computeLayoutBrackets } from '@/shared/flex-helpers';
+import { computeLayoutBrackets, mergeTemplateChildren, cssOrderValue } from '@/shared/flex-helpers';
 import { parseProjectFile, resolveInstancePropOverrides } from '../parsing/project-parser';
 import { getTemplateRouteValues, substituteTemplateVarAttrsForCanvas } from '../generation/template-route-parse';
 import { substituteScrollVariantFromVarForCanvas } from '../generation/scroll-variant-gen';
@@ -59,11 +59,39 @@ export const codeAtom = atom(
  * index keeps behavior for exotic hand-written markup.
  */
 export function jsxDataIdIndex(code: string, dataId: string): number {
-  const esc = dataId.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-  const re = new RegExp('<[A-Za-z][\\w.]*[^>]*?data-id="' + esc + '"');
-  const m = re.exec(code);
-  if (m) return m.index;
-  return code.indexOf(`data-id="${dataId}"`);
+  // Every occurrence of the attribute, tested for sitting INSIDE a JSX
+  // opening tag. A `[^>]*?` scan from the tag's `<` cannot reach an id whose
+  // tag carries an arrow-function handler (`onSubmit={(e) => {…}}` — the
+  // `>` of `=>` ends it), and the raw-substring fallback then found the
+  // id's `[data-id="…"]` BAND RULE in the page's <style> block above the
+  // slot — an imported home page spliced itself into the footer's
+  // subscription form (2026-09-16).
+  const needle = `data-id="${dataId}"`;
+  let fallback = -1;
+  for (let i = code.indexOf(needle); i !== -1; i = code.indexOf(needle, i + 1)) {
+    if (fallback === -1) fallback = i;
+    const tag = jsxOpeningTagStart(code, i);
+    if (tag !== -1) return tag;
+  }
+  return fallback;
+}
+
+/** The `<` of the JSX opening tag whose attribute list contains position `i`,
+ *  or -1 when `i` sits in an expression (`{…}`), a string, or text. Walks
+ *  back at brace depth 0: a `{` met at depth 0 means `i` is inside an
+ *  expression; a `>` at depth 0 means a tag closed before `i`. */
+function jsxOpeningTagStart(code: string, i: number): number {
+  let depth = 0;
+  for (let j = i - 1; j >= 0; j--) {
+    const c = code[j];
+    if (c === '}') depth++;
+    else if (c === '{') { if (depth === 0) return -1; depth--; }
+    else if (depth === 0) {
+      if (c === '>') return -1;
+      if (c === '<' && /[A-Za-z]/.test(code[j + 1] ?? '')) return j;
+    }
+  }
+  return -1;
 }
 
 /**
@@ -410,7 +438,7 @@ function deriveAndCacheNodes(code: string, filePath: string, version: number): v
                   node.fromLayout = true;
                   node.id = newId;
 
-                  const kids = (origChildren.get(origId) || []).map(c => 'layout::' + c);
+                  let kids = (origChildren.get(origId) || []).map(c => 'layout::' + c);
                   // Splice the page's SECTIONS into the {children} position
                   // (NOT the page root — that layer is dropped).
                   if (origId === childrenParentId) {
@@ -422,7 +450,13 @@ function deriveAndCacheNodes(code: string, filePath: string, version: number): v
                       const tagIdx = jsxDataIdIndex(layoutCode, kidId);
                       if (tagIdx !== -1 && tagIdx < childrenIdx) insertIdx++;
                     }
-                    kids.splice(insertIdx, 0, ...pageSectionIds);
+                    // In PAINT order (template `order` values + the page root's own),
+                    // not source order — see mergeTemplateChildren.
+                    kids = mergeTemplateChildren(
+                      origChildren.get(origId) || [], insertIdx, pageSectionIds,
+                      (kid) => cssOrderValue(layoutNodes.get(kid)?.styles?.order),
+                      cssOrderValue(primaryPageRoot?.styles?.order),
+                    );
                   }
                   node.children = kids;
 
@@ -586,15 +620,24 @@ export function getVariantOverriddenKeys(nodeId: string, variantName: string): S
   const variantStyles = node.motionVariants?.[variantName];
   if (variantStyles) {
     for (const k of Object.keys(variantStyles)) keys.add(k);
-    // Motion transform props (x/y translate deltas, rotate, scale, skews —
-    // plus legacy attrX/attrY absolutes) PAINT as this variant's own
-    // `transform` (foldMotionTransforms). The component-primary mid-drag
-    // mirror writes `transform` — without this mapping it clobbers the
-    // variant's independent position/rotation live (the child visually syncs
-    // to the primary drag, then snaps back on commit; live finds 2026-06-11).
-    // A variant that owns any motion transform owns its transform.
+    // POSITION-bearing motion props (x/y translate deltas, plus legacy
+    // attrX/attrY absolutes) PAINT as this variant's own `transform`
+    // (foldMotionTransforms). The component-primary mid-drag mirror writes
+    // `transform` — without this mapping it clobbers the variant's independent
+    // POSITION live (the child visually syncs to the primary drag, then snaps
+    // back on commit; live finds 2026-06-11).
+    //
+    // A rotation/scale/skew is NOT position, and used to be listed here too.
+    // That was right while the mirror wrote a bare `translate(dx, dy)` — which
+    // would have wiped the tile's angle — but the drag fan-out now composes
+    // `translate(dx, dy)` with THAT TILE's own transform
+    // (foldEffectiveTransform), so its rotation survives. Keeping them here
+    // only froze such a tile: a variant whose sole override was `rotate` stopped
+    // following the primary's position live and jumped on mouse-up instead
+    // (user report 2026-09-21 — Tablet synced, Mobile didn't; Mobile's entry
+    // was `{ rotate: 141.9, skewX: 0 }`).
     const hasOwn = (k: string) => variantStyles[k] != null && variantStyles[k] !== '';
-    if (['x', 'y', 'attrX', 'attrY', 'rotate', 'rotateX', 'rotateY', 'rotateZ', 'scale', 'scaleX', 'scaleY', 'skewX', 'skewY'].some(hasOwn)) {
+    if (['x', 'y', 'attrX', 'attrY'].some(hasOwn)) {
       keys.add('transform');
     }
     // POSITION-channel override (top-level svg wrapper / absolute box whose
@@ -805,6 +848,14 @@ export const canvasInteractingAtom = atom(false);
  *  screen-corner outline can't track a live rotation cleanly and the
  *  stale box lingering behind the shape is visual noise. */
 export const isRotatingAtom = atom(false);
+/** True while a PANEL value scrub is in progress (color-picker drag, slider
+ *  drag, chevron hold). A subset of canvasInteractingAtom — set alongside it
+ *  by ToolSlider / ToolInput / ColorPicker via useScrubInteracting. The
+ *  InteractionOutline hides itself for these: a scrub never moves geometry,
+ *  so the outline adds nothing — and it sits exactly on the edge whose
+ *  border/radius/fill the user is trying to see change (live find
+ *  2026-09-06, border-color picker drag). */
+export const panelScrubAtom = atom(false);
 export const updatingFromCanvasAtom = atom(false);
 
 /** While a single-slot code-component connection is being RE-DRAGGED from
@@ -912,32 +963,6 @@ export const isComponentSelectedAtom = atom((get) => {
 });
 
 /**
- * True when the selected node is a map template element or a child of one.
- * Only nodes with isCollectionTemplate (set by parser inside .map() callbacks) qualify.
- * The parent container that holds the .map() does NOT qualify — nor do its non-map siblings.
- */
-export const isMapTemplateSelectedAtom = atom((get) => {
-  const selectedId = get(selectedNodeAtom);
-  if (!selectedId) return false;
-  const nodes = get(nodesAtom);
-  const node = nodes.get(selectedId);
-  if (!node) return false;
-
-  // The node itself or any ancestor must have isCollectionTemplate
-  // AND the collection source must be __inline: (not CMS)
-  let current: typeof node | undefined = node;
-  while (current) {
-    if (current.isCollectionTemplate) {
-      // Verify the parent's collectionList is an inline map
-      const parent = current.parentId ? nodes.get(current.parentId) : null;
-      if (parent?.collectionList?.source?.startsWith('__inline:')) return true;
-    }
-    current = current.parentId ? nodes.get(current.parentId) : undefined;
-  }
-  return false;
-});
-
-/**
  * Which map item index is currently selected on canvas.
  * null = template (item 0) or non-map node.
  * 1+ = ghost copy at that index.
@@ -945,38 +970,6 @@ export const isMapTemplateSelectedAtom = atom((get) => {
  */
 export const mapItemIndexAtom = atom<number | null>(null);
 
-/**
- * Derived: map context for the currently selected map item.
- * Returns the parent node (with collectionList), varName, and inlineMapData.
- * null when selection is not inside an inline map.
- */
-export const mapContextAtom = atom((get) => {
-  const selectedId = get(selectedNodeAtom);
-  if (!selectedId) return null;
-  const nodes = get(nodesAtom);
-  const node = nodes.get(selectedId);
-  if (!node) return null;
-
-  let current: typeof node | undefined = node;
-  while (current) {
-    if (current.isCollectionTemplate) {
-      const parent = current.parentId ? nodes.get(current.parentId) : null;
-      if (parent?.collectionList?.source?.startsWith('__inline:')) {
-        const templateId = parent.collectionList!.templateIds['default']
-          || Object.values(parent.collectionList!.templateIds)[0];
-        const varName = parent.collectionList!.source.replace('__inline:', '');
-        return {
-          parentNode: parent,
-          templateId: templateId || current.id,
-          varName,
-          mapData: parent.inlineMapData || [],
-        };
-      }
-    }
-    current = current.parentId ? nodes.get(current.parentId) : undefined;
-  }
-  return null;
-});
 
 // ─── Variable modal request ─────────────────────────────────────────────────
 // The "Create Variable" flow (ControlLabel chevron menu) creates the variable, then wants to open the

@@ -15,6 +15,7 @@ import { useState, useRef, useCallback, useEffect, useMemo } from 'react';
 import { createPortal } from 'react-dom';
 import { useAtomValue, useSetAtom } from 'jotai';
 import { isComponentFileAtom, variableModalRequestAtom, canvasInteractingAtom } from '@/code/stores/store';
+import { isIconSetFilePath } from '@/code/project/file-path-kind';
 import { buildComponentRegistry, parseComponentInfoFromSource, STRUCTURAL_PROPS, type ComponentProp } from '@/code/components/component-registry';
 import { projectFS, projectVersionAtom } from '@/code/project/project-fs';
 import { getPropLabel } from '@/code/components/prop-meta';
@@ -22,7 +23,7 @@ import { localCssPropForVar } from '@/code/components/prop-css-mapping';
 import { resolveVariableIconKey, acceptedVariableFamilies } from './VariableTypeIcon';
 import { copiedStyleAtom, buildCopiedStyle, canPasteStyle, buildPastePayload, isMotionTransformTarget } from './style-clipboard';
 import { getVariableType } from './variable-types';
-import { activeLocaleAtom, isDefaultLocaleAtom, localeOverridesAtom } from '@/code/stores/locale-store';
+import { activeLocaleAtom, isDefaultLocaleAtom, localeOverridesAtom, i18nConfigAtom } from '@/code/stores/locale-store';
 import { activeFilePathAtom, isTemplateFilePath } from '@/code/project/active-file-store';
 import { setNodeOverride } from '@/code/project/locale-ops';
 import { presetTokensAtom } from '@/code/stores/preset-store';
@@ -39,7 +40,6 @@ import { queueMutation, flushNow } from '@/code/mutation/mutation-queue';
 import { extractStyleCSS } from '@/code/parsing/parser';
 import { extractBorderAfterRuleBody } from '../ui/border-utils';
 import { trace } from '@/shared/debug-trace';
-import { MAP_TEMPLATE_COLOR } from '@/shared/constants';
 import PresetPicker from '../ui/PresetPicker';
 import LocaleStylePopup from '../ui/LocaleStylePopup';
 import { useLocaleStyleState, localeScopeOf } from './LocaleBoundPill';
@@ -234,10 +234,8 @@ export default function ControlLabel({ label, property, plain, forceShow, hideCr
     nodeId, node, styles, vpId, isReplica, vpWidth,
     hasOverride, getValueSource,
     createVariable, removeVariable, updateStyle, updateStyleLive, updateMultipleStyles,
-    mapOverride, cmsBinding,
+    cmsBinding,
   } = useControl();
-
-  const isMapOverridden = mapOverride?.isOverridden(property) ?? false;
 
   // Custom in-memory style clipboard (Copy Style / Paste Style on the label menu).
   const copiedStyle = useAtomValue(copiedStyleAtom);
@@ -249,6 +247,7 @@ export default function ControlLabel({ label, property, plain, forceShow, hideCr
   // Locale awareness
   const activeLocale = useAtomValue(activeLocaleAtom);
   const isDefaultLocale = useAtomValue(isDefaultLocaleAtom);
+  const hasMultipleLocales = useAtomValue(i18nConfigAtom).locales.length > 1;
   const localizeHidden = useLocalizeHidden();
   const localeOverrides = useAtomValue(localeOverridesAtom);
   const setLocaleOverrides = useSetAtom(localeOverridesAtom);
@@ -425,6 +424,7 @@ export default function ControlLabel({ label, property, plain, forceShow, hideCr
     variableRef: varRef,
     hasOverride: isOverride,
     isComponentFile,
+    isIconSetFile: isIconSetFilePath(activeFilePath ?? ''),
     isPrimary,
     isDefaultLocale,
     activeLocale,
@@ -551,6 +551,17 @@ export default function ControlLabel({ label, property, plain, forceShow, hideCr
       }
       setLocaleOverrides(next);
     } : undefined,
+    onCreateFormattedVariable: () => {
+      setMenuOpen(false);
+      // Same unique auto-name + bind + open-in-edit flow as Create Variable, routed through the
+      // `textContentFormatted` create (an HTML prop — see ControlProvider.createVariable).
+      instantCreateAndEditVariable({
+        property, propertyLabel: label, value: value ?? '',
+        activeFilePath, pageVariables,
+        createVariable: (_p, name, v) => createVariable('textContentFormatted', name, v),
+        setVariableModalRequest,
+      });
+    },
     onOpenVariableModal: async () => {
       setMenuOpen(false);
       // Seed the variable's default from the EFFECTIVE value, not just the inline style. A text node whose
@@ -586,6 +597,8 @@ export default function ControlLabel({ label, property, plain, forceShow, hideCr
     // selection isn't a thing; user rule 2026-07-30). Central gate so every
     // Variant row (ComponentPropsTool, instance panels) drops the item.
     onOpenLocalize: (localizeHidden || hideLocalize || property === 'initialVariant') ? undefined : () => { setMenuOpen(false); setLocalizeOpen(true); },
+    isVariantTile: isComponentFile && !isPrimary,
+    hasMultipleLocales,
     // CMS-template field binding context — `getCmsBindingMenuItems` reads
     // this to render the "Bind to Field" submenu and the per-property
     // unbind action. Null when the selected node isn't inside a `.map()`
@@ -879,18 +892,6 @@ export default function ControlLabel({ label, property, plain, forceShow, hideCr
               <polyline points="15 18 9 12 15 6" />
             </svg>
           </span>
-        )}
-
-        {/* Map item override dot — same +18px counter-shift as the chevron
-            so the dot stays at its original screen position despite the
-            button's hit-area negative margin. */}
-        {isMapOverridden && (
-          <button
-            onClick={(e) => { e.stopPropagation(); mapOverride?.resetOverride(property); trace.action('control-label:reset-map-override', { property }); }}
-            title="Reset map override"
-            className="absolute left-[10px] top-1/2 -translate-y-1/2 w-2 h-2 rounded-full shrink-0 cursor-pointer border-none p-0"
-            style={{ backgroundColor: MAP_TEMPLATE_COLOR }}
-          />
         )}
 
         {/* Label text. CMS bindings used to render `⚡ FieldName` above the

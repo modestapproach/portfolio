@@ -141,8 +141,12 @@ export interface SandboxApi {
   /**
    * Hide/show the DOM-only ghost copies of a CMS collection list during a
    * layout drag of one of its items. Set on lift / cleared on cleanup.
+   * With `nodeId` (a node INSIDE the row is dragged) only that node's ghost
+   * copies are hidden (visibility), the rows stay.
    */
-  setCollectionGhostsHidden(containerId: string, vpPrefix: string, hidden: boolean): void | Promise<void>;
+  setCollectionGhostsHidden(containerId: string, vpPrefix: string, hidden: boolean, nodeId?: string): void | Promise<void>;
+  /** Transient per-node hide (drop re-centre) in a head stylesheet the renderer never rewrites. */
+  setNodeHidden(nodeId: string, vpPrefix: string, hidden: boolean): void | Promise<void>;
 
   /** Re-measure every node's rect/corners after a reorder's DOM mutations
    *  (cancels any premature pending remeasure) so overlays snap instantly. */
@@ -185,6 +189,14 @@ export interface SandboxApi {
 
   // ─── Stylesheet ────────────────────────────────────────────────────────
   injectCSS(selector: string, cssBody: string): void | Promise<void>;
+  /**
+   * Mirror the EDITOR's colour mode onto this document (`<html class="dark">`).
+   * The token lift runs in here (Renderer) and reads the mode off its own
+   * <html>, which never carried the editor's class — so the first paint was
+   * always the light scheme, whatever the editor showed, until a toggle
+   * re-lifted from the parent. Code components' `useTheme` reads it too.
+   */
+  setThemeMode(mode: 'light' | 'dark'): void | Promise<void>;
   removeCSS(selector: string): void | Promise<void>;
   /** Replace the design-tokens block (between the canvas-tokens-start/end
    *  markers) in the iframe's canvas style element. Lets preset edits push
@@ -360,7 +372,7 @@ export interface SandboxApi {
    *  React roots in a single macrotask → React batches the first commits into
    *  one paint (no per-instance reflow "dominos"). See sandbox-code-host. */
   mountCodeComponentsBatch(
-    mounts: Array<{ nodeId: string; code: string; props: Record<string, any>; vpWidth: number }>,
+    mounts: Array<{ nodeId: string; code: string; props: Record<string, any>; vpWidth: number; preview?: boolean }>,
   ): void | Promise<void>;
   unmountCodeComponent(nodeId: string): void | Promise<void>;
   updateCodeComponentProps(

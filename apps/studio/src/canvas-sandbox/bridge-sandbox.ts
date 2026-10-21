@@ -52,7 +52,7 @@ import {
 import { emitAllMeasures, invalidateComputedCache } from './sandbox/measure';
 import { noteSandboxRender } from './sandbox/rect-emit';
 import {
-  setCollectionGhostsHidden, patchStyles, patchMultipleStyles, injectCSS, removeCSS,
+  setCollectionGhostsHidden, setNodeHidden, patchStyles, patchMultipleStyles, injectCSS, removeCSS,
   setCanvasTokenVar, loadFontInIframe, setCanvasTokensCSS, setInnerHTML, setAttribute,
   setChildShapeAttribute, patchAttrsAndStyles, previewPatchStyles, previewRestoreStyles,
 } from './sandbox/style-handlers';
@@ -61,10 +61,12 @@ import {
   getTransformedCorners, getBBox, captureElement,
 } from './sandbox/read-handlers';
 import { bakeGroupResize, clearGroupResizeBake, liveRefitGroup } from './sandbox/group-resize';
+import { installWheelForwarding } from './wheel-forward';
 import {
   removeElement, reparentLive, createPlaceholder, movePlaceholder, patchPlaceholderStyles,
   swapTwoElements, removePlaceholders, getPlaceholderRect, liftNode, restoreNode, commitMergedOrder,
 } from './sandbox/placeholders';
+import { rerasterPromotedDescendants } from '@/canvas/transform/reraster';
 import {
   startTextEdit, commitTextEdit, cancelTextEdit, editorCommand,
   startShapeEdit, commitShapeEdit, cancelShapeEdit, setShapeEditHandleMode, setShapeEditAnchorPosition,
@@ -109,6 +111,10 @@ export function initSandbox(_containerEl: HTMLElement, contentRootEl: HTMLElemen
       emit({ type: 'sandboxMouseMove', clientX: lastMouseX, clientY: lastMouseY });
     });
   });
+  // Wheel + trackpad pinch → the parent's camera. Only reachable while text /
+  // vector edit makes the iframe take clicks; without it a pinch zoomed the
+  // whole browser page instead of the canvas (see wheel-forward.ts).
+  installWheelForwarding(window, (msg) => self.parent.postMessage(msg, '*'));
   // Expose the API to the parent. Comlink wraps postMessage under the hood;
   // every method becomes an awaited RPC call on the parent side.
   Comlink.expose(api, Comlink.windowEndpoint(self.parent));
@@ -127,15 +133,29 @@ export function initSandbox(_containerEl: HTMLElement, contentRootEl: HTMLElemen
 // blurry, like Figma) and re-rasterise sharp once at idle. It must NOT stay
 // on permanently: a promoted layer holds the full content texture at the
 // current scale — GPU memory we only want to pay during gestures.
+//
+// Clearing the root's hint re-rasters the CONTENT layer — but not layers that
+// promote THEMSELVES inside it (a component instance's perf-isolation
+// will-change, a Marquee track): those keep the bitmap of the zoom they were
+// first painted at, so text inside component instances stayed blurry after a
+// zoom while plain text sharpened. At idle, when the SCALE changed (a pan
+// never needs it), they are toggled too (canvas/transform/reraster.ts).
 let _gestureHintTimer: ReturnType<typeof setTimeout> | null = null;
+let _rasteredScale: number | null = null;
 
-function hintCameraGesture(): void {
+function hintCameraGesture(scale?: number): void {
   if (!contentRoot) return;
   if (contentRoot.style.willChange !== 'transform') contentRoot.style.willChange = 'transform';
   if (_gestureHintTimer) clearTimeout(_gestureHintTimer);
   _gestureHintTimer = setTimeout(() => {
     _gestureHintTimer = null;
-    if (contentRoot) contentRoot.style.willChange = '';
+    if (!contentRoot) return;
+    contentRoot.style.willChange = '';
+    if (scale !== undefined && scale !== _rasteredScale) {
+      _rasteredScale = scale;
+      const n = rerasterPromotedDescendants([contentRoot]);
+      if (n > 0) trace.action('canvas-sandbox:reraster-promoted', { count: n, scale });
+    }
   }, 250);
 }
 
@@ -394,12 +414,16 @@ const api: SandboxApi = {
 
   // ─── Style / attr / CSS patching — sandbox/style-handlers.ts ───────────
   setCollectionGhostsHidden,
+  setNodeHidden,
   patchStyles,
   patchMultipleStyles,
   previewPatchStyles,
   previewRestoreStyles,
   injectCSS,
   removeCSS,
+  setThemeMode(mode: 'light' | 'dark'): void {
+    document.documentElement.classList.toggle('dark', mode === 'dark');
+  },
   setCanvasTokenVar,
   loadFontInIframe,
   setCanvasTokensCSS,
@@ -420,7 +444,7 @@ const api: SandboxApi = {
   setViewportTransform(x: number, y: number, scale: number): void {
     if (!contentRoot) return;
     setCurrentSandboxTransform({ x, y, scale });
-    hintCameraGesture();
+    hintCameraGesture(scale);
     contentRoot.style.transform = `translate3d(${x}px, ${y}px, 0) scale(${scale})`;
     contentRoot.style.transformOrigin = '0 0';
     // Forward to canvas-dnd so drag/snap math uses the right scale + offset
@@ -501,7 +525,7 @@ const api: SandboxApi = {
   },
 
   mountCodeComponentsBatch(
-    mounts: Array<{ nodeId: string; code: string; props: Record<string, any>; vpWidth: number }>,
+    mounts: Array<{ nodeId: string; code: string; props: Record<string, any>; vpWidth: number; preview?: boolean }>,
   ): void {
     if (!contentRoot) return;
     mountCodeComponentsBatchImpl(contentRoot, mounts);

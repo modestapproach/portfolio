@@ -24,8 +24,10 @@ export interface ToolbarItem {
   defaultAttrs?: Record<string, string>;
   /** Text content inside the element (e.g. 'Button', 'Heading') */
   textContent?: string;
-  /** Child elements to create inside this element */
-  children?: () => NewNodeDescriptor[];
+  /** Child elements to create inside this element. Called once per drop with
+   *  the new root's data-id, so generated child ids can derive from it (an SVG
+   *  drop's nested groups: `<root>-s<i>`). */
+  children?: (rootId?: string) => NewNodeDescriptor[];
   /** Ghost overlay dimensions during drag (px) */
   ghostSize: { width: number; height: number };
   /** When set, this drag inserts a CDN-linked component. The strategy
@@ -95,7 +97,7 @@ function makeCardPricingChildren(): NewNodeDescriptor[] {
     { tag: 'p', id: generateNodeId('text'), name: 'Text', styles: { fontSize: '32px', fontWeight: '800', color: '#111' }, textContent: '$29' },
     { tag: 'p', id: generateNodeId('text'), name: 'Text', styles: { fontSize: '13px', color: '#888' }, textContent: 'per month' },
     { tag: 'button', id: generateNodeId('button'), name: 'Button', styles: { padding: '10px 20px', borderRadius: '8px', backgroundColor: '#3b82f6', border: 'none', cursor: 'pointer', display: 'flex', flexDirection: 'row', alignItems: 'center', justifyContent: 'center' }, children: [
-      { tag: 'p', id: generateNodeId('text'), name: 'Text', styles: { color: '#ffffff', fontSize: '14px', fontWeight: '600', margin: '0px' }, textContent: 'Get Started' },
+      { tag: 'p', id: generateNodeId('text'), name: 'Text', styles: { color: '#ffffff', fontSize: '14px', fontWeight: '600', margin: '0px', whiteSpace: 'nowrap' }, textContent: 'Get Started' },
     ] },
   ];
 }
@@ -199,7 +201,11 @@ const TOOLBAR_ITEMS: Record<string, ToolbarItem> = {
     // in layers, styleable, and the button itself stays a flex container.
     defaultStyles: { padding: '12px 24px', borderRadius: '8px', backgroundColor: '#3b82f6', border: 'none', cursor: 'pointer', display: 'flex', flexDirection: 'row', alignItems: 'center', justifyContent: 'center' },
     children: () => [
-      { tag: 'p', id: generateNodeId('text'), name: 'Text', styles: { color: '#ffffff', fontSize: '15px', fontWeight: '500', margin: '0px' }, textContent: 'Button' },
+      // whiteSpace: nowrap — a button label is one line by definition. Without
+      // it a Fit (min-content) parent measures the label by its LONGEST WORD,
+      // so two buttons in a hugging row overflowed their parent and a
+      // narrowed button stacked "Start / building" (2026-09-08).
+      { tag: 'p', id: generateNodeId('text'), name: 'Text', styles: { color: '#ffffff', fontSize: '15px', fontWeight: '500', margin: '0px', whiteSpace: 'nowrap' }, textContent: 'Button' },
     ],
     ghostSize: { width: 120, height: 44 },
   },
@@ -571,6 +577,7 @@ const CODE_SNIPPET_TOOLBAR_ITEMS: Record<string, { tag: string; width: number; h
   'cs-themeToggle':     { tag: 'ThemeToggle',     width: 44,  height: 44 },
   'cs-localeSwitcher':  { tag: 'LocaleSwitcher',  width: 100, height: 36 },
   'cs-copyButton':      { tag: 'CopyButton',      width: 160, height: 48 },
+  'cs-embed':           { tag: 'Embed',           width: 560, height: 315 },
   // Creative — text effects (port batch 1). Defaults sized big enough
   // for the rendered animation to be visible on first drop without the
   // user needing to resize. SpinningText is square because the chars
@@ -752,9 +759,46 @@ const SHADER_TOOLBAR_ITEMS: Record<string, { tag: string; width: number; height:
   'cs-shaderLiquidMetal':     { tag: 'LiquidMetal',      width: 600, height: 400 },
   'cs-shaderCaustics':        { tag: 'CausticsLight',    width: 600, height: 400 },
   'cs-shaderAurora':          { tag: 'AuroraBackground', width: 600, height: 400 },
+  'cs-bgSilk': { tag: 'SilkRibbons', width: 600, height: 400 },
+  'cs-bgLightPillar': { tag: 'LightPillar', width: 600, height: 400 },
+  'cs-bgIridescence': { tag: 'IridescentFilm', width: 600, height: 400 },
+  'cs-bgGodRays': { tag: 'GodRays', width: 600, height: 400 },
+  'cs-bgGrainField': { tag: 'GrainField', width: 600, height: 400 },
+  'cs-bgNebula': { tag: 'NebulaField', width: 600, height: 400 },
+  'cs-bgDotWave': { tag: 'DotWave', width: 600, height: 400 },
+  'cs-bgContours': { tag: 'ContourMap', width: 600, height: 400 },
+  'cs-bgFluidGradient': { tag: 'FluidGradient', width: 600, height: 400 },
+  'cs-bgCyberGrid': { tag: 'CyberGrid', width: 600, height: 400 },
+  'cs-bgRippleGrid': { tag: 'RippleGrid', width: 600, height: 400 },
+  'cs-bgVoronoiCells': { tag: 'VoronoiCells', width: 600, height: 400 },
+  'cs-bgMetaballField': { tag: 'MetaballField', width: 600, height: 400 },
+  'cs-bgHalftoneScreen': { tag: 'HalftoneScreen', width: 600, height: 400 },
+  'cs-bgScanlineCRT': { tag: 'ScanlineCRT', width: 600, height: 400 },
+  'cs-bgSmoke': { tag: 'Smoke', width: 600, height: 400 },
+  'cs-bgMarble': { tag: 'Marble', width: 600, height: 400 },
+  'cs-bgWarpTunnel': { tag: 'WarpTunnel', width: 600, height: 400 },
+  'cs-bgStarWarp': { tag: 'StarWarp', width: 600, height: 400 },
+  'cs-bgHexGrid': { tag: 'HexGrid', width: 600, height: 400 },
+  'cs-bgLightning': { tag: 'Lightning', width: 600, height: 400 },
+  'cs-bgLiquidChrome': { tag: 'LiquidChrome', width: 600, height: 400 },
+  'cs-bgBokeh': { tag: 'Bokeh', width: 600, height: 400 },
+  'cs-bgRainGlass': { tag: 'RainGlass', width: 600, height: 400 },
+  'cs-bgFireflies': { tag: 'Fireflies', width: 600, height: 400 },
+  'cs-bgVortex': { tag: 'Vortex', width: 600, height: 400 },
+  'cs-bgSunset': { tag: 'Sunset', width: 600, height: 400 },
+  'cs-bgDunes': { tag: 'Dunes', width: 600, height: 400 },
+  'cs-bgOilSlick': { tag: 'OilSlick', width: 600, height: 400 },
+  'cs-bgWaveStack': { tag: 'WaveStack', width: 600, height: 400 },
   'cs-shaderMatrixRain':      { tag: 'MatrixRain',       width: 600, height: 400 },
   'cs-shaderWaveDistortion':  { tag: 'WaveDistortion',   width: 600, height: 400 },
   'cs-neonParticleField':     { tag: 'NeonParticleField', width: 600, height: 400 },
+  // Paper-grade WebGL2 pack (vendored paper-design/shaders GLSL) — surfaced
+  // in the Creative → Shaders panel with cover-image cards. MeshGradient and
+  // LiquidMetal reuse the two ids above.
+  'cs-shaderGemSmoke':        { tag: 'GemSmoke',         width: 600, height: 400 },
+  'cs-shaderGrainGradient':   { tag: 'GrainGradient',    width: 600, height: 400 },
+  'cs-shaderMetaballs':       { tag: 'Metaballs',        width: 600, height: 400 },
+  'cs-shaderSmokeRing':       { tag: 'SmokeRing',        width: 600, height: 400 },
 };
 
 function makeShaderToolbarItem(itemId: string): ToolbarItem | null {

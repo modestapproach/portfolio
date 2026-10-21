@@ -4,23 +4,25 @@
 
 import { useEffect, useLayoutEffect, useState, useCallback, useMemo, useRef, useSyncExternalStore } from 'react';
 import { useAtomValue, useSetAtom, getDefaultStore } from 'jotai';
-import { selectedNodeAtom, selectedIdsAtom, hoveredIdAtom, hoveredViewportIdAtom, hoveredNodeIdAtom, canvasInteractingAtom, isRotatingAtom, isComponentSelectedAtom, isMapTemplateSelectedAtom, isComponentFileAtom, nodesAtom, mapItemIndexAtom, marqueeViewportSpreadAtom } from '@/code/stores/store';
+import { selectedNodeAtom, selectedIdsAtom, hoveredIdAtom, hoveredViewportIdAtom, hoveredNodeIdAtom, canvasInteractingAtom, isRotatingAtom, isComponentSelectedAtom, isComponentFileAtom, nodesAtom, mapItemIndexAtom, marqueeViewportSpreadAtom } from '@/code/stores/store';
 import { useNodesComputed } from '@/code/stores/node-family';
 import { getNodeFromCache } from '@/code/stores/store';
 import { marqueeSelectionSig } from './SelectionBox';
 import { activeEditorAtom, suppressSelectionOverlayAtom, colorPickerOpenAtom } from '@/code/stores/editor-store';
 import { activeFilePathAtom } from '@/code/project/active-file-store';
-import { SELECTION_COLOR, COMPONENT_COLOR, MAP_TEMPLATE_COLOR, isTextTag, isFitSize } from '@/shared/constants';
+import { SELECTION_COLOR, COMPONENT_COLOR, isTextTag, isFitSize } from '@/shared/constants';
 import { interactingViewportIdAtom, viewportWidthsAtom, syncViewportWidths, viewportsConfigAtom, viewportPositionsAtom } from '@/code/stores/viewport-store';
 import { isDefaultLocaleAtom } from '@/code/stores/locale-store';
 import { applyViewportWidthChange } from '@/code/generation/viewport-width-rewrite';
+import { activeLadderIsStartModel, commitBreakpointStart } from '@/canvas/helpers/breakpoint-commit';
+import { startOf } from '@/code/project/breakpoint-ladder';
 import { findNodeRect, findGhostsForTemplate, getContentRoot, updateNodeStyles, findNodeComputedStyles, patchNodeStyles, getViewportPrefix, forceCanvasRender } from '@/canvas/node-ops';
 import { mirrorPrimaryViewportHeightToRoot } from '@/canvas/viewport-size-ops';
 import { makeGhostId } from '@/shared/ghost-id';
 import { updateVariantPosition } from '@/code/variants/variant-ops';
 import { projectFS } from '@/code/project/project-fs';
 import { syncQueueCode } from '@/code/mutation/mutation-queue';
-import { getScreenCornersById, getElementRotationById, cornersEqual, getHandlesFromDirection, cornersFromRect, getOppositeCorner, processZeroCrossing, updateDirectionAfterCrossing, nodeOrAncestorHasRotationOrSkewById, type ScreenCorners, type Direction } from '@/canvas/resize/geometry-utils';
+import { getScreenCornersById, getElementRotationById, cornersEqual, isDegenerateQuad, getHandlesFromDirection, cornersFromRect, getOppositeCorner, processZeroCrossing, updateDirectionAfterCrossing, nodeOrAncestorHasRotationOrSkewById, type ScreenCorners, type Direction } from '@/canvas/resize/geometry-utils';
 import { getTransformedPoint } from '@/canvas/canvas-math';
 import { startResize, applyAspectRatioLock } from '@/canvas/resize/ResizeManager';
 import { startRotate, parseRotationFromMatrix, mergeRotation } from '@/canvas/resize/RotateManager';
@@ -113,7 +115,6 @@ export default function SelectionOverlay({ onGripDragStart, onSnapGuidesChange }
   // still keeps its useMemos cheap.
   const nodes = useAtomValue(nodesAtom);
   const isComponent = useAtomValue(isComponentSelectedAtom);
-  const isMapTemplate = useAtomValue(isMapTemplateSelectedAtom);
   const activeFilePath = useAtomValue(activeFilePathAtom);
   // True when the active file is a component master OR a TEMPLATE (LayoutClient).
   // Both are shared content that renders PURPLE (accent-secondary) — the user is
@@ -147,15 +148,14 @@ export default function SelectionOverlay({ onGripDragStart, onSnapGuidesChange }
       (spreadValid && marqueeSpread!.byNode[id]?.length ? marqueeSpread!.byNode[id]! : [vpId]);
     return topLevelIds.flatMap(id => vpsFor(id).map(v => ({ id, vpId: v })));
   }, [selectedIds, nodes, marqueeSpread, vpId]);
-  // CMS-collection-template counterpart of `isMapTemplate`. Same shape
-  // (selected node lives inside a `.map()` callback) — different source.
-  // Drives the ghost-outline + arrow-connector overlay below.
+  // True when the selected node lives inside a CMS collection list's
+  // `.map()` callback. Drives the ghost-outline + arrow-connector overlay below.
   const isCmsCollectionTemplate = useMemo(() => {
     if (!selectedId) return false;
     let current = nodes.get(selectedId);
     while (current) {
       const parent = current.parentId ? nodes.get(current.parentId) : null;
-      if (parent?.collectionList && !parent.collectionList.source.startsWith('__inline:')) return true;
+      if (parent?.collectionList) return true;
       current = parent ?? undefined;
     }
     return false;
@@ -172,15 +172,12 @@ export default function SelectionOverlay({ onGripDragStart, onSnapGuidesChange }
   const allViewportConfigs = useAtomValue(viewportsConfigAtom);
   // Master files: ALWAYS purple regardless of what's selected — the
   // user is editing shared component content, the colour-coding is the
-  // safety cue. Map templates stay green (they're a different kind of
-  // shared content). Pages: blue unless the selection is itself a
+  // safety cue. Pages: blue unless the selection is itself a
   // component instance, in which case purple (already handled by
   // `isComponent`).
-  const selectionColor = isMapTemplate
-    ? MAP_TEMPLATE_COLOR
-    : (isComponent || isInComponentMaster)
-      ? COMPONENT_COLOR
-      : SELECTION_COLOR;
+  const selectionColor = (isComponent || isInComponentMaster)
+    ? COMPONENT_COLOR
+    : SELECTION_COLOR;
   const activeGradient = useAtomValue(activeGradientAtom);
   const selectedGradientStop = useAtomValue(selectedGradientStopAtom);
   const gradientCallback = useAtomValue(gradientUpdateCallbackAtom);
@@ -508,6 +505,23 @@ export default function SelectionOverlay({ onGripDragStart, onSnapGuidesChange }
         const oldVp = allViewportConfigs.find(v => v.id === resizedVpId);
         const oldWidth = oldVp?.width ?? newWidth;
 
+        // START MODEL: the dragged width is the breakpoint's new START (its tile width); one
+        // commit moves the next narrower breakpoint's end with it (breakpoint-ladder.ts) and
+        // writes the ladder. The drag dirtied the widths atom with live widths — the commit
+        // re-adopts the config's; an unchanged start just restores them.
+        const startModel = activeLadderIsStartModel();
+        if (startModel) {
+          const cfgVp = getDefaultStore().get(viewportsConfigAtom).find(v => v.id === resizedVpId);
+          if (cfgVp && startOf(cfgVp) !== newWidth) {
+            commitBreakpointStart(activeFilePath, resizedVpId, newWidth);
+          } else if (cfgVp) {
+            setViewportWidths(prev => {
+              const restored = { ...prev, [resizedVpId]: cfgVp.width };
+              syncViewportWidths(restored);
+              return restored;
+            });
+          }
+        } else
         // 2. Update viewport width atom + imperative sync for the generator
         setViewportWidths(prev => {
           // Band rules in the FILE are keyed by the CONFIG width — always
@@ -554,9 +568,16 @@ export default function SelectionOverlay({ onGripDragStart, onSnapGuidesChange }
         const primaryForCommit = allVpsForCommit.find(v => v.isPrimary) ?? allVpsForCommit[0];
         const isPrimaryResize = !!primaryForCommit && primaryForCommit.id === resizedVpId;
         setViewportsConfig(prev => prev.map(v => {
+          if (v.id === resizedVpId && startModel) {
+            // Start model: the ladder (widths + starts) was committed above — height only.
+            return newHeight > 0 ? { ...v, height: newHeight } : v;
+          }
           if (v.id === resizedVpId) {
-            if (newHeight > 0) return { ...v, width: newWidth, height: newHeight };
-            return { ...v, width: newWidth };
+            // Dragging the tile's edge DEFINES it, so the import's
+            // `designWidth` hint goes: the tile renders at what was just
+            // dragged, not at the width the source designed that band at.
+            if (newHeight > 0) return { ...v, width: newWidth, height: newHeight, designWidth: undefined };
+            return { ...v, width: newWidth, designWidth: undefined };
           }
           if (isPrimaryResize && newHeight > 0) {
             return { ...v, height: newHeight };
@@ -922,6 +943,14 @@ export default function SelectionOverlay({ onGripDragStart, onSnapGuidesChange }
           {activeGradient && (
             <GradientOverlay
               corners={corners}
+              localSize={(() => {
+                // The gradient is laid out in the element's OWN box — its CSS
+                // size, not the transformed quad's edges (gradient-geometry.ts).
+                if (!selectedId) return null;
+                const c = findNodeComputedStyles(selectedId, vpId, ['width', 'height']);
+                const w = parseFloat(c.width), h = parseFloat(c.height);
+                return Number.isFinite(w) && Number.isFinite(h) ? { w, h } : null;
+              })()}
               gradientType={activeGradient.type}
               direction={activeGradient.direction}
               centerX={activeGradient.centerX}
@@ -990,15 +1019,13 @@ export default function SelectionOverlay({ onGripDragStart, onSnapGuidesChange }
       )}
 
       {/* Collection ghost outlines + arrow connectors — shows when the
-          selected node is inside ANY `.map()` (inline array OR CMS slug).
-          Color tracks the selection: orange for inline maps (matches the
-          map template selection treatment), blue for CMS (matches the
-          CMS pill / accent). */}
-      {selectedId && (isMapTemplate || isCmsCollectionTemplate) && (
+          selected node is inside a CMS collection list's `.map()`. Blue
+          matches the CMS pill / accent. */}
+      {selectedId && isCmsCollectionTemplate && (
         <MapGhostOverlay
           nodeId={selectedId}
           vpId={vpId}
-          color={isMapTemplate ? MAP_TEMPLATE_COLOR : SELECTION_COLOR}
+          color={SELECTION_COLOR}
         />
       )}
 
@@ -1018,10 +1045,7 @@ function MapGhostOverlay({ nodeId, vpId, color }: { nodeId: string; vpId: string
   const [ghostCorners, setGhostCorners] = useState<ScreenCorners[]>([]);
 
   // Find the template root: walk up to find the node whose parent has
-  // ANY collectionList. The same overlay serves both inline `.map()`
-  // arrays and CMS-backed collections — the only difference is the
-  // colour passed in by the caller, which is also why we don't filter
-  // by `source.startsWith('__inline:')` here anymore.
+  // a collectionList (CMS-backed collection).
   // Per-computation subscription — the walk re-runs per commit but this
   // small overlay only re-renders when the template-root RESULT changes.
   const templateRootId = useNodesComputed((nodes) => {
@@ -1153,6 +1177,9 @@ function GroupBoundingBox({ pairs, color }: { pairs: Array<{ id: string; vpId: s
     const { xHandle: initXH, yHandle: initYH } = getHandlesFromDirection(direction);
 
     for (const { id, vpId } of pairs) {
+      // Hidden nodes aren't in the group box, so the group resize doesn't move them either.
+      const quad = getScreenCornersById(id, vpId);
+      if (quad && isDegenerateQuad(quad)) continue;
       const computed = findNodeComputedStyles(id, vpId, ['width', 'height', 'left', 'top', 'transform']);
       const w = parseFloat(computed.width);
       const h = parseFloat(computed.height);
@@ -1388,10 +1415,15 @@ function GroupBoundingBox({ pairs, color }: { pairs: Array<{ id: string; vpId: s
       // corners ARE the rect corners, so this is an exact equivalent.
       let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
       let found = false;
+      let measured = false;
 
       for (const { id, vpId } of pairs) {
         const corners = getScreenCornersById(id, vpId);
         if (!corners) continue;
+        measured = true;
+        // A HIDDEN node (display:none, or inside a hidden parent) measures as a zero box at the
+        // viewport origin — it takes no part in the group box.
+        if (isDegenerateQuad(corners)) continue;
         for (const pt of [corners.TL, corners.TR, corners.BR, corners.BL]) {
           minX = Math.min(minX, pt.x);
           minY = Math.min(minY, pt.y);
@@ -1409,6 +1441,10 @@ function GroupBoundingBox({ pairs, color }: { pairs: Array<{ id: string; vpId: s
           BL: { x: minX, y: maxY },
         };
         setGroupCorners(prev => cornersEqual(prev, newCorners) ? prev : newCorners);
+      } else if (measured) {
+        // Every selected node is hidden → nothing painted to enclose. (Unmeasured nodes keep the
+        // previous box instead — a cache miss mid-render must not flicker it away.)
+        setGroupCorners(null);
       }
 
       rafId = requestAnimationFrame(poll);
@@ -1430,6 +1466,9 @@ function GroupBoundingBox({ pairs, color }: { pairs: Array<{ id: string; vpId: s
     const storeNodes = getDefaultStore().get(nodesAtom);
     const elements: { id: string; vpPrefix: string; baseTransform: string; startRotation: number; liveTransform: string }[] = [];
     for (const { id, vpId } of pairs) {
+      // Hidden nodes aren't in the group box — the group rotate leaves them alone.
+      const quad = getScreenCornersById(id, vpId);
+      if (quad && isDegenerateQuad(quad)) continue;
       const startRotation = parseRotationFromMatrix(findNodeComputedStyles(id, vpId, ['transform']).transform);
       const baseTransform = storeNodes.get(id)?.styles?.transform || '';
       elements.push({ id, vpPrefix: getViewportPrefix(vpId), baseTransform, startRotation, liveTransform: baseTransform });

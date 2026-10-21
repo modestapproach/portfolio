@@ -9,8 +9,10 @@
 // Stores to localStorage under 'revyme_clipboard'. Versioned so we can break
 // the format later without crashing on stale data.
 
+import { splitStyleProps, toCamel } from '@/shared/css-utils';
 import { trace } from '@/shared/debug-trace';
 import { findNodeRect, getActiveFilePath, getActiveTransform, getInteractingViewport } from '@/canvas/node-ops';
+import { isComponentFilePath } from '@/code/project/active-file-store';
 import { getViewportWidths } from '@/code/stores/viewport-store';
 import { bakeNodeForTile, tileContextFor, type TileContext } from '@/canvas/replica-bake';
 import { projectFS } from '@/code/project/project-fs';
@@ -26,6 +28,8 @@ import { extractBorderAfterRuleBody } from '@/editor/ui/border-utils';
 import { parsePseudoRules } from '@/code/parsing/pseudo-parser';
 import { getProjectId } from '@/backend/project-id';
 import { readTranslationText } from '@/code/project/translation-ops';
+import { readTextAnimConfig } from '@/code/generation/text-anim-gen';
+import { readCodeOverrides } from '@/code/generation/code-override-gen';
 import { getI18nConfig } from '@/code/project/locale-ops';
 
 const CLIPBOARD_STORAGE_KEY = 'revyme_clipboard';
@@ -62,24 +66,54 @@ function collectSubtree(
  *  default-locale string as plain textContent, so pasting into any project
  *  (localized or not) lands normal, resolved text (the cross-project
  *  "all texts missing" find, 2026-07-23). Same for attr keys (placeholder…). */
-function bakeTranslations(node: CanvasNode): { textContent?: string; attrs?: Record<string, string> } {
-  const out: { textContent?: string; attrs?: Record<string, string> } = {};
+function bakeTranslations(node: CanvasNode): {
+  textContent?: string; attrs?: Record<string, string>;
+  translations?: Record<string, string>; attrTranslations?: Record<string, Record<string, string>>;
+} {
+  const out: {
+    textContent?: string; attrs?: Record<string, string>;
+    translations?: Record<string, string>; attrTranslations?: Record<string, Record<string, string>>;
+  } = {};
   if (!node.translationKey && !node.attrTranslationKeys) return out;
   const filePath = getActiveFilePath();
-  const defaultLocale = getI18nConfig().defaultLocale;
+  const config = getI18nConfig();
+  const defaultLocale = config.defaultLocale;
+  // Every OTHER locale rides the clipboard too: baking only the default made
+  // a same-page Cmd+D silently drop FR/ES/… from the copy. The paste side
+  // re-seeds whichever of these the destination has configured.
+  const otherLocales = config.locales.map((l) => l.code).filter((c) => c !== defaultLocale);
   if (node.translationKey && !node.textContent) {
     const resolved = readTranslationText({ filePath, key: node.translationKey, locale: defaultLocale });
     if (resolved != null) out.textContent = resolved;
   }
+  if (node.translationKey) {
+    const tr: Record<string, string> = {};
+    for (const locale of otherLocales) {
+      const v = readTranslationText({ filePath, key: node.translationKey, locale });
+      if (v != null) tr[locale] = v;
+    }
+    if (Object.keys(tr).length > 0) out.translations = tr;
+  }
   if (node.attrTranslationKeys && node.attrs) {
     const attrs = { ...node.attrs };
+    const attrTr: Record<string, Record<string, string>> = {};
     for (const [attr, key] of Object.entries(node.attrTranslationKeys)) {
       const resolved = readTranslationText({ filePath, key, locale: defaultLocale });
       if (resolved != null) attrs[attr] = resolved;
+      const tr: Record<string, string> = {};
+      for (const locale of otherLocales) {
+        const v = readTranslationText({ filePath, key, locale });
+        if (v != null) tr[locale] = v;
+      }
+      if (Object.keys(tr).length > 0) attrTr[attr] = tr;
     }
     out.attrs = attrs;
+    if (Object.keys(attrTr).length > 0) out.attrTranslations = attrTr;
   }
-  trace.action('copy:bake-translations', { nodeId: node.id, text: !!out.textContent, attrs: !!out.attrs });
+  trace.action('copy:bake-translations', {
+    nodeId: node.id, text: !!out.textContent, attrs: !!out.attrs,
+    locales: out.translations ? Object.keys(out.translations) : [],
+  });
   return out;
 }
 
@@ -139,6 +173,8 @@ function toClipboardNode(node: CanvasNode, nodes: Map<string, CanvasNode>, tile:
     attrs: dormant.attrs,
     name: node.name,
     textContent: dormant.textContent,
+    // Component-prop binding of the text — honoured only on a same-master paste.
+    textVariable: node.textVariable,
     hasMixedContent: node.hasMixedContent,
     isCanvasNode: node.isCanvasNode,
     componentFile: node.componentFile,
@@ -147,6 +183,13 @@ function toClipboardNode(node: CanvasNode, nodes: Map<string, CanvasNode>, tile:
     // Appear/Hover/Tap/declarative-Loop live as tag props, not styles/attrs —
     // capture them so paste can re-inject (they'd silently vanish otherwise).
     motionProps: node.motionProps ?? undefined,
+    // Per-locale texts for the paste-side reseed. NOT routed through the CMS
+    // dormant pipeline above — that laundering rebuilds its object and this
+    // return picks explicit fields, which is exactly where the first attempt
+    // silently dropped them (trace showed bake capturing ['fr'] and the
+    // reinject pass finding nothing, 2026-09-05).
+    ...(baked.translations ? { translations: baked.translations } : {}),
+    ...(baked.attrTranslations ? { attrTranslations: baked.attrTranslations } : {}),
   };
 }
 
@@ -215,6 +258,72 @@ function captureBorderOverlays(
  * it on paste. Parsed via the pseudo-parser (round-trips exactly what the
  * generator writes).
  */
+/**
+ * Carry each copied node's per-breakpoint @media overrides. They live in the
+ * page's <style> block as `[data-id="X"] { prop: val !important; }` rules
+ * inside `@media (max-width: Npx)…` bands — invisible to the clipboard tree,
+ * so a duplicate rendered base styles on every replica tile (and so did its
+ * DESCENDANTS, which are their own clipboard entries and get their own
+ * capture here). Values are de-!important-ed and camelized so the paste side
+ * can replay them through the standard `updateContainerStyle` mutation — the
+ * band writer re-adds `!important` and rebuilds the band header for the
+ * destination file itself.
+ */
+export function captureResponsiveBands(
+  clipboardNodes: ClipboardNode[],
+  sourceCode: string,
+): void {
+  const css = extractStyleCSS(sourceCode);
+  if (!css) return;
+
+  // Balanced-brace walk over @media blocks (band bodies contain nested
+  // `[data-id] { … }` rules, so a lazy regex would cut the body short).
+  const bands: Array<{ maxWidth: number; body: string }> = [];
+  let i = 0;
+  while ((i = css.indexOf('@media', i)) !== -1) {
+    const open = css.indexOf('{', i);
+    if (open === -1) break;
+    const header = css.slice(i, open);
+    let depth = 1;
+    let j = open + 1;
+    while (j < css.length && depth > 0) {
+      if (css[j] === '{') depth++;
+      else if (css[j] === '}') depth--;
+      j++;
+    }
+    const m = header.match(/max-width:\s*([\d.]+)px/);
+    if (m) bands.push({ maxWidth: parseFloat(m[1]), body: css.slice(open + 1, j - 1) });
+    i = j;
+  }
+  if (bands.length === 0) return;
+
+  let count = 0;
+  for (const cn of clipboardNodes) {
+    const esc = cn.id.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+    const ruleRe = new RegExp(`\\[data-id="${esc}"\\]\\s*\\{([^}]*)\\}`);
+    const nodeBands: Array<{ maxWidth: number; styles: Record<string, string> }> = [];
+    for (const band of bands) {
+      const hit = ruleRe.exec(band.body);
+      if (!hit || !hit[1].trim()) continue;
+      const styles: Record<string, string> = {};
+      for (const decl of splitStyleProps(hit[1], ';')) {
+        const ci = decl.indexOf(':');
+        if (ci === -1) continue;
+        const prop = decl.slice(0, ci).trim();
+        const value = decl.slice(ci + 1).replace(/!important\s*$/i, '').trim();
+        if (!prop || !value) continue;
+        styles[prop.startsWith('--') ? prop : toCamel(prop)] = value;
+      }
+      if (Object.keys(styles).length > 0) nodeBands.push({ maxWidth: band.maxWidth, styles });
+    }
+    if (nodeBands.length > 0) {
+      cn.responsiveBands = nodeBands;
+      count++;
+    }
+  }
+  if (count > 0) trace.action('copy:responsive-bands-captured', { count });
+}
+
 function capturePlaceholderRules(
   clipboardNodes: ClipboardNode[],
   sourceCode: string,
@@ -277,11 +386,36 @@ function collectOverlays(
  * Returns CopyResult so the call-site can show a toast on failure — but most
  * call-sites today fire-and-forget. Failures are also traced.
  */
+/** Drop component-master variant roots (top-level, not canvas node, not overlay)
+ *  from a copy request. Pure; exported for tests. */
+export function excludeVariantRoots(
+  nodeIds: string[],
+  nodes: Map<string, { parentId?: string | null; isCanvasNode?: boolean; attrs?: Record<string, string> }>,
+  activeFilePath: string,
+): string[] {
+  if (!isComponentFilePath(activeFilePath)) return nodeIds;
+  const kept = nodeIds.filter((id) => {
+    const n = nodes.get(id);
+    const isVariantRoot = !!n && !n.parentId && !n.isCanvasNode && !n.attrs?.['data-overlay'];
+    return !isVariantRoot;
+  });
+  if (kept.length !== nodeIds.length) trace.action('paste-engine.copy:variant-roots-ignored', { dropped: nodeIds.length - kept.length });
+  return kept;
+}
+
 export function copyNodes(
   nodeIds: string[],
   nodes: Map<string, CanvasNode>,
 ): CopyResult {
   trace.fn('paste-engine.copyNodes', { count: nodeIds.length });
+
+  // A design component's VARIANT ROOT is a tile, not a copyable node: its
+  // position lives in variantConfig, its runtime plumbing (overlay refs,
+  // state, handlers) lives in the component function, so a paste of it can
+  // only ever produce a broken fragment ("References undefined identifier:
+  // ovRootRef", 2026-09-06). Ignore it silently — nothing reaches the
+  // clipboard, the previous clipboard content stays. Children are fine.
+  nodeIds = excludeVariantRoots(nodeIds, nodes, getActiveFilePath());
 
   if (nodeIds.length === 0) {
     return { success: false, nodeCount: 0, message: 'Nothing to copy' };
@@ -308,6 +442,25 @@ export function copyNodes(
   // 4. Capture computed dims for the user-selected ROOTS only (not descendants
   //    or overlays — they'll size against their pasted parents).
   captureComputedDimensions(clipboardNodes, new Set(nodeIds));
+
+  // 4a. Capture TEXT EFFECTS. The wrapper `<RevymeSplitText>` + `data-text-anim`
+  //     live in the JSX, not in the node model the clipboard is built from, so
+  //     read the config straight off the source per copied node.
+  try {
+    const src = projectFS.readFile(getActiveFilePath()) ?? '';
+    if (src) {
+      let captured = 0;
+      for (const n of clipboardNodes) {
+        const cfg = readTextAnimConfig(src, n.id);
+        if (cfg) { n.textAnim = cfg as unknown as Record<string, unknown>; captured++; }
+        const overrides = readCodeOverrides(src, n.id);
+        if (overrides.length) n.codeOverrides = overrides;
+      }
+      if (captured) trace.action('copy:text-anim-captured', { count: captured });
+    }
+  } catch (err) {
+    trace.error('clipboard:text-anim-capture-failed', err);
+  }
 
   // 4b. Capture function-scope effects (scroll transforms, hooks, tool
   //     annotations) that mention ANY node in the collected subtree —
@@ -382,6 +535,7 @@ export function copyNodes(
     if (sourceCode) {
       captureBorderOverlays(clipboardNodes, sourceCode);
       capturePlaceholderRules(clipboardNodes, sourceCode);
+      captureResponsiveBands(clipboardNodes, sourceCode);
     }
   } catch (err) {
     trace.error('clipboard:border-capture-failed', err);
@@ -395,6 +549,7 @@ export function copyNodes(
     effects,
     collections,
     sourceProjectId,
+    sourceFilePath: getActiveFilePath(),
     components,
   };
 
@@ -446,4 +601,23 @@ export function getClipboardData(): ClipboardData | null {
 
 export function hasClipboard(): boolean {
   return getClipboardData() !== null;
+}
+
+/**
+ * Store an EXTERNAL ClipboardData payload (e.g. reshaders' "Copy for
+ * Revyme" — a different origin, so it can't reach this localStorage
+ * itself; the payload travels through the OS clipboard as JSON and the
+ * Ctrl+V handler routes it here). Validated minimally; returns false on
+ * shape mismatch so the caller can fall through to other paste kinds.
+ */
+export function setExternalClipboardData(data: ClipboardData): boolean {
+  if (!data || data.version !== 1 || !Array.isArray(data.nodes) || data.nodes.length === 0) return false;
+  try {
+    localStorage.setItem(CLIPBOARD_STORAGE_KEY, JSON.stringify({ ...data, timestamp: Date.now() }));
+    trace.action('clipboard:external-set', { nodes: data.nodes.length, components: data.components?.length ?? 0 });
+    return true;
+  } catch (err) {
+    trace.error('clipboard:external-set-failed', err);
+    return false;
+  }
 }

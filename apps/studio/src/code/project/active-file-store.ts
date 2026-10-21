@@ -2,8 +2,11 @@
 // Provides activeFilePathAtom and activeCodeAtom.
 // activeCodeAtom is the adapter: existing codeAtom consumers migrate to this.
 
+import { defaultCanvasBlock } from './canvas-config';
 import { atom, getDefaultStore } from 'jotai';
 import { projectFS, projectVersionAtom } from './project-fs';
+import { isCanvasBusy, isLockHolderScoped } from '../stores/agent-run-lock-store';
+import { toast } from 'sonner';
 import { setForceRender } from '../mutation/mutation-queue';
 import { overlayEditingIdAtom } from '../stores/overlay-store';
 import { parseComponentName } from '../components/component-ops';
@@ -34,6 +37,33 @@ export const activeFilePathAtom = atom<string>('app/page.client.tsx');
  *   activeFilePath = 'components/Button.tsx'
  */
 export const componentBreadcrumbAtom = atom<string[]>([]);
+
+/**
+ * The breadcrumb trail as it should be SHOWN for `activeFile`. The stack is
+ * pushed by hand on every "enter component" path, and any navigation that
+ * bypasses those paths (undo/redo of a nested Make Component, a file-op
+ * undo landing on a master) leaves it stale — the bar then shows the
+ * master the user just left as an extra ancestor, and every undo/redo
+ * round adds one more (user report 2026-09-09: "Home › Header › Header ›
+ * Header"). History now restores the trail (see UiLocation.breadcrumb);
+ * this heal is the render-time safety net: drop entries whose file is gone,
+ * cut the trail at the active file (it can't be its own ancestor), and
+ * collapse consecutive duplicates.
+ */
+export function healBreadcrumbTrail(
+  trail: readonly string[],
+  activeFile: string,
+  exists: (path: string) => boolean,
+): string[] {
+  const out: string[] = [];
+  for (const p of trail) {
+    if (p === activeFile) break;
+    if (!exists(p)) continue;
+    if (out[out.length - 1] === p) continue;
+    out.push(p);
+  }
+  return out;
+}
 
 /**
  * Read/write the active file's code from ProjectFS.
@@ -509,6 +539,18 @@ export function switchActiveFile(
   },
 ): void {
   if (from === to) return;
+  // A human page switch is refused while an agent run holds this branch
+  // through the shared queue base (an unbranched run): moving
+  // `currentCode` / the active path under it would misfile its writes. A
+  // SCOPED holder (a branched run) addresses explicit files and never reads
+  // the human base, so the pointer may move. The agent's own page moves run
+  // inside its write window and pass.
+  if (isCanvasBusy() && !isLockHolderScoped()) {
+    trace.action('active-file:switch-refused-canvas-busy', { from, to });
+    // Never silent: the click did nothing, and the reader must know why.
+    toast.error('The agent is editing this branch — pages switch again when it finishes. Stop it from the chat to take over now.', { id: 'canvas-busy-switch' });
+    return;
+  }
   trace.action('active-file:switch', { from, to });
   const freshCode = projectFS.readFile(from);
   if (freshCode) {
@@ -578,6 +620,19 @@ export function switchActiveFile(
 }
 
 // ─── File Operations ────────────────────────────────────────────────────────
+
+/**
+ * `getFileDisplayName` with the home route spelled out.
+ *
+ * The raw helper returns `/` for the home page, which is correct as a route and
+ * cryptic as a label. Every surface that shows a page to a person wants "Home",
+ * so the mapping lives here once rather than being re-derived per panel — it
+ * was already copied into PageSelector and FileExplorer before this existed.
+ */
+export function getFriendlyFileName(filePath: string): string {
+  const name = getFileDisplayName(filePath);
+  return name === '/' ? 'Home' : name;
+}
 
 export function getFileDisplayName(filePath: string): string {
   // app/page.client.tsx → /
@@ -797,14 +852,7 @@ export default function Page() {
 
   const clientCode = `'use client';
 
-/** @canvas {
-  "viewports": [
-    { "id": "desktop", "label": "Desktop", "width": 1440, "height": "auto", "isPrimary": true, "order": 0 }
-  ],
-  "positions": {
-    "desktop": { "x": 0, "y": 0 }
-  }
-} */
+${defaultCanvasBlock({ single: true, height: 'auto' })}
 
 import React from 'react';
 
@@ -957,18 +1005,7 @@ export default function GroupLayout({ children }: { children: React.ReactNode })
 
     const clientCode = `'use client';
 
-/** @canvas {
-  "viewports": [
-    { "id": "desktop", "label": "Desktop", "width": 1440, "isPrimary": true, "order": 0 },
-    { "id": "tablet", "label": "Tablet", "width": 768, "isPrimary": false, "order": 1 },
-    { "id": "mobile", "label": "Mobile", "width": 375, "isPrimary": false, "order": 2 }
-  ],
-  "positions": {
-    "desktop": { "x": 0, "y": 0 },
-    "tablet": { "x": 1600, "y": 0 },
-    "mobile": { "x": 2528, "y": 0 }
-  }
-} */
+${defaultCanvasBlock()}
 
 export default function LayoutClient({ children }: { children: React.ReactNode }) {
   return (
@@ -1021,3 +1058,45 @@ export function listRouteGroups(): string[] {
   }
   return [...groups].sort();
 }
+
+export interface NewPageFiles {
+  pageName: string;
+  serverPath: string;
+  clientPath: string;
+  serverCode: string;
+  clientCode: string;
+}
+
+export function buildNewPageFiles(pageName: string, slug: string, baseDir: string): NewPageFiles {
+  const serverPath = `${baseDir}/${slug}/page.tsx`;
+  const clientPath = `${baseDir}/${slug}/page.client.tsx`;
+
+  const serverCode = `import PageClient from './page.client';
+
+export const metadata = {};
+
+export default function Page() {
+  return <PageClient />;
+}
+`;
+
+  const clientCode = `'use client';
+
+${CANVAS_CONFIG_BLOCK}
+
+import React from 'react';
+
+export default function Page() {
+  return (
+<div data-id="root" data-name="${pageName}" style={{
+  position: 'relative', width: '100%', minHeight: '900px',
+  backgroundColor: '#ffffff',
+  display: 'flex', flexDirection: 'column', gap: '0'
+}}>
+</div>
+  );
+}`;
+  return { pageName, serverPath, clientPath, serverCode, clientCode };
+}
+
+const CANVAS_CONFIG_BLOCK = defaultCanvasBlock();

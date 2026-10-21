@@ -18,13 +18,27 @@ export function ColorSwatch({ style, size = 'sm', className, children }: {
   const sizeClass = size === 'md' ? 'w-7 h-7 cut-corners' : 'w-5 h-5 cut-corners cut-sm';
   return (
     <span
-      // cut-border paints the diagonal segments the clip removes; the pin is a
-      // literal because this swatch's hairline is border-white/10, not a token.
-      className={`${sizeClass} cut-border [--cut-border-color:rgba(255,255,255,0.1)] border border-white/10 flex-shrink-0 flex items-center justify-center${className ? ' ' + className : ''}`}
-      style={style}
+      // Shell: the clip + the straight 1px rect border. The pin is a literal
+      // because this swatch's hairline is border-white/10, not a token.
+      className={`${sizeClass} relative [--cut-border-color:rgba(255,255,255,0.1)] border border-white/10 flex-shrink-0 flex items-center justify-center${className ? ' ' + className : ''}`}
     >
-      {children}
+      {/* LAYER 1 — the fill, on its own element (never on the shell): a
+        * background shorthand on the shell replaced .cut-border's gradient
+        * stack and inherited its no-repeat, collapsing the checkerboard to one
+        * tile (2026-09-08). It carries its OWN rounding — the shell's inner
+        * radius (`--cut-round` minus the 1px border): a border-radius does
+        * not clip children the way the old clip-path did, so once the chrome
+        * went rounded the square fill painted over the shell's corners and
+        * every swatch read as a sharp square (user report 2026-10-16). */}
+      {style && <span aria-hidden className="absolute inset-0 pointer-events-none rounded-[calc(var(--cut-round)_-_1px)]" style={style} />}
+      {/* LAYER 2 — the diagonal corner strokes the clip removes (.cut-border),
+        * painted ABOVE the fill. On the shell they are a background image, and
+        * a fill layer covers a background — the cut corners lost their hairline
+        * and the swatch read as an unclipped square (2026-09-09). `-inset-px`
+        * spans the shell's BORDER box (clip-path and .cut-border both resolve
+        * against it); `--cut` is inherited from the shell's size class. */}
+      <span aria-hidden className="absolute -inset-px pointer-events-none cut-border" />
+      {children != null && <span className="relative flex items-center justify-center">{children}</span>}
     </span>
   );
 }
-

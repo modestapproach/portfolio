@@ -13,7 +13,7 @@ import { type AnimEntryType } from './shared';
  *  'scrollAnimation' (the On-Scroll trigger of the `appear` effect — shares
  *  the `appear` entry so it's mutually exclusive with Appear), 'scrollVariant'
  *  (placeholder, disabled), and 'scrollGroup' (the Scroll submenu header). */
-export type AddActionType = AnimEntryType | 'scrollAnimation' | 'scrollVariant' | 'scrollGroup' | 'pageTransition';
+export type AddActionType = AnimEntryType | 'scrollAnimation' | 'scrollVariant' | 'scrollGroup' | 'pageTransition' | 'smoothScroll';
 
 interface AddOption {
   type: AddActionType;
@@ -78,6 +78,8 @@ const ADD_OPTIONS: AddOption[] = [
   // Page Transition — page-level enter/exit via the View Transitions API. Only
   // offered on a page viewport/root (glideOnly), alongside Glide.
   { type: 'pageTransition', label: 'Page Transition', desc: 'Animate the page in/out on navigation (View Transitions).' },
+  // Smooth Scroll (Lenis) — page-level, like Page Transition, set per page.
+  { type: 'smoothScroll', label: 'Smooth Scroll', desc: 'Smooth, eased scrolling on this page (Lenis).' },
   { type: 'keyframe', label: 'Keyframe', desc: '@keyframes block. No JS. Visual scrubber.' },
   // Text
   { type: 'textEffect', label: 'Text', desc: 'Character/word/line stagger via Motion.', textOnly: true },
@@ -232,7 +234,7 @@ function EffectSubMenu({ label, desc, children, onSelect }: {
   );
 }
 
-export default function AddEffectDropdown({ onAdd, existing, isTextNode, isSketchNode, isComponentInstance, appearOnly, glideOnly, noGlide, onApplyKeyframe }: {
+export default function AddEffectDropdown({ onAdd, existing, isTextNode, isSketchNode, isComponentInstance, appearOnly, glideOnly, noGlide, onApplyKeyframe, pasteItem }: {
   onAdd: (t: AddActionType) => void;
   existing: Set<AnimEntryType>;
   isTextNode?: boolean;
@@ -261,6 +263,10 @@ export default function AddEffectDropdown({ onAdd, existing, isTextNode, isSketc
    *  the open/close animation). Everything else renders greyed. */
   appearOnly?: boolean;
   onApplyKeyframe?: (name: string) => void;
+  /** A copied animation that can land on this node → a "Paste <Kind>" row at
+   *  the top of the menu, above a separator (user request 2026-09-09: copy an
+   *  animation on one node, `+` on another, paste it in one click). */
+  pasteItem?: { label: string; onClick: () => void } | null;
 }) {
   // Estimated dropdown height 380 — flips above the trigger when it can't fit
   // below; menu mounts invisible, then fades in after the flip is applied.
@@ -302,15 +308,17 @@ export default function AddEffectDropdown({ onAdd, existing, isTextNode, isSketc
   // node. A submenu group stays visible only while it has at least one addable child.
   const visibleOptions = ADD_OPTIONS.filter(o =>
     !HIDDEN_ADD_TYPES.has(o.type) &&
-    (!noGlide || (o.type !== 'glide' && o.type !== 'pageTransition')) &&
+    (!noGlide || (o.type !== 'glide' && o.type !== 'pageTransition' && o.type !== 'smoothScroll')) &&
     // Glide is a CONTAINER effect (children glide when one resizes) — a text
     // node has no element children, so the option never shows there
     // (user decision 2026-08-18).
     (o.type !== 'glide' || !isTextNode) &&
-    (!glideOnly || o.type === 'glide' || o.type === 'pageTransition') &&
+    (!glideOnly || o.type === 'glide' || o.type === 'pageTransition' || o.type === 'smoothScroll') &&
     // Page Transition is a PAGE-LEVEL effect — only when a viewport/root is the
     // selection (glideOnly), never on a normal element node.
-    (o.type === 'pageTransition' ? !!glideOnly : o.submenu ? submenuKids(o).length > 0 : childVisible(o)));
+    (o.type === 'pageTransition' ? !!glideOnly
+      : o.type === 'smoothScroll' ? !!glideOnly && childVisible(o)
+      : o.submenu ? submenuKids(o).length > 0 : childVisible(o)));
 
   return (
     <div className="relative" ref={ref}>
@@ -348,6 +356,19 @@ export default function AddEffectDropdown({ onAdd, existing, isTextNode, isSketc
           <div className={`absolute right-[10px] bg-[var(--dropdown-bg)] shadow-md cut-corners cut-lg cut-border [--cut-border-color:var(--border-light)] py-1.5 z-[51] w-max max-h-[420px] overflow-y-auto border border-[var(--border-light)] space-y-0.5 transition-opacity duration-150 ${
             openDir === 'up' ? 'bottom-full mb-1' : 'top-full mt-1'
           }`} style={{ opacity: visible ? 1 : 0, scrollbarWidth: 'none' }}>
+            {pasteItem && (
+              <>
+                <button type="button"
+                  title={`Paste the copied ${pasteItem.label} animation onto this element`}
+                  className="group flex items-center mx-1.5 px-2.5 py-1.5 cut-corners w-[calc(100%-12px)] text-left cursor-pointer bg-transparent hover:!bg-[var(--accent)] border-none whitespace-nowrap"
+                  onClick={() => { pasteItem.onClick(); setOpen(false); }}>
+                  <span className="text-xs font-medium text-[var(--text-primary)] group-hover:text-[var(--accent-fg)]">
+                    Paste {pasteItem.label}
+                  </span>
+                </button>
+                <div className="mx-3 my-1 border-t border-[var(--border-light)]" />
+              </>
+            )}
             {visibleOptions.length === 0 ? (
               <div className="px-3 py-2 text-xs text-[var(--text-secondary)]">
                 All animation types added

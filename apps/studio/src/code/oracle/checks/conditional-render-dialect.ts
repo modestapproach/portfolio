@@ -97,6 +97,34 @@ function injectedHelperRanges(code: string): Array<[number, number]> {
   }
   const fence = code.match(/\/\/ @useResponsiveText-begin[\s\S]*?\/\/ @useResponsiveText-end/);
   if (fence && fence.index !== undefined) ranges.push([fence.index, fence.index + fence[0].length]);
+  // The per-breakpoint collection-list resolver (cms-responsive-gen.ts): a
+  // fenced `useResponsiveListConfig` hook that reads `window.innerWidth` and
+  // the per-list `const listCfg<Id> = useResponsiveListConfig(…)` calls —
+  // the Collection List panel's own output when a filter / sort differs on a
+  // breakpoint. Matched by the fence AND by the declaration (babel drops the
+  // marker comments when it regenerates the node they sit on).
+  const listFence = code.match(/\/\/ @responsiveList-begin[\s\S]*?\/\/ @responsiveList-end/);
+  if (listFence && listFence.index !== undefined) ranges.push([listFence.index, listFence.index + listFence[0].length]);
+  const listHook = code.match(/function useResponsiveListConfig\([\s\S]*?\n\}/);
+  if (listHook && listHook.index !== undefined) ranges.push([listHook.index, listHook.index + listHook[0].length]);
+  for (const helper of [/function __matchListFilter\([\s\S]*?\n\}/, /function __cmpListSort\([\s\S]*?\n\}/, /function __applyListConfig\([\s\S]*?\n\}/]) {
+    const hm = code.match(helper);
+    if (hm && hm.index !== undefined) ranges.push([hm.index, hm.index + hm[0].length]);
+  }
+  const listCallRe = /const listCfg\w+ = useResponsiveListConfig\([\s\S]*?\);/g;
+  let lm: RegExpExecArray | null;
+  while ((lm = listCallRe.exec(code)) !== null) ranges.push([lm.index, lm.index + lm[0].length]);
+  // Overlay runtime effects (overlay-gen.ts): the RELATIVE positioner reads
+  // `window.innerWidth` for the responsive band and listens to resize/scroll;
+  // the FIXED modal effect locks body scroll. Both end on the overlay's own
+  // `[<x>Open]` dependency array. They are generator output in BOTH forms
+  // (page: document-scoped; component master: `ovFind`-scoped) — the first
+  // shipped rules flagged the builder's own hover overlay (2026-09-06).
+  const effectRe = /use(?:Layout)?Effect\(\(\) => \{[\s\S]*?\}, \[\w+Open\]\);/g;
+  let em: RegExpExecArray | null;
+  while ((em = effectRe.exec(code)) !== null) {
+    if (/data-overlay|prevOverflow|getBoundingClientRect/.test(em[0])) ranges.push([em.index, em.index + em[0].length]);
+  }
   return ranges;
 }
 
@@ -259,8 +287,16 @@ const EFFECT_ALLOWED: RegExp[] = [
   /getBoundingClientRect|\[data-id=/,                // overlay positioner
   /new\s+IntersectionObserver[\s\S]*set[A-Z_$]/,     // pagination sentinel
   /\banimate\s*\([\s\S]*\.stop\s*\(\s*\)/,           // composed appear/loop
+  /^useEffect\(\s*\(\)\s*=>\s*\{(?:\s*animate\(\s*\w+FxApp\w+\s*,[^;]*;)+\s*\},\s*\[\s*\]\s*\)$/, // instance-fx onAppear (mount → base)
   /document\.getElementById\s*\([\s\S]*\.current\s*=/, // scroll section ref resolve
+  /\.current\s*=\s*document\.getElementById\s*\(/,     // …in the single-section order too
 ];
+
+/** The multi-section Scroll Transform's mount effect (updateMultiSectionScrollAnimInCode):
+ *  resolves every section ref by anchor id, computes their page positions into the
+ *  `…SecPositions` state, and recomputes on resize. Its `addEventListener('resize')`
+ *  is the generator's own, which the DANGER test must not read as hand-rolled. */
+const MULTI_SECTION_EFFECT = /\.current\s*=\s*document\.getElementById\s*\([\s\S]*set\w+SecPositions\s*\(/;
 
 export function checkPageHooks(
   code: string,
@@ -315,11 +351,23 @@ export function checkPageHooks(
     return false;
   };
 
-  const acceptedInit = (arg: t.Node | undefined): boolean => arg === undefined
+  // The multi-section Scroll Transform's position state:
+  // `const [xSecPositions, setXSecPositions] = useState(() => Array(2).fill(0));`
+  const isSectionPositionsInit = (arg: t.Node | undefined, decl: t.Node | undefined): boolean => {
+    if (!t.isVariableDeclarator(decl) || !t.isArrayPattern(decl.id)) return false;
+    const first = decl.id.elements[0];
+    if (!t.isIdentifier(first) || !/SecPositions$/.test(first.name)) return false;
+    if (!t.isArrowFunctionExpression(arg) || !t.isCallExpression(arg.body)) return false;
+    const call = arg.body;
+    return t.isMemberExpression(call.callee) && t.isIdentifier(call.callee.property, { name: 'fill' })
+      && t.isCallExpression(call.callee.object) && t.isIdentifier(call.callee.object.callee, { name: 'Array' });
+  };
+  const acceptedInit = (arg: t.Node | undefined, decl?: t.Node): boolean => arg === undefined
     || t.isStringLiteral(arg) || t.isNumericLiteral(arg) || t.isBooleanLiteral(arg)
     || (t.isUnaryExpression(arg) && t.isNumericLiteral(arg.argument))
     || (t.isIdentifier(arg) && arg.name === 'initialVariant')
-    || isGeneratedRestingExpr(arg);
+    || isGeneratedRestingExpr(arg)
+    || isSectionPositionsInit(arg, decl);
 
   // Setters declared by an ACCEPTED useState — the reset effect is only legal
   // when it calls one of these (pre-pass: the generator emits the useState
@@ -333,7 +381,7 @@ export function checkPageHooks(
       if (!t.isVariableDeclarator(parent) || !t.isArrayPattern(parent.id)) return;
       const setter = parent.id.elements[1];
       if (!t.isIdentifier(setter)) return;
-      if (acceptedInit(path.node.arguments[0])) generatedSetters.add(setter.name);
+      if (acceptedInit(path.node.arguments[0], parent)) generatedSetters.add(setter.name);
     },
   });
 
@@ -352,7 +400,7 @@ export function checkPageHooks(
         const parent = path.parentPath?.node;
         const destructured = t.isVariableDeclarator(parent) && t.isArrayPattern(parent.id);
         const arg = path.node.arguments[0];
-        const literalArg = acceptedInit(arg);
+        const literalArg = acceptedInit(arg, parent);
         if (destructured && literalArg) return;
         flag(line, `\`useState(${literalArg ? '…' : 'non-literal initializer'})\` outside the generated \`const [x, setX] = useState(<literal>)\` shape`, TEACH);
         return;
@@ -360,6 +408,7 @@ export function checkPageHooks(
 
       if (callee.name === 'useEffect' || callee.name === 'useLayoutEffect') {
         const body = code.slice(path.node.start ?? 0, path.node.end ?? 0);
+        if (MULTI_SECTION_EFFECT.test(body)) return;
         if (EFFECT_DANGER.test(body)) {
           flag(line, `a hand-written \`${callee.name}\` (timer / event listener / storage / fetch)`, TEACH);
           return;
@@ -416,7 +465,7 @@ export function checkHandlerBodies(
   if (kind !== 'page' && kind !== 'component' && kind !== 'template') return;
   if (isCodeComponentSource(code)) return;
   const seen = new Set<string>();
-  const ALLOWED_CALLEES = /^(set[A-Z_$]|setTimeout$|clearTimeout$|animate$)/;
+  const ALLOWED_CALLEES = /^(set[A-Z_$]|setTimeout$|clearTimeout$|animate$|ovFind$)/;
 
   traverse(ast, {
     JSXAttribute(path) {
@@ -434,6 +483,13 @@ export function checkHandlerBodies(
       const expr = val.expression;
       if (t.isIdentifier(expr)) return;                      // bare event-prop fire
       if (!t.isArrowFunctionExpression(expr) && !t.isFunctionExpression(expr)) return;
+      // The overlay HOVER BRIDGE (overlay-gen buildOverlayHandlerAttr /
+      // buildOverlayHoverMirrorAttr): enter cancels a grace timer, leave arms
+      // it unless the cursor moved onto the paired element. Page form keys
+      // `window.__ovGrace`, component-master form a per-instance `ovGrace`
+      // ref + `ovFind`. Both are readable — the Overlay tool owns them.
+      const attrText = code.slice(path.node.start ?? 0, path.node.end ?? 0);
+      if (/__ovGrace|ovGrace\.current/.test(attrText) && /set\w+Open\(/.test(attrText)) return;
 
       let offender: string | null = null;
       let offenderLine: number | undefined;

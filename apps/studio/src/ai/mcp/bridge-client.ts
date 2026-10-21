@@ -30,8 +30,10 @@ import { applyTemplate } from '@/code/project/template-ops';
 import { canvasInteractingAtom } from '@/code/stores/store';
 import { isTextEditingAtom } from '@/code/stores/editor-store';
 import { isViewerMode } from '@/code/stores/viewer-mode-store';
+import { withAgentWriteAccessAsync } from '@/code/stores/agent-run-lock-store';
+import { registerExternalRunMirror } from '@/editor/agent/external-run';
 import { projectVersionAtom } from '@/code/project/project-fs';
-import { triggerAutosave, flushSaveNow } from '@/backend/autosave';
+import { triggerAutosave, flushSaveNow, describeSaveFailure, hasUnsavedChanges, localWriteCount, type SaveOutcome } from '@/backend/autosave';
 import { backend } from '@/backend';
 import { getProjectId } from '@/backend/project-id';
 import { getPresetTokens } from '@/code/project/preset-ops';
@@ -48,7 +50,8 @@ import { createDefaultTypoTokens, TYPO_SUFFIXES } from '@/editor/tools/typograph
 import { createCmsIndexPageFile, createCmsDetailPageFile } from '@/code/project/cms-page-ops';
 import { executeCmsTool } from '@/ai/cms-agent/cms-tool-executors';
 import type { PresetToken } from '@/shared/types';
-import { gateTurnFiles, commitTurnFiles, formatBounce, type TurnFile } from '@/ai/freeform/freeform-client';
+import { gateTurnFiles, commitTurnFiles, formatBounce, type TurnFile } from '@/code/oracle/gate';
+import { agentToolManifest, agentToolCall, agentRunStart, agentRunEndAndSave, agentRunAbort, agentContext, attributeBridgeCall, type BridgeCaller } from '@/ai/agent/bridge-tools';
 import { creditRead, checkStaleWrites } from './read-tracker';
 import { shareComponent } from '@/cloud/components/component-share';
 import { hasComponentControls } from '@/code/components/controls-parser';
@@ -58,6 +61,35 @@ import { isComponentUrl, importComponentFromUrl } from '@/cloud/components/compo
 const AI_SERVICE_URL = import.meta.env.VITE_AI_SERVICE_URL || 'http://localhost:8082';
 
 type BridgeHandler = (params: any) => Promise<unknown>;
+
+/**
+ * Persist a bridge write NOW and report whether it reached the server. The
+ * 2s debounced autosave loses a write to a reload inside the window, and a
+ * failed save keeps it only in this tab's memory — so every bridge write
+ * awaits the real save and a failure is returned to the agent, never
+ * reported as committed (2026-10-14: `committed:true` for writes the backend
+ * had refused for two days).
+ */
+async function persistBridgeWrite(): Promise<SaveOutcome> {
+  triggerAutosave({ force: true });
+  return flushSaveNow();
+}
+
+/** Backstop for every write method (presets, uploads, …): whatever the
+ *  handler left unsaved is saved before the agent hears back. A result that
+ *  already says it did not commit is left as is — it carries its own reason. */
+async function ensureBridgeWritePersisted(result: unknown, writesBefore: number): Promise<void> {
+  if (result && typeof result === 'object' && (result as { committed?: unknown }).committed === false) return;
+  if (localWriteCount() === writesBefore && !hasUnsavedChanges()) return;
+  await persistBridgeWriteOrThrow();
+}
+
+/** Same, for handlers that answer by throwing: the write is applied in
+ *  memory, the throw tells the agent it did not persist. */
+async function persistBridgeWriteOrThrow(): Promise<void> {
+  const saved = await persistBridgeWrite();
+  if (!saved.ok) throw new Error(describeSaveFailure(saved));
+}
 
 /** Exported for tests — the dispatch table behind the EventSource. */
 export const bridgeHandlers: Record<string, BridgeHandler> = {
@@ -256,7 +288,7 @@ export const bridgeHandlers: Record<string, BridgeHandler> = {
       trace.action('mcp-bridge:typography-preset-set', { name, tokens: family.length });
       return {
         written: family.map((tok) => ({ name: tok.name, value: tok.value })),
-        applyGuide: `Apply on a text element: inline style refs fontFamily: 'var(--typo-${name}-font)', fontWeight: 'var(--typo-${name}-weight)', color: 'var(--typo-${name}-color)', textTransform/textDecoration/textShadow likewise, fontSize: 'var(--typo-${name}-size)', letterSpacing: 'var(--typo-${name}-spacing)', lineHeight: 'var(--typo-${name}-line-height)'. Responsive tiers (only when -md/-sm tokens exist) go in the page's @media block: @media (max-width: ${'{min-default − 1}'}px) { [data-id="x"] { font-size: var(--typo-${name}-size-md); } } and the sm tier at (min-md − 1)px.`,
+        applyGuide: `Apply on a text element: inline style refs fontFamily: 'var(--typo-${name}-font)', fontWeight: 'var(--typo-${name}-weight)', color: 'var(--typo-${name}-color)', textTransform/textDecoration/textShadow likewise, fontSize: 'var(--typo-${name}-size)', letterSpacing: 'var(--typo-${name}-spacing)', lineHeight: 'var(--typo-${name}-line-height)'. Responsive tiers (only when -md/-sm tokens exist) go in the page's @media block: @media (max-width: ${'{min-default − 1}'}px) { [data-id="x"] { font-size: var(--typo-${name}-size-md) !important; } } and the sm tier at (min-md − 1)px. Every banded declaration needs !important — the inline fontSize beats a plain rule on the published site.`,
       };
     }
 
@@ -335,8 +367,7 @@ export const bridgeHandlers: Record<string, BridgeHandler> = {
       ensureIntlScaffold();
       const next = getI18nConfig();
       store.set(projectVersionAtom, store.get(projectVersionAtom) + 1);
-      triggerAutosave({ force: true });
-      await flushSaveNow();
+      await persistBridgeWriteOrThrow();
       trace.action('mcp-bridge:translations-locales-set', { locales: next.locales.map((l) => l.code) });
       return { config: next };
     }
@@ -364,12 +395,13 @@ export const bridgeHandlers: Record<string, BridgeHandler> = {
           filePath: item.filePath, nodeId: item.nodeId, locale,
           defaultLocale: config.defaultLocale, text: item.text,
           fallbackDefaultText: t.fallbackDefaultText,
+          // Without this a styled headline lost its marks in translation (audit V1).
+          rich: t.rich,
         });
         written++;
       }
       store.set(projectVersionAtom, store.get(projectVersionAtom) + 1);
-      triggerAutosave({ force: true });
-      await flushSaveNow();
+      await persistBridgeWriteOrThrow();
       trace.action('mcp-bridge:translations-written', { locale, written, unknown: unknown.length });
       return {
         written,
@@ -402,10 +434,10 @@ export const bridgeHandlers: Record<string, BridgeHandler> = {
     // must reach the backend even when this tab isn't the elected leader.
     const persistIfWrite = async () => {
       if (READ_ACTIONS.has(action)) return;
-      triggerAutosave({ force: true });
       // Await the actual save — the 2s debounce loses the write if the tab
-      // reloads inside the window (see submitFiles' persist note).
-      await flushSaveNow();
+      // reloads inside the window (see submitFiles' persist note) — and fail
+      // the call when it did not persist.
+      await persistBridgeWriteOrThrow();
     };
     const CMS_TOOL_ACTIONS = new Set([
       'list_collections', 'get_collection', 'create_collection', 'rename_collection',
@@ -748,7 +780,7 @@ export const bridgeHandlers: Record<string, BridgeHandler> = {
         }
       }
     }
-    triggerAutosave();
+    await persistBridgeWriteOrThrow();
     const activeFile = store.get(activeFilePathAtom);
     trace.action('mcp-bridge:insert-marketplace', { url, activeFile });
     return {
@@ -795,7 +827,7 @@ export const bridgeHandlers: Record<string, BridgeHandler> = {
     trace.action('mcp-bridge:create-icon-set', {
       name, path: result.iconSetFilePath, iconCount: result.iconCount, skipped: skipped.length,
     });
-    triggerAutosave();
+    await persistBridgeWriteOrThrow();
     return { ...result, skipped };
   },
 
@@ -884,25 +916,107 @@ export const bridgeHandlers: Record<string, BridgeHandler> = {
     // editor, user F5) drops the pending save (the unload beacon silently
     // rejects large payloads) and the commit silently reverts on reload
     // (the "locale switcher reverted AGAIN" find, 2026-07-22). Awaiting the
-    // unconditional save means committed:true = it is IN the backend.
-    triggerAutosave({ force: true });
-    await flushSaveNow();
+    // unconditional save means committed:true = it is IN the backend — so a
+    // failed save is committed:false, with the reason.
+    const notWritten = gatedFiles.map((g) => g.path).filter((p) => !written.includes(p));
+    const saved = await persistBridgeWrite();
+    if (!saved.ok) {
+      trace.error('mcp-bridge:submit-save-failed', { written, error: saved.error, conflict: !!saved.conflict });
+      return { committed: false, written, saved: false, error: describeSaveFailure(saved) };
+    }
+    if (notWritten.length > 0) {
+      // commitTurnFiles refused some files at write time (re-verification,
+      // write guards) — the rest landed. Say exactly which.
+      trace.error('mcp-bridge:submit-partial', { written, notWritten });
+      return {
+        committed: false,
+        written,
+        notWritten,
+        instruction: `${notWritten.length} file(s) were refused at write time and NOT written: ${notWritten.join(', ')}. Re-read them and resubmit.`,
+      };
+    }
     trace.action('mcp-bridge:submit-committed', { written });
     return { committed: true, written };
   },
+
+  // ─── Agent (brain in ai-generator, hands here) ────────────────────────────
+  // The turn loop runs in the service; these four methods are the only way it
+  // reaches the project. The tools themselves are the SAME ones the in-editor
+  // agent used — one registry, one oracle, one checkpoint.
+  'agent.manifest': async () => agentToolManifest(),
+  // What the chat sends at the start of a turn (context block + surface), for
+  // an external agent's begin_work — see bridge-tools agentContext.
+  'agent.context': async () => agentContext(),
+  'agent.run_start': async (params: any) => agentRunStart(params ?? {}),
+  'agent.tool': async (params: any) => agentToolCall(params ?? {}),
+  'agent.run_end': async (params: any) => agentRunEndAndSave(params ?? {}),
+  'agent.abort': async () => agentRunAbort(),
 };
 
 let source: EventSource | null = null;
 
+/**
+ * Run one bridge method. EVERY bridge request is an AGENT's — the run's own
+ * engine (the Claude CLI reaches the project through these MCP methods:
+ * submitFiles, CMS, presets…) or an external MCP client — never the human's.
+ * The run lock keeps the HUMAN from interleaving; it must not refuse the run
+ * itself. Without this window the lock (viewer reason `agent`) read these
+ * writes as a viewer's and bounced them "view-only" mid-run (2026-09-22).
+ * Role and offline still refuse inside the window (isViewerMode).
+ */
+export async function runBridgeRequest(method: string, params: unknown): Promise<unknown> {
+  const handler = bridgeHandlers[method];
+  if (!handler) throw new Error(`Unknown bridge method: ${method}`);
+  // `__caller` = which MCP session asks (its begin_work run + client name),
+  // added by the MCP proxy so a write can be refused while ANOTHER agent's
+  // run is open. Not a handler argument — strip it.
+  let caller: BridgeCaller | undefined;
+  if (params && typeof params === 'object' && '__caller' in (params as Record<string, unknown>)) {
+    const { __caller, ...rest } = params as Record<string, unknown> & { __caller?: BridgeCaller };
+    caller = __caller && typeof __caller === 'object' ? __caller : undefined;
+    params = rest;
+  }
+  // The MCP proxy's own tools are attributed to the run like agent tools
+  // (undo step, Changes card, a row in the chat) — see attributeBridgeCall.
+  // The agent.* methods ARE the run's plumbing and go straight through.
+  const tool = MCP_TOOL_FOR_METHOD[method];
+  if (tool) {
+    return withAgentWriteAccessAsync(() =>
+      attributeBridgeCall(tool.name, (params ?? {}) as Record<string, unknown>, tool.write, async () => {
+        const writesBefore = localWriteCount();
+        const result = await handler(params ?? {});
+        if (tool.write) await ensureBridgeWritePersisted(result, writesBefore);
+        return result;
+      }, caller));
+  }
+  return withAgentWriteAccessAsync(() => handler(params ?? {}));
+}
+
+/** Bridge method → the MCP tool that calls it (the name the chat's activity
+ *  rows phrase) and whether it can write. */
+const MCP_TOOL_FOR_METHOD: Record<string, { name: string; write: boolean }> = {
+  getContext: { name: 'revyme_get_context', write: false },
+  listFiles: { name: 'revyme_list_files', write: false },
+  readFile: { name: 'revyme_read_file', write: false },
+  submitFiles: { name: 'revyme_submit_files', write: true },
+  uploadImage: { name: 'revyme_upload_image', write: true },
+  managePresets: { name: 'revyme_manage_presets', write: true },
+  manageTranslations: { name: 'revyme_manage_translations', write: true },
+  manageCms: { name: 'revyme_manage_cms', write: true },
+  publishListing: { name: 'revyme_publish_listing', write: true },
+  insertMarketplaceComponent: { name: 'revyme_insert_marketplace_item', write: true },
+  createIconSet: { name: 'revyme_create_icon_set', write: true },
+};
+
 async function dispatch(raw: string): Promise<void> {
-  let id: number | undefined;
+  // A random id (the service's per-call capability — ai-generator bridge.ts);
+  // echoed back as is.
+  let id: string | number | undefined;
   try {
-    const msg = JSON.parse(raw) as { id: number; method: string; params?: unknown };
+    const msg = JSON.parse(raw) as { id: string | number; method: string; params?: unknown };
     id = msg.id;
-    const handler = bridgeHandlers[msg.method];
-    if (!handler) throw new Error(`Unknown bridge method: ${msg.method}`);
     trace.action('mcp-bridge:request', { id: msg.id, method: msg.method });
-    const result = await handler(msg.params ?? {});
+    const result = await runBridgeRequest(msg.method, msg.params);
     await postResult({ id: msg.id, result });
   } catch (err) {
     trace.error('mcp-bridge:request-failed', err);
@@ -910,7 +1024,7 @@ async function dispatch(raw: string): Promise<void> {
   }
 }
 
-async function postResult(body: { id: number; result?: unknown; error?: string }): Promise<void> {
+async function postResult(body: { id: string | number; result?: unknown; error?: string }): Promise<void> {
   try {
     await fetch(`${AI_SERVICE_URL}/bridge/result`, {
       method: 'POST',
@@ -922,7 +1036,84 @@ async function postResult(body: { id: number; result?: unknown; error?: string }
   }
 }
 
-/** Connect the editor to the MCP bridge. Idempotent; EventSource auto-reconnects.
+const BRIDGE_WINDOW_KEY = '__revymeMcpBridgeSource';
+const BRIDGE_WATCHDOG_KEY = '__revymeMcpBridgeWatchdog';
+
+/**
+ * RECONNECT WATCHDOG. EventSource retries a dropped stream by itself — until
+ * a retry gets a non-200 (a proxy's 502, an auth blip) or the page was frozen
+ * when it should have retried: then it stays CLOSED forever and the tab is
+ * gone from the bridge until someone reloads it ("No editor tab has this
+ * project open" six times in one day for a headless agent tab, 2026-10-14).
+ * The watchdog reopens a CLOSED source (backing off while it keeps failing)
+ * and replaces one that went silent: the service sends a named `ping` event
+ * every 25s, so silence means a dead connection the browser has not noticed.
+ * Silence is only trusted once a ping was seen — older services pinged with
+ * an SSE comment, which EventSource never surfaces.
+ */
+const BRIDGE_WATCHDOG_MS = 15_000;
+const BRIDGE_SILENCE_MS = 75_000;
+const BRIDGE_BACKOFF_MS = [5_000, 15_000, 30_000, 60_000, 300_000];
+let lastSignalAt = 0;
+let pingsSeen = false;
+let reconnectFailures = 0;
+let nextReconnectAt = 0;
+
+function openBridgeSource(): void {
+  // Key the connection by project so the multi-tenant bridge routes MCP
+  // calls ONLY to this tab's project (production model; 'local' = dev key).
+  const bridgeProjectId = getProjectId();
+  const bridgeQs = bridgeProjectId && bridgeProjectId !== 'local' ? `?websiteId=${encodeURIComponent(bridgeProjectId)}` : '';
+  // withCredentials: the production bridge verifies the tab's session cookie
+  // (REVYME_BRIDGE_AUTH) — cookies must flow even if the bridge origin differs.
+  const es = new EventSource(`${AI_SERVICE_URL}/bridge/events${bridgeQs}`, { withCredentials: true });
+  source = es;
+  (window as any)[BRIDGE_WINDOW_KEY] = es;
+  lastSignalAt = Date.now();
+  pingsSeen = false; // per connection: a redeployed service may differ
+  es.onopen = () => {
+    lastSignalAt = Date.now();
+    reconnectFailures = 0;
+    nextReconnectAt = 0;
+    trace.action('mcp-bridge:connected', {});
+  };
+  es.onmessage = (e) => { lastSignalAt = Date.now(); void dispatch(e.data); };
+  es.addEventListener('ping', () => { lastSignalAt = Date.now(); pingsSeen = true; });
+  es.onerror = () => trace.action('mcp-bridge:disconnected-retrying', { readyState: es.readyState });
+}
+
+function reopenBridge(reason: string): void {
+  try { source?.close(); } catch { /* already dead */ }
+  source = null;
+  trace.action('mcp-bridge:reopen', { reason, failures: reconnectFailures });
+  openBridgeSource();
+}
+
+/** One watchdog pass. Exported for tests. */
+export function checkMcpBridgeHealth(reason: string = 'interval', now: number = Date.now()): void {
+  if (!source) return;
+  if (source.readyState === EventSource.CLOSED) {
+    if (now < nextReconnectAt) return;
+    const delay = BRIDGE_BACKOFF_MS[Math.min(reconnectFailures, BRIDGE_BACKOFF_MS.length - 1)];
+    reconnectFailures++;
+    nextReconnectAt = now + delay;
+    reopenBridge(`closed:${reason}`);
+    return;
+  }
+  if (source.readyState === EventSource.OPEN && pingsSeen && now - lastSignalAt > BRIDGE_SILENCE_MS) {
+    reopenBridge(`silent:${reason}`);
+  }
+}
+
+const onBridgeWake = () => {
+  if (typeof document !== 'undefined' && document.visibilityState === 'hidden') return;
+  // Coming back (network, tab shown): retry a closed source NOW, not after
+  // the backoff it accumulated while it could not possibly connect.
+  nextReconnectAt = 0;
+  checkMcpBridgeHealth('wake');
+};
+
+/** Connect the editor to the MCP bridge. Idempotent; the watchdog below reopens a dead source.
  *
  *  HMR-SAFE + PAGE-SINGLETON: a vite hot update re-evaluates this module and
  *  the OLD generation used to stay alive — its EventSource auto-reconnected
@@ -933,8 +1124,10 @@ async function postResult(body: { id: number; result?: unknown; error?: string }
  *  guarantees at most ONE live bridge connection per page across module
  *  generations, and the hot.dispose hook closes ours before a new
  *  generation connects. */
-const BRIDGE_WINDOW_KEY = '__revymeMcpBridgeSource';
 export function startMcpBridge(): void {
+  // The chat's mirror of work asked for through MCP (editor/agent/
+  // external-run.ts) — external runs only ever arrive over this bridge.
+  registerExternalRunMirror();
   // LOCAL FORK: the bridge talks to Revyme's ai-generator dev server, which
   // does not exist in this self-hosted setup — without this gate the
   // EventSource retries localhost:8082 forever (console spam + wasted
@@ -947,22 +1140,34 @@ export function startMcpBridge(): void {
     try { prev.close(); } catch { /* already dead */ }
     trace.action('mcp-bridge:closed-stale-generation', {});
   }
+  const prevWatchdog = (window as any)[BRIDGE_WATCHDOG_KEY] as { timer: ReturnType<typeof setInterval>; wake: () => void } | undefined;
+  if (prevWatchdog) {
+    clearInterval(prevWatchdog.timer);
+    window.removeEventListener('online', prevWatchdog.wake);
+    document.removeEventListener('visibilitychange', prevWatchdog.wake);
+  }
   trace.action('mcp-bridge:start', { url: AI_SERVICE_URL });
-  // Key the connection by project so the multi-tenant bridge routes MCP
-  // calls ONLY to this tab's project (production model; 'local' = dev key).
-  const bridgeProjectId = getProjectId();
-  const bridgeQs = bridgeProjectId && bridgeProjectId !== 'local' ? `?websiteId=${encodeURIComponent(bridgeProjectId)}` : '';
-  // withCredentials: the production bridge verifies the tab's session cookie
-  // (REVYME_BRIDGE_AUTH) — cookies must flow even if the bridge origin differs.
-  source = new EventSource(`${AI_SERVICE_URL}/bridge/events${bridgeQs}`, { withCredentials: true });
-  (window as any)[BRIDGE_WINDOW_KEY] = source;
-  source.onopen = () => trace.action('mcp-bridge:connected', {});
-  source.onmessage = (e) => { void dispatch(e.data); };
-  source.onerror = () => trace.action('mcp-bridge:disconnected-retrying', {});
+  reconnectFailures = 0;
+  nextReconnectAt = 0;
+  openBridgeSource();
+  const timer = setInterval(() => checkMcpBridgeHealth(), BRIDGE_WATCHDOG_MS);
+  window.addEventListener('online', onBridgeWake);
+  document.addEventListener('visibilitychange', onBridgeWake);
+  (window as any)[BRIDGE_WATCHDOG_KEY] = { timer, wake: onBridgeWake };
+}
+
+function stopBridgeWatchdog(): void {
+  const w = (window as any)[BRIDGE_WATCHDOG_KEY] as { timer: ReturnType<typeof setInterval>; wake: () => void } | undefined;
+  if (!w) return;
+  clearInterval(w.timer);
+  window.removeEventListener('online', w.wake);
+  document.removeEventListener('visibilitychange', w.wake);
+  delete (window as any)[BRIDGE_WATCHDOG_KEY];
 }
 
 if (import.meta.hot) {
   import.meta.hot.dispose(() => {
+    stopBridgeWatchdog();
     try { source?.close(); } catch { /* noop */ }
     source = null;
     trace.action('mcp-bridge:hmr-disposed', {});
@@ -971,6 +1176,7 @@ if (import.meta.hot) {
 
 /** Tear down (tests / HMR). */
 export function stopMcpBridge(): void {
+  stopBridgeWatchdog();
   if (!source) return;
   source.close();
   source = null;

@@ -8,6 +8,7 @@ import { isTruthy } from '@/code/values/value-eval';
 import { trace } from '@/shared/debug-trace';
 import { isSvgTag } from '@/shared/constants';
 import { cleanJsxText } from '@/shared/jsx-whitespace';
+import { formattedBranchesOfDangerAttr, type FormattedBranches } from '@/shared/rich-message';
 import { parsePageVariables } from '../features/page-variables';
 
 // Handle ESM/CJS interop
@@ -125,6 +126,9 @@ export interface CanvasNode {
    * variable on this node's text.
    */
   textVariable?: string;
+  /** `textVariable` is a FORMATTED text variable: the node renders
+   *  `dangerouslySetInnerHTML={{ __html: textVariable }}` and the default is inline HTML. */
+  formattedTextVariable?: boolean;
   /**
    * next-intl translation key — set when the element's text child is a
    * `{t('key')}` call (any hook variable name, one string-literal argument).
@@ -134,6 +138,9 @@ export interface CanvasNode {
    * never keep another locale's stale paint. Undefined = untranslated node.
    */
   translationKey?: string;
+  /** RICH translation: the node renders `dangerouslySetInnerHTML={{ __html: t.raw(key) }}` and
+   *  its whole content (inline marks included) lives in messages as sanitized HTML. */
+  richTranslation?: boolean;
   /** `data-i18n-orphan="key"` — the translation key stashed when this node was
    *  dragged onto module-scope `canvasNodes` and its `{t('key')}` call was
    *  baked to a literal (`t` doesn't exist there). A first-class field rather
@@ -319,6 +326,13 @@ export interface CanvasNode {
   // ternary text child like `{variant === 'v1' ? 'A' : 'B'}`. The trailing
   // literal is the `default` branch (primary variant). Mirrors conditionalStyles.
   conditionalText?: Record<string, string> | null;
+  /** Branches of `conditionalText` whose SOURCE was real JSX (a fragment of
+   *  inline runs), not a string literal. The renderer keys its innerHTML
+   *  decision on this — a rich branch must render its markup, while a PLAIN
+   *  branch containing typed `<` (pasted source code) must stay escaped
+   *  (same contract as `textIsLiteral`). A string sniff cannot tell those
+   *  apart; only the parser can, so it records which is which. */
+  conditionalTextRich?: Record<string, true> | null;
   /** Per-variant TEXT-VARIABLE bindings: variant name → prop name (`default` = the fallback). Set when a
    *  text ternary branch/fallback is a variable, so the Content control can show the per-variant bound
    *  state. Mirrors `conditionalStyleVariables` for styles. */
@@ -391,6 +405,10 @@ export interface CanvasNode {
    *  Set is preferred over Array for O(1) membership tests during
    *  per-variant render decisions in the canvas Renderer. */
   hiddenOnVariants?: Set<string>;
+  /** Code overrides applied through a `<Override with={…}>` wrapper around
+   *  this element — the identifiers in `with`, innermost first. The wrapper
+   *  itself is transparent (no node); see runtime `code-override.tsx`. */
+  codeOverrides?: string[];
   // motion direct animation props (whileHover, whileTap, etc.)
   motionProps: {
     whileHover?: Record<string, string>;
@@ -404,7 +422,7 @@ export interface CanvasNode {
   } | null;
   // CMS Collection support
   collectionList?: {
-    source: string;           // CMS slug ('team') or inline prefix ('__inline:varName')
+    source: string;           // CMS slug ('team')
     itemVar: string;          // .map() parameter name ('item', 'post', etc.)
     templateIds: Record<string, string>;  // layout ID → data-id of template node
     /** Parsed from `slug.filter(item => ...).map(...)` — null when no .filter(). */
@@ -429,7 +447,6 @@ export interface CanvasNode {
   };
   isCollectionTemplate?: boolean;  // true if inside a .map() callback
   // Inline .map() data (const array defined in same file)
-  inlineMapData?: Record<string, string>[];
   // Data binding support (single primary binding — backward compat)
   binding?: {
     field: string;            // collection field ID ('name', 'role', 'photo')
@@ -481,6 +498,15 @@ export interface CanvasNode {
   // Code components (live rendered on canvas)
   isCodeComponent?: boolean;              // true if this is a Code component instance (live rendered)
   componentProps?: Record<string, string>;  // props passed to component instance (expression values)
+  /** Literal ARRAY / OBJECT props (`items={[{question,answer},…]}`), each as
+   *  its JSON text. A code component fed a list — an FAQ accordion, a pricing
+   *  card's benefits — got nothing on canvas before this: the attr walker
+   *  understands scalars, identifiers and ternaries, so an ArrayExpression
+   *  matched no branch and was dropped, and the component rendered its empty
+   *  state while the deployed page (real React) rendered the list. Only
+   *  PURE literals are carried; anything with an identifier or a call in it
+   *  is left alone, because the canvas cannot evaluate it. */
+  componentJsonProps?: Record<string, string>;
   // Background video (real <video data-bg-video> first-child element). Parser
   // peels it off the children list and surfaces its config here so the Fill
   // tool and canvas treat it as a managed property, not a regular child node.
@@ -538,6 +564,8 @@ interface ParseCtx {
    *  hidden-variant set is stashed here, then re-attached to the inner
    *  element's CanvasNode when its own JSXElement enter() fires. */
   pendingVisibilityByInnerId: Map<string, Set<string>>;
+  /** `<Override with={…}>` wrapper identifiers, keyed by the wrapped element's data-id. */
+  pendingOverridesByInnerId: Map<string, string[]>;
   /** The file's `const variantConfig = [...]`, parsed once up front. */
   currentVariantConfig: { name: string }[];
   /** Page-variable defaults, needed EARLY (before the node loop) — see the
@@ -608,6 +636,19 @@ export function extractComponentPropDefaults(ast: any): Record<string, string> {
       for (const d of stmt.declarations) {
         if (d.init?.type === 'ArrowFunctionExpression' || d.init?.type === 'FunctionExpression') {
           readParam(d.init.params);
+        }
+        // …and WRAPPED: `const Foo = React.forwardRef(function Foo({ x = '…' }, ref) {…})`,
+        // which is every icon set — theirs and ours. Read as a bare
+        // CallExpression the component's defaults were never collected, so a
+        // style bound to one of its props kept the raw `var:<prop>` marker:
+        // unresolved, no styleVariables, and no variable pill on the row that
+        // is bound. Same for memo() and any other single-function wrapper.
+        if (d.init?.type === 'CallExpression') {
+          for (const arg of d.init.arguments ?? []) {
+            if (arg?.type === 'FunctionExpression' || arg?.type === 'ArrowFunctionExpression') {
+              readParam(arg.params);
+            }
+          }
         }
       }
     }
@@ -710,6 +751,7 @@ function parseVariantConfigFromCode(code: string): { name: string }[] {
   return out;
 }
 
+
 /**
  * Parse a visibility condition expression `<expr>` from a
  * `<AnimatePresence>{<expr> && <Child />}</AnimatePresence>` wrapper into
@@ -758,6 +800,10 @@ function parseVisibilityCondition(
       // Negative chain — every node should be a `!==` (or another &&).
       const left = parseVisibilityCondition(expr.left, allVariants);
       const right = parseVisibilityCondition(expr.right, allVariants);
+      // `{overlayXOpen && variant !== 'default' && …}`: a FOREIGN gate on the
+      // left (the overlay's open-state, kept verbatim by the generator) with
+      // the variant test on the right — the hidden set is the right side.
+      if (!left && right && expr.left?.type !== 'BooleanLiteral') return right;
       if (!left || !right) return null;
       return new Set([...left, ...right]);
     }
@@ -1254,6 +1300,37 @@ function createBaseNode(p: {
   };
 }
 
+/** A JSX expression that is a SELF-CONTAINED literal (arrays, objects, strings,
+ *  numbers, booleans, null and negative numbers, nested freely) -> its JSON
+ *  text. Returns undefined for anything the canvas cannot evaluate on its own:
+ *  an identifier, a call, a template string with a hole. */
+function jsonLiteralText(expr: any): string | undefined {
+  const build = (n: any): unknown => {
+    switch (n?.type) {
+      case 'StringLiteral': case 'NumericLiteral': case 'BooleanLiteral': return n.value;
+      case 'NullLiteral': return null;
+      case 'TemplateLiteral':
+        if (n.expressions.length > 0) throw new Error('hole');
+        return n.quasis.map((q: any) => q.value.cooked).join('');
+      case 'UnaryExpression':
+        if (n.operator !== '-' || n.argument?.type !== 'NumericLiteral') throw new Error('unary');
+        return -n.argument.value;
+      case 'ArrayExpression':
+        return n.elements.map((el: any) => { if (!el) throw new Error('hole'); return build(el); });
+      case 'ObjectExpression':
+        return Object.fromEntries(n.properties.map((prop: any) => {
+          if (prop.type !== 'ObjectProperty' || prop.computed) throw new Error('spread');
+          const key = prop.key.type === 'Identifier' ? prop.key.name
+            : (prop.key.type === 'StringLiteral' || prop.key.type === 'NumericLiteral') ? String(prop.key.value)
+              : (() => { throw new Error('key'); })();
+          return [key, build(prop.value)];
+        }));
+      default: throw new Error(n?.type ?? 'unknown');
+    }
+  };
+  try { return JSON.stringify(build(expr)); } catch { return undefined; }
+}
+
 /**
  * Attach the attr-extraction extras (component props, responsive / conditional
  * prop maps) onto the node — shared by BOTH walkers so the two paths surface
@@ -1261,6 +1338,7 @@ function createBaseNode(p: {
  */
 function assignAttrExtras(node: CanvasNode, x: {
   componentProps: Record<string, string>;
+  componentJsonProps?: Record<string, string>;
   responsiveAttrsAccum: Record<string, { viewport: Record<number, string>; variant: Record<string, string> }>;
   attrConditional: Record<string, Record<string, string>>;
   attrConditionalVarRefs: Record<string, Record<string, string>>;
@@ -1272,6 +1350,7 @@ function assignAttrExtras(node: CanvasNode, x: {
 }): void {
   const id = node.id;
   if (Object.keys(x.componentProps).length > 0) node.componentProps = x.componentProps;
+  if (x.componentJsonProps && Object.keys(x.componentJsonProps).length > 0) node.componentJsonProps = x.componentJsonProps;
   if (Object.keys(x.responsiveAttrsAccum).length > 0) {
     node.responsiveAttrs = x.responsiveAttrsAccum;
     trace.action('parser:responsive-attrs', { nodeId: id, attrs: Object.keys(x.responsiveAttrsAccum) });
@@ -1464,6 +1543,7 @@ function extractElementAttrs(opening: any, tagName: string, ctx: ParseCtx): {
  */
 function extractInstanceExpressionProps(opening: any, tagName: string, attrs: Record<string, string>, ctx: ParseCtx): {
   componentProps: Record<string, string>;
+  componentJsonProps: Record<string, string>;
   attrConditional: Record<string, Record<string, string>>;
   attrConditionalVarRefs: Record<string, Record<string, string>>;
   attrPropRefs: Record<string, string>;
@@ -1476,6 +1556,7 @@ function extractInstanceExpressionProps(opening: any, tagName: string, attrs: Re
   // Extract component expression props (numeric, boolean values from JSXExpressionContainer)
   // getAttr() only captures string literals — this captures {500}, {true}, etc.
   const componentProps: Record<string, string> = {};
+  const componentJsonProps: Record<string, string> = {};
   // Per-parent-variant prop overrides via ternary:
   //   initialVariant={initialVariant === 'variant-1' ? 'variant-2' : 'default'}
   // Captured here so expandComponent can pick the right child variant
@@ -1513,6 +1594,12 @@ function extractInstanceExpressionProps(opening: any, tagName: string, attrs: Re
           componentProps[attrName] = String(expr.value);
         } else if (expr.type === 'StringLiteral') {
           componentProps[attrName] = expr.value;
+        } else if (expr.type === 'ArrayExpression' || expr.type === 'ObjectExpression') {
+          // A list or a config object stated inline. Kept as JSON text and
+          // re-parsed at render; not editable in the panels (there is no
+          // array control), but the component receives what the page states.
+          const json = jsonLiteralText(expr);
+          if (json !== undefined) componentJsonProps[attrName] = json;
         } else if (expr.type === 'Identifier') {
           // Forwarded-prop ref: `<Child cprop={parentVar} />`. Record
           // the ref name; the second pass below will resolve it to
@@ -1562,7 +1649,7 @@ function extractInstanceExpressionProps(opening: any, tagName: string, attrs: Re
   }
 
   return {
-    componentProps, attrConditional, attrConditionalVarRefs, attrPropRefs,
+    componentProps, componentJsonProps, attrConditional, attrConditionalVarRefs, attrPropRefs,
     responsiveAttrPropVars, responsiveAttrPropVals, responsiveAttrPropBandsAcc,
   };
 }
@@ -1592,6 +1679,7 @@ export function parseJSXToNodes(code: string, propOverrides?: Record<string, str
     collectionContextStack: [],
     detailPageContext: null,
     pendingVisibilityByInnerId: new Map(),
+    pendingOverridesByInnerId: new Map(),
     currentVariantConfig: [],
     earlyPageVarDefaults: {},
   };
@@ -1614,6 +1702,16 @@ export function parseJSXToNodes(code: string, propOverrides?: Record<string, str
   } catch {
     trace.action('parser.parseJSXToNodes:parseError', { codeLength: code.length });
     return nodes; // Return empty on parse error (user is typing)
+  }
+
+  // …and the COMPONENT's own prop defaults, for the same reason: inside a master a
+  // per-variant prop branch is usually a component variable, not a page variable
+  // (`value={variant === 'variant-1' ? priceYearly : priceMonthly}` on a pricing
+  // card). Without them the branch resolved to nothing, `walkVariantConditionalProp`
+  // returned null, and the whole conditional was dropped — the panel then showed the
+  // raw expression instead of the value + its binding (live find 2026-09-17).
+  for (const [name, value] of Object.entries(extractComponentPropDefaults(ast))) {
+    if (!(name in ctx.earlyPageVarDefaults)) ctx.earlyPageVarDefaults[name] = value;
   }
 
   // Parse all imports: CMS collections, package imports (next/link, next/image), etc.
@@ -1745,68 +1843,6 @@ export function parseJSXToNodes(code: string, propOverrides?: Record<string, str
     }
   }
 
-  // Detect const array declarations: const faqData = [{ question: '...', answer: '...' }, ...]
-  // These are used to detect inline .map() patterns (not CMS imports)
-  const constArrays = new Map<string, Record<string, string>[]>();
-  for (const stmt of ast.program.body) {
-    // Handle: export default function Page() { const faqData = [...]; ... }
-    // Also handle top-level const: const faqData = [...];
-    const declarations: any[] = [];
-    if (stmt.type === 'VariableDeclaration') {
-      declarations.push(...stmt.declarations);
-    }
-    // Also scan inside the default export function body
-    if (stmt.type === 'ExportDefaultDeclaration' && stmt.declaration) {
-      const decl = stmt.declaration as any;
-      if (decl.type === 'FunctionDeclaration' && decl.body?.body) {
-        for (const bodyStmt of decl.body.body) {
-          if (bodyStmt.type === 'VariableDeclaration') {
-            declarations.push(...bodyStmt.declarations);
-          }
-        }
-      }
-    }
-    // Also scan top-level function declarations (function Page() { ... })
-    if (stmt.type === 'FunctionDeclaration' && stmt.body?.body) {
-      for (const bodyStmt of (stmt as any).body.body) {
-        if (bodyStmt.type === 'VariableDeclaration') {
-          declarations.push(...bodyStmt.declarations);
-        }
-      }
-    }
-
-    for (const declarator of declarations) {
-      if (declarator.type !== 'VariableDeclarator') continue;
-      if (declarator.id?.type !== 'Identifier') continue;
-      if (declarator.init?.type !== 'ArrayExpression') continue;
-
-      const varName = declarator.id.name;
-      const elements = declarator.init.elements;
-      const items: Record<string, string>[] = [];
-      let allObjects = true;
-
-      for (const elem of elements) {
-        if (!elem || elem.type !== 'ObjectExpression') { allObjects = false; break; }
-        const obj: Record<string, string> = {};
-        for (const prop of elem.properties) {
-          if (prop.type !== 'ObjectProperty') continue;
-          const key = prop.key.type === 'Identifier' ? prop.key.name :
-                      prop.key.type === 'StringLiteral' ? prop.key.value : null;
-          if (!key) continue;
-          if (prop.value.type === 'StringLiteral') obj[key] = prop.value.value;
-          else if (prop.value.type === 'NumericLiteral') obj[key] = String(prop.value.value);
-          // Skip non-literal values but still include the object
-        }
-        items.push(obj);
-      }
-
-      if (allObjects && items.length > 0) {
-        constArrays.set(varName, items);
-        trace.action('parser:const-array-detected', { varName, itemCount: items.length, fields: Object.keys(items[0]) });
-      }
-    }
-  }
-
   traverse(ast, {
     JSXElement: {
       enter(path) {
@@ -1852,13 +1888,32 @@ export function parseJSXToNodes(code: string, propOverrides?: Record<string, str
         // entry. We stash the parsed `hiddenOnVariants` on a
         // side-map keyed by the inner element so the JSXElement
         // handler can attach it once that node is created.
+        // Code-override wrapper: transparent like AnimatePresence. Record the
+        // override identifiers for the one wrapped element, then let the walk
+        // continue so that element parents to the wrapper's parent.
+        if (tagName === 'Override') {
+          const names = overrideNamesFromOpening(opening);
+          for (const child of el.children) {
+            if (child.type !== 'JSXElement') continue;
+            const idAttr = (child.openingElement.attributes as any[]).find((a) => a.type === 'JSXAttribute' && a.name?.name === 'data-id');
+            const innerId = idAttr?.value?.type === 'StringLiteral' ? idAttr.value.value : null;
+            if (innerId && names.length) ctx.pendingOverridesByInnerId.set(innerId, names);
+          }
+          return;
+        }
         if (tagName === 'AnimatePresence') {
           for (const child of el.children) {
             if (child.type !== 'JSXExpressionContainer') continue;
             const expr = child.expression;
             if (expr.type !== 'LogicalExpression' || expr.operator !== '&&') continue;
             if (expr.right.type !== 'JSXElement') continue;
-            const innerEl = expr.right;
+            let innerEl = expr.right;
+            // `{cond && <Override with={…}><El data-id/></Override>}` — look through the override wrapper.
+            if (resolveTagName(innerEl.openingElement) === 'Override') {
+              const wrapped = innerEl.children.find((c: any) => c.type === 'JSXElement');
+              if (!wrapped) continue;
+              innerEl = wrapped as typeof innerEl;
+            }
             const innerOpening = innerEl.openingElement;
             const innerId = getAttr(innerOpening.attributes, 'data-id');
             if (!innerId) continue;
@@ -1989,7 +2044,7 @@ export function parseJSXToNodes(code: string, propOverrides?: Record<string, str
         // the same ones, so the two walk paths cannot drift apart).
         const { attrs, responsiveAttrsAccum, responsivePropFieldBindings, attrTranslationKeys } = extractElementAttrs(opening, tagName, ctx);
         const {
-          componentProps, attrConditional, attrConditionalVarRefs, attrPropRefs,
+          componentProps, componentJsonProps, attrConditional, attrConditionalVarRefs, attrPropRefs,
           responsiveAttrPropVars, responsiveAttrPropVals, responsiveAttrPropBandsAcc,
         } = extractInstanceExpressionProps(opening, tagName, attrs, ctx);
 
@@ -2006,10 +2061,51 @@ export function parseJSXToNodes(code: string, propOverrides?: Record<string, str
         let binding: CanvasNode['binding'] | undefined;
         let textVariable: string | undefined;
         let translationKey: string | undefined;
+        // RICH translation shape: `dangerouslySetInnerHTML={{ __html: <hook>.raw('key') }}`
+        // on a text tag (no children). The key is the message; the value is
+        // sanitized inline HTML — see shared/rich-message.ts.
+        let richTranslation = false;
+        let formattedTextVariable = false;
+        let formattedBranches: FormattedBranches | null = null;
+        {
+          const dsAttr = (opening.attributes as any[]).find((a: any) => a.type === 'JSXAttribute' && a.name?.name === 'dangerouslySetInnerHTML');
+          const obj = dsAttr?.value?.type === 'JSXExpressionContainer' ? dsAttr.value.expression : null;
+          const prop = obj?.type === 'ObjectExpression' ? obj.properties.find((pr: any) => pr.type === 'ObjectProperty' && ((pr.key.type === 'Identifier' && pr.key.name === '__html') || (pr.key.type === 'StringLiteral' && pr.key.value === '__html'))) : null;
+          const call = prop?.value;
+          if (call?.type === 'CallExpression' && call.callee?.type === 'MemberExpression'
+              && call.callee.property?.type === 'Identifier' && call.callee.property.name === 'raw'
+              && call.callee.object?.type === 'Identifier'
+              && call.arguments?.length === 1 && call.arguments[0]?.type === 'StringLiteral') {
+            translationKey = call.arguments[0].value as string;
+            richTranslation = true;
+            trace.action('parser:rich-translation-key', { nodeId: id, translationKey });
+          } else {
+            // FORMATTED TEXT variable: `dangerouslySetInnerHTML={{ __html: propName }}` — the
+            // prop default is sanitized inline HTML (shared/rich-message.ts), substituted below.
+            // Per variant, `__html` is a variant ternary of variables / literal HTML (applied to
+            // the conditionalText fields once they're declared below).
+            formattedBranches = formattedBranchesOfDangerAttr(dsAttr?.value);
+            if (formattedBranches) {
+              textVariable = formattedBranches.vars['default'] ?? Object.values(formattedBranches.vars)[0];
+              formattedTextVariable = true;
+              trace.action('parser:formatted-text-variable', { nodeId: id, prop: textVariable, variants: Object.keys(formattedBranches.vars).length + Object.keys(formattedBranches.literals).length });
+            }
+          }
+        }
         // Per-variant text from a `{variant === 'x' ? 'a' : 'b'}` child.
         let conditionalText: Record<string, string> | null = null;
+        let conditionalTextRich: Record<string, true> | null = null;
         // Per-variant TEXT-VARIABLE branches (variant → prop name) when a branch/fallback is a variable.
         let conditionalTextVariable: Record<string, string> | null = null;
+        // Per-variant FORMATTED text → the same per-variant fields plain per-variant text fills.
+        // Every branch is HTML (literal or a variable's value), so every branch is rich.
+        if (formattedBranches && (Object.keys(formattedBranches.vars).length + Object.keys(formattedBranches.literals).length) > 1) {
+          conditionalText = { ...formattedBranches.literals };
+          conditionalTextRich = {};
+          for (const k of [...Object.keys(formattedBranches.vars), ...Object.keys(formattedBranches.literals)]) conditionalTextRich[k] = true;
+          conditionalTextVariable = { ...formattedBranches.vars };
+          if (formattedBranches.literals['default'] !== undefined) textContent = formattedBranches.literals['default'];
+        }
         // Per-VIEWPORT text branches from a `{__mqN ? branch : base}` child (variable names / literal
         // values / band floors). Variable branches get resolved into `responsiveTextValues` post-pass.
         let responsiveTextVariables: Record<number, string> | null = null;
@@ -2121,20 +2217,25 @@ export function parseJSXToNodes(code: string, propOverrides?: Record<string, str
           // conditionalStyles.
           if (!variantBindings?.text && !responsiveTextValues && child.type === 'JSXExpressionContainer'
               && child.expression.type === 'ConditionalExpression') {
-            const g = walkVariantTextGeneral(child.expression);
+            const g = walkVariantTextGeneral(child.expression, code);
             if (g) {
               // Literal branches → conditionalText. Variable branches → conditionalTextVariable (per-variant
               // binding); their resolved values get baked into conditionalText in the post-resolve pass so
               // the Renderer paints the right text per variant. `textVariable` (any var) keeps the Content
               // control purple + triggers that resolve pass.
               conditionalText = { ...g.literals };
+              conditionalTextRich = Object.keys(g.richs).length > 0 ? { ...g.richs } : null;
               if (Object.keys(g.vars).length > 0) {
                 conditionalTextVariable = g.vars;
                 textVariable = g.vars['default'] ?? Object.values(g.vars)[0];
               }
               textContent = g.literals['default'] ?? textContent;
-              textIsLiteral = true;
-              trace.action('parser:conditional-text', { nodeId: id, literals: Object.keys(g.literals), vars: Object.keys(g.vars) });
+              // A RICH default is markup, not a literal string child — the
+              // text-edit literal contract must not treat it as one. Keyed on
+              // the AST fact (was the branch a fragment?), never a `<` sniff:
+              // a plain branch holding pasted source code must stay literal.
+              textIsLiteral = !g.richs['default'];
+              trace.action('parser:conditional-text', { nodeId: id, literals: Object.keys(g.literals), vars: Object.keys(g.vars), rich: Object.keys(g.richs) });
             }
           }
         }
@@ -2256,9 +2357,12 @@ export function parseJSXToNodes(code: string, propOverrides?: Record<string, str
         // Detection is SHARED with the canvasNodes walker; the raw-source slice
         // into textContent below is main-walker-only (preserved difference).
         let hasMixedContent = false;
+        // A rich-translated node has NO children — its marks live in the message.
+        // Flag it mixed so the renderer takes the innerHTML path for the override.
+        if (richTranslation || formattedTextVariable) hasMixedContent = true;
         // A wrapped text-anim node takes this path: its inner is real text (+ <br />), so
         // textContent becomes a genuine string instead of a tag-strip of N spans.
-        if ((!hasTextAnim || splitWrapper) && !isTextOverridesContainer && isAllInlineMixedContent(contentEl)) {
+        if (!richTranslation && !formattedTextVariable && (!hasTextAnim || splitWrapper) && !isTextOverridesContainer && isAllInlineMixedContent(contentEl)) {
           hasMixedContent = true;
           // Extract full inner content via Babel's ABSOLUTE node offsets —
           // never a (line, column) walk over code.split('\n'). Babel counts
@@ -2328,6 +2432,7 @@ export function parseJSXToNodes(code: string, propOverrides?: Record<string, str
         if (isCollectionTemplate) node.isCollectionTemplate = true;
         if (binding) node.binding = binding;
         if (conditionalText) node.conditionalText = conditionalText;
+        if (conditionalTextRich) node.conditionalTextRich = conditionalTextRich;
         if (conditionalTextVariable) node.conditionalTextVariable = conditionalTextVariable;
         if (responsiveTextVariables) node.responsiveTextVariables = responsiveTextVariables;
         if (responsiveTextValues) node.responsiveTextValues = responsiveTextValues;
@@ -2335,7 +2440,7 @@ export function parseJSXToNodes(code: string, propOverrides?: Record<string, str
         if (variantBindings) node.variantBindings = variantBindings;
         if (attrBindings.length > 0) node.attrBindings = attrBindings;
         assignAttrExtras(node, {
-          componentProps, responsiveAttrsAccum, attrConditional, attrConditionalVarRefs,
+          componentProps, componentJsonProps, responsiveAttrsAccum, attrConditional, attrConditionalVarRefs,
           attrPropRefs, responsiveAttrPropVars, responsiveAttrPropVals,
           responsiveAttrPropBandsAcc, responsivePropFieldBindings,
         });
@@ -2344,6 +2449,8 @@ export function parseJSXToNodes(code: string, propOverrides?: Record<string, str
         // into node.textContent once we have the function param defaults.
         if (textVariable) node.textVariable = textVariable;
         if (translationKey) node.translationKey = translationKey;
+        if (richTranslation) node.richTranslation = true;
+        if (formattedTextVariable) node.formattedTextVariable = true;
         if (attrTranslationKeys) node.attrTranslationKeys = attrTranslationKeys;
         if (textOverrides) node.textOverrides = textOverrides;
 
@@ -2390,6 +2497,12 @@ export function parseJSXToNodes(code: string, propOverrides?: Record<string, str
 
         // If this element was wrapped in <AnimatePresence>{cond && <this/>}</AnimatePresence>,
         // attach the parsed condition's hidden-variants set now.
+        const pendingOverrides = ctx.pendingOverridesByInnerId.get(id);
+        if (pendingOverrides) {
+          node.codeOverrides = pendingOverrides;
+          ctx.pendingOverridesByInnerId.delete(id);
+        }
+
         const pendingHidden = ctx.pendingVisibilityByInnerId.get(id);
         if (pendingHidden && pendingHidden.size > 0) {
           node.hiddenOnVariants = pendingHidden;
@@ -2413,7 +2526,19 @@ export function parseJSXToNodes(code: string, propOverrides?: Record<string, str
           return;
         }
 
-        if (hasMixedContent || hasTextAnim || splitWrapper || isTextOverridesContainer) {
+        // RICH per-variant text: the ternary's fragment branches hold inline
+        // runs (<span>/<strong> with no data-id). They are captured in
+        // conditionalText as source slices — letting the traverse descend
+        // would mint auto-id nodes for every run, which then render on EVERY
+        // tile as real children: the live find 2026-09-05 was 'strong'/'span'
+        // rows in the Layers panel, duplicated text on the variant tile, and
+        // the PRIMARY showing the variant's formatting after reopen. Guarded
+        // on "no structural element children" so a hand-authored ternary
+        // sharing the parent with real elements keeps its old behavior.
+        const hasRichConditionalText = !!conditionalTextRich
+          && !el.children.some((c: any) => c.type === 'JSXElement');
+
+        if (hasMixedContent || hasTextAnim || splitWrapper || isTextOverridesContainer || hasRichConditionalText) {
           // Skip traversing inline children — they're in textContent as raw JSX source
           // For text-anim: children are animation artifacts (motion.span), not structural nodes
           // For text-overrides: children are <span data-vp> per-viewport variants, captured in textOverrides
@@ -2437,7 +2562,8 @@ export function parseJSXToNodes(code: string, propOverrides?: Record<string, str
         const tagName = resolveTagName(opening);
         if (tagName === 'AnimatePresence' || tagName === 'LayoutGroup'
             || tagName === 'MotionConfig' || tagName === 'Fragment'
-            || tagName === 'style' || tagName === 'PageTransitions') {
+            || tagName === 'style' || tagName === 'PageTransitions'
+            || tagName === 'Override') {
           return;
         }
         // Glide wrappers (`<motion.div data-glide-item>`) are skipped on enter
@@ -2526,8 +2652,10 @@ export function parseJSXToNodes(code: string, propOverrides?: Record<string, str
         if (!cursor || cursor.type !== 'Identifier') return;
         const sourceVarName = cursor.name;
         const cmsSlug = cmsImports.get(sourceVarName);
-        const inlineItems = constArrays.get(sourceVarName);
-        if (!cmsSlug && !inlineItems) return; // Not a known variable — ignore
+        // Inline (non-CMS) `.map()` repeaters were retired 2026-09-07: only a
+        // CMS import resolves to a collection list. Anything else is ignored by
+        // the parser and rejected by the oracle (CMS_MAP_UNRESOLVED).
+        if (!cmsSlug) return;
 
         // Extract the map callback parameter name
         const args = callNode.arguments;
@@ -2540,9 +2668,9 @@ export function parseJSXToNodes(code: string, propOverrides?: Record<string, str
         const itemVar = params[0].name;
 
         // Determine source string
-        const source = cmsSlug ?? `__inline:${sourceVarName}`;
+        const source = cmsSlug;
 
-        trace.action('parser:map-detected', { sourceVar: sourceVarName, source, itemVar, isCms: !!cmsSlug, isInline: !!inlineItems });
+        trace.action('parser:map-detected', { sourceVar: sourceVarName, source, itemVar });
 
         // Push collection context so nested JSXElements get isCollectionTemplate + binding detection
         ctx.collectionContextStack.push({ itemVar, source });
@@ -2588,10 +2716,6 @@ export function parseJSXToNodes(code: string, propOverrides?: Record<string, str
                 variantConfigs: responsiveCfg ? responsiveCfg.variants : null,
               };
               // For inline arrays, store the actual data on the parent node
-              if (inlineItems) {
-                parentNode.inlineMapData = inlineItems;
-                trace.action('parser:inline-map-data-set', { parentId: parentDataId, source, itemCount: inlineItems.length });
-              }
               trace.action('parser:collectionList-set', { parentId: parentDataId, source, itemVar, templateIds });
               // Stop ONLY once the REAL container is found. Glide ("Flow") and
               // motion inject TRANSPARENT wrapper JSXElements around a .map() —
@@ -2639,7 +2763,7 @@ export function parseJSXToNodes(code: string, propOverrides?: Record<string, str
         }
         if (!cur || cur.type !== 'Identifier') return;
         const sourceVarName = cur.name;
-        if (!cmsImports.has(sourceVarName) && !constArrays.has(sourceVarName)) return;
+        if (!cmsImports.has(sourceVarName)) return;
         ctx.collectionContextStack.pop();
       },
     },
@@ -2804,7 +2928,7 @@ export function parseJSXToNodes(code: string, propOverrides?: Record<string, str
       // implementation is the root fix for that bug class.
       const { attrs, responsiveAttrsAccum, responsivePropFieldBindings, attrTranslationKeys } = extractElementAttrs(opening, tagName, ctx);
       const {
-        componentProps, attrConditional, attrConditionalVarRefs, attrPropRefs,
+        componentProps, componentJsonProps, attrConditional, attrConditionalVarRefs, attrPropRefs,
         responsiveAttrPropVars, responsiveAttrPropVals, responsiveAttrPropBandsAcc,
       } = extractInstanceExpressionProps(opening, tagName, attrs, ctx);
 
@@ -2895,7 +3019,7 @@ export function parseJSXToNodes(code: string, propOverrides?: Record<string, str
       });
 
       assignAttrExtras(node, {
-        componentProps, responsiveAttrsAccum, attrConditional, attrConditionalVarRefs,
+        componentProps, componentJsonProps, responsiveAttrsAccum, attrConditional, attrConditionalVarRefs,
         attrPropRefs, responsiveAttrPropVars, responsiveAttrPropVals,
         responsiveAttrPropBandsAcc, responsivePropFieldBindings,
       });
@@ -2914,7 +3038,6 @@ export function parseJSXToNodes(code: string, propOverrides?: Record<string, str
       // its ghost rows exactly like one inside a viewport.
       if (existingCanvasNode?.collectionList) {
         node.collectionList = existingCanvasNode.collectionList;
-        if (existingCanvasNode.inlineMapData) node.inlineMapData = existingCanvasNode.inlineMapData;
         node.children = [...existingCanvasNode.children];
         trace.action('parser:canvasNodes-collectionList-preserved', { id, source: existingCanvasNode.collectionList.source, children: node.children });
       }
@@ -4201,9 +4324,30 @@ function extractStyles(attrs: (JSXAttribute | any)[], ctx: ParseCtx): { styles: 
  *    `{v === 'a' ? 'x' : content}`         → literals {a:'x'},  vars {default:'content'}   (detach)
  *    `{v === 'a' ? content : 'y'}`         → literals {default:'y'}, vars {a:'content'}     (bind on variant)
  *  null when it isn't a variant ternary. */
-function walkVariantTextGeneral(expr: any): { literals: Record<string, string>; vars: Record<string, string> } | null {
+function walkVariantTextGeneral(expr: any, code: string): { literals: Record<string, string>; vars: Record<string, string>; richs: Record<string, true> } | null {
   const literals: Record<string, string> = {};
   const vars: Record<string, string> = {};
+  const richs: Record<string, true> = {};
+  // A RICH branch (per-variant formatting) is a JSXFragment/JSXElement of
+  // inline runs. Its value is the SOURCE SLICE — the same JSX-flavored markup
+  // dialect textContent carries for mixed nodes, so the tile renderer's
+  // mixed-content path paints it with zero new machinery.
+  const branchValue = (node: any): string | null => {
+    if (node?.type === 'StringLiteral') return node.value;
+    if (node?.type === 'JSXFragment') {
+      const kids = node.children ?? [];
+      if (kids.length === 0) return '';
+      const first = kids[0], last = kids[kids.length - 1];
+      if (typeof first.start === 'number' && typeof last.end === 'number') {
+        return code.slice(first.start, last.end).trim();
+      }
+      return null;
+    }
+    if (node?.type === 'JSXElement' && typeof node.start === 'number' && typeof node.end === 'number') {
+      return code.slice(node.start, node.end).trim();
+    }
+    return null;
+  };
   let cursor: any = expr;
   let sawBranch = false;
   while (cursor?.type === 'ConditionalExpression') {
@@ -4215,17 +4359,25 @@ function walkVariantTextGeneral(expr: any): { literals: Record<string, string>; 
       test.right?.type !== 'StringLiteral'
     ) return null;
     const key = test.right.value;
-    if (cursor.consequent?.type === 'StringLiteral') literals[key] = cursor.consequent.value;
-    else if (cursor.consequent?.type === 'Identifier') vars[key] = cursor.consequent.name;
-    else return null;
+    if (cursor.consequent?.type === 'Identifier') vars[key] = cursor.consequent.name;
+    else {
+      const v = branchValue(cursor.consequent);
+      if (v == null) return null;
+      literals[key] = v;
+      if (cursor.consequent.type !== 'StringLiteral') richs[key] = true;
+    }
     sawBranch = true;
     cursor = cursor.alternate;
   }
-  if (cursor?.type === 'StringLiteral') literals['default'] = cursor.value;
-  else if (cursor?.type === 'Identifier') vars['default'] = cursor.name;
-  else return null;
+  if (cursor?.type === 'Identifier') vars['default'] = cursor.name;
+  else {
+    const v = branchValue(cursor);
+    if (v == null) return null;
+    literals['default'] = v;
+    if (cursor.type !== 'StringLiteral') richs['default'] = true;
+  }
   if (!sawBranch) return null;
-  return { literals, vars };
+  return { literals, vars, richs };
 }
 
 /**
@@ -4323,3 +4475,36 @@ function walkVariantConditionalProp(expr: any, varDefaults?: Record<string, stri
 
   return Object.keys(map).length > 0 ? { map, varRefs } : null;
 }
+
+/** Identifiers in an `<Override with={withX}>` / `with={[withA, withB]}` opening tag. */
+function overrideNamesFromOpening(opening: any): string[] {
+  const attr = (opening.attributes as any[]).find((a) => a.type === 'JSXAttribute' && a.name?.name === 'with');
+  const expr = attr?.value?.type === 'JSXExpressionContainer' ? attr.value.expression : null;
+  if (!expr) return [];
+  const items = expr.type === 'ArrayExpression' ? expr.elements : [expr];
+  return items
+    .map((e: any) => (e?.type === 'Identifier' ? e.name : e?.type === 'MemberExpression' && e.property?.type === 'Identifier' && e.object?.type === 'Identifier' ? `${e.object.name}.${e.property.name}` : null))
+    .filter((n: string | null): n is string => !!n);
+}
+
+/**
+ * Extract framer-motion direct animation props (`whileHover`, `whileTap`,
+ * `whileInView`, `initial`, `animate`, `transition`, `viewport`) from a
+ * JSX opening element's attribute list.
+ *
+ * Three accepted shapes:
+ *   - string literal:           `initial="hidden"`            → `{ _variantName: 'hidden' }`
+ *   - string in expression:     `initial={"hidden"}`          → `{ _variantName: 'hidden' }`
+ *   - object expression:        `whileHover={{ scale: 1.05 }}` → `{ scale: '1.05' }`
+ *
+ * Numeric literals are stringified; negative numbers (UnaryExpression
+ * over a NumericLiteral) are handled. Other complex expressions
+ * (arrays, nested objects, identifier refs) are skipped — the
+ * AnimationTool only edits primitive values.
+ *
+ * Shared so the main JSX walker AND the `const canvasNodes = (<>...</>)`
+ * walker produce identical `motionProps` payloads — without this, a
+ * `motion.div whileHover={...}` dragged onto the canvas lost its motion
+ * props during parsing and the Animation tool stopped detecting it.
+ */
+export const MOTION_PROP_NAMES = ['whileHover', 'whileTap', 'whileInView', 'initial', 'animate', 'exit', 'transition', 'viewport'];

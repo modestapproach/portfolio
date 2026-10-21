@@ -6,11 +6,11 @@ import { escapeRegExp } from '@/shared/regex-utils';
 import { nodeIdToVarName } from '@/shared/id-utils';
 import { parseScrollHooks, getScrollDataForNode, parseScrollDirection, parseRange } from '../parsing/scroll-parser';
 import { trace } from '@/shared/debug-trace';
-import { findTagClose, findJSXDataIdIndex, insertBeforeRenderReturn, findStyleObjectEnd, stripTagAttrBalanced, readTagAttrRaw, getJsonAttr } from './generator-utils';
+import { findTagClose, findJSXDataIdIndex, insertBeforeRenderReturn, findStyleObjectEnd, stripTagAttrBalanced, readTagAttrRaw, getJsonAttr, opensAcrossLines } from './generator-utils';
 import { setScrollVariantInCode } from './scroll-variant-gen';
 import { setInstanceFxInCode } from './instance-fx-gen';
 import { type ResolvedScope } from '@/code/animations/animation-scope';
-import { scopeTest, scopeKey, buildScopedScalarExpr, parseScopedScalarExpr, type SerScope } from './scoped-expr';
+import { scopeTest, scopeKey, buildScopedScalarExpr, parseScopedScalarExpr, hoistRenderGatesInCode, type SerScope } from './scoped-expr';
 import { findMotionPropExpr, parseScopedExpr, rebuildScopedExpr, readMotionPropResponsive, updateMotionPropInCode, setMotionPropScopedValue } from './generator-motion-props';
 import { updateScrollAnimInCode, updateScrollDirectionAnimInCode, removeScrollDirectionFromCode, ensureMotionTag, type ScrollTrigger, type ScrollAnimConfig, type ScrollSpeedConfig } from './generator-motion-scroll';
 import { parseTagObject, hasAppearTransformConflict, composeScrollAppearInCode, hasDirectionTransformConflict, composeScrollDirectionTransformInCode, hasGestureTransformConflict, composeGestureInCode, decomposeGestureInCode } from './generator-motion-compose';
@@ -174,6 +174,80 @@ function injectScrollFxAttr(code: string, nodeId: string, spec: ScrollFxSpec): s
  *  ensure the imports the composed hooks need. The COMBINED div carries a
  *  `data-scroll-fx` spec so the panel still detects + edits each effect. No-op
  *  when there are no conflicts. */
+/** Node ids that a compose/decompose pass could possibly act on.
+ *
+ *  Both all-node passes used to walk EVERY `data-id` in the file — 853 of them
+ *  on a real page — and each per-node helper re-scans the whole source with a
+ *  fresh RegExp built from that node's name. That is ~4,000 full-file scans per
+ *  animation edit: measured 822ms (decompose) + 699ms (compose) on a 444KB page,
+ *  which is what made every click on an animation value take ~3s (2026-09-09).
+ *
+ *  Both are precisely filterable:
+ *   · DECOMPOSE only fires for a node that owns a `const <name>… = useMotionValue(`
+ *     / `useTransform(` declaration (all four decompose forms are named after the
+ *     node), so an id whose var-name prefixes no such declaration cannot match.
+ *   · COMPOSE additionally needs a driver ATTRIBUTE on the node's own tag
+ *     (`whileInView` / `animate` / `whileHover` / `whileTap` / `data-loop`).
+ *
+ *  The filters are supersets of what the per-node helpers check, so behaviour is
+ *  unchanged — only the ids that could never match are skipped. */
+function motionDeclPrefixes(code: string): string[] {
+  const out: string[] = [];
+  for (const m of code.matchAll(/\bconst\s+([A-Za-z_$][\w$]*)\s*=\s*(?:useMotionValue|useTransform)\s*\(/g)) {
+    out.push(m[1]);
+  }
+  return out;
+}
+
+/** Ids whose var-name prefixes at least one motion-value/transform declaration. */
+function idsOwningMotionDecls(code: string, ids: string[]): string[] {
+  const decls = motionDeclPrefixes(code);
+  if (decls.length === 0) return [];
+  return ids.filter((id) => {
+    const cn = nodeIdToVarName(id);
+    return decls.some((d) => d.startsWith(cn));
+  });
+}
+
+/** Ids whose own opening tag carries an effect DRIVER attribute.
+ *
+ *  Anchored on the `data-id` and sliced FORWARD with `findTagClose`, exactly
+ *  the way every per-node detector reads its tag — so the filter agrees with
+ *  them by construction. An earlier version searched backwards from the driver
+ *  with `lastIndexOf('<')`, which is not string-aware: a `<` anywhere in
+ *  between (a layer renamed `Card <Fancy>` writes `data-name="Card <Fancy>"`
+ *  right after the data-id) made the slice start mid-value, the data-id was
+ *  lost, and the node was dropped from the compose pass while the
+ *  declaration-based decompose pass still visited it — the node came back in
+ *  the separate form and its reveal/hover died silently.
+ *
+ *  Bias: OVER-include. A spurious candidate costs one re-check in a per-node
+ *  helper that returns false; a missing one loses the effect. */
+function idsWithDriverAttr(code: string): Set<string> {
+  const out = new Set<string>();
+  for (const m of code.matchAll(/data-id="([^"]+)"/g)) {
+    const idIdx = m.index ?? 0;
+    const gt = findTagClose(code, idIdx);
+    if (gt === -1) continue;
+    const lt = code.lastIndexOf('<', idIdx);
+    if (DRIVER_ATTR_RE.test(code.slice(lt === -1 ? idIdx : lt, gt + 1))) out.add(m[1]);
+  }
+  return out;
+}
+
+const DRIVER_ATTR_RE = /\s(?:whileInView|whileHover|whileTap|animate|data-loop)=/;
+
+/** The candidate rule, shared by BOTH passes: a node that owns a motion
+ *  declaration or carries a driver attribute. Compose and decompose use the
+ *  SAME set on purpose — when they disagreed, decompose could take a node
+ *  apart that compose would then refuse to put back together, which writes the
+ *  separate form to the user's file and silently kills the effect. */
+export function motionPassCandidates(code: string, allIds: string[]): string[] {
+  const drivers = idsWithDriverAttr(code);
+  const owning = new Set(idsOwningMotionDecls(code, allIds));
+  return allIds.filter((id) => drivers.has(id) || owning.has(id));
+}
+
 export function composeAllScrollAppearConflicts(code: string): string {
   // Fast path: a compose needs ≥2 effects sharing something — a reveal
   // (`whileInView`/`animate=`), a gesture (`whileHover`/`whileTap`), or a loop. A
@@ -182,7 +256,11 @@ export function composeAllScrollAppearConflicts(code: string): string {
   const hasDriver = code.includes('whileInView') || code.includes('animate=')
     || code.includes('whileHover') || code.includes('whileTap') || code.includes('data-loop=');
   if (!hasDriver) return code;
-  const ids = [...new Set([...code.matchAll(/data-id="([^"]+)"/g)].map(m => m[1]))];
+  const allIds = [...new Set([...code.matchAll(/data-id="([^"]+)"/g)].map(m => m[1]))];
+  // Only nodes that own a motion declaration OR carry a driver attribute can
+  // conflict — see the note on `motionDeclPrefixes`.
+  const ids = motionPassCandidates(code, allIds);
+  trace.fn('compose-all:candidates', { total: allIds.length, candidates: ids.length });
   let result = code;
   let composed = false;
   for (const id of ids) {
@@ -376,7 +454,12 @@ export function decomposeScrollAppearInCode(code: string, nodeId: string): strin
 export function decomposeAllScrollConflicts(code: string): string {
   // Fast path: combined forms always declare a `… = useMotionValue(` reveal.
   if (!code.includes('= useMotionValue(')) return code;
-  const ids = [...new Set([...code.matchAll(/data-id="([^"]+)"/g)].map(m => m[1]))];
+  const allIds = [...new Set([...code.matchAll(/data-id="([^"]+)"/g)].map(m => m[1]))];
+  // The SAME candidate rule compose uses. A declaration-only filter would be
+  // tighter, but the two passes must never disagree: decompose taking a node
+  // apart that compose won't rebuild leaves the separate form in the file.
+  const ids = motionPassCandidates(code, allIds);
+  trace.fn('decompose-all:candidates', { total: allIds.length, candidates: ids.length });
   let result = code;
   for (const id of ids) {
     // Decompose in REVERSE compose order (outermost first). Compose runs hover THEN
@@ -458,19 +541,33 @@ export function clearNodeScrollFx(code: string, nodeId: string): string {
   //     Appear decl is already gone, so decompose's gate never ran). Both anchors carry the
   //     node's own name, so the lazy middle can't swallow a neighbouring effect.
   result = result.replace(new RegExp(`\\s*useEffect\\(\\(\\)\\s*=>\\s*\\{\\s*if\\s*\\(${e}(?!${TEXT_ANIM_TAIL})[A-Z]\\w*\\)[\\s\\S]*?\\},\\s*\\[${e}(?!${TEXT_ANIM_TAIL})[A-Z]\\w*\\]\\);`, 'g'), '');
+  // An overlay's open state is `<cn>Open` (overlay-gen `stateVarName`) — overlay-gen
+  // owns it, never scroll-fx. Clearing the overlay ELEMENT matched it below and
+  // dropped the state while its multi-line effect survived; the heal then
+  // re-declared it under that effect → TDZ crash on the live site (2026-10-06).
+  const overlayStateRe = new RegExp(`^const \\[\\s*${e}Open\\s*,`);
   result = result.split('\n').filter((line) => {
     const t = line.trim();
-    // A line that OPENS a multi-line block (ends with `{`) is NOT a single-line
+    // A line that OPENS something it does not close is NOT a single-line
     // declaration — dropping only its first line orphans the body. The node's
     // variant object `const <cn>Variants = {` matches the `[A-Z]\w*` pattern below
     // (the uppercase `V`), so without this guard deleting e.g. `nl2` would strip
     // `const nl2Variants = {` and leave `default: {…}, …};` dangling (a syntax
     // error → "AI changes blocked"). Variant objects are removed wholesale by
-    // removeOrphanedVariantConsts; leave block openers alone here.
-    if (t.endsWith('{')) return true;
+    // removeOrphanedVariantConsts; leave openers alone here.
+    //
+    // COUNT the brackets rather than looking at the last character: a
+    // declaration reformatted by a previous mutation opens and closes on the
+    // same line and still continues —
+    //   const divVariants = { default: { flex: '0 0 auto' }
+    //   };
+    // ends with `}`, so an `endsWith('{')` test let it through and deleting a
+    // node inside a component left the stray `};` behind (reported 2026-09-18).
+    if (opensAcrossLines(t)) return true;
     const fx = `${e}(?!${TEXT_ANIM_TAIL})[A-Z]`;
     const protectedRef = clearProtectRef && new RegExp(`^const ${e}Ref\\s*=`).test(t);
     if (protectedRef) return true;
+    if (overlayStateRe.test(t)) return true;
     if (new RegExp(`^const ${fx}\\w*\\s*=`).test(t)) return false;              // const cnXxx = …
     if (new RegExp(`^const \\{[^}]*:\\s*${fx}\\w*\\s*\\}\\s*=`).test(t)) return false; // const { k: cnXxx } = …
     if (new RegExp(`^const \\[\\s*${fx}\\w*`).test(t)) return false;            // const [cnXxx, …] = useState
@@ -879,7 +976,9 @@ function gateScrollTransformResponsive(
     const re = new RegExp(`(const ${vn} = useTransform\\([^,]+,\\s*\\[[^\\]]*\\],\\s*)${esc}(\\s*\\))`);
     result = result.replace(re, `$1${outExpr}$2`);
   }
-  return result;
+  // The `useTransform` lines were written BEFORE their gates, which ensureMediaGate
+  // anchors at the render return — below them. Lift each gate above its reader.
+  return hoistRenderGatesInCode(result);
 }
 
 /** Add a `prop: motionVar` binding to a node's `style={{ … }}` (motion.<tag>). */

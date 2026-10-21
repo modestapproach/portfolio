@@ -25,6 +25,7 @@
 // height ratio per device class. Same heuristic the Renderer uses.
 
 import { trace } from './debug-trace';
+import { drawnTileRange } from './canvas-band-queries';
 
 const VW_INNER_RE = /([\d.]+)vw/g;
 const VH_INNER_RE = /([\d.]+)vh/g;
@@ -38,6 +39,42 @@ const VH_INNER_RE = /([\d.]+)vh/g;
 export function simulatedVpHeight(vpWidthPx: number): number {
   const heightRatio = vpWidthPx >= 1024 ? 0.625 : vpWidthPx >= 500 ? 1.33 : 2.16;
   return vpWidthPx * heightRatio;
+}
+
+/**
+ * Canvas anchoring for a `position: fixed` node.
+ *
+ * The canvas turns `fixed` into `absolute` (a transformed ancestor breaks
+ * fixed positioning), which leaves `bottom: 50px` measured from the bottom of
+ * the WHOLE PAGE — a dock meant to float over the hero ends up 10,000px down,
+ * past the footer. On a real screen a fixed element only ever lives inside one
+ * viewport height, so the canvas has to show it there: measure from the top of
+ * the tile — the same place a real screen would put it.
+ *
+ * `bottom: B` becomes `top: <vh − B>` plus a `translateY(-100%)` so the
+ * element's BOTTOM edge lands on the `vh − B` line. A top-anchored fixed node
+ * already measures from the top of the tile and is left alone.
+ *
+ * Returns null when there is nothing to re-anchor.
+ */
+export function canvasFixedAnchor(
+  styles: Record<string, string>,
+  vpWidthPx: number,
+): Record<string, string> | null {
+  if (styles.position !== 'fixed') return null;
+  const top = styles.top;
+  if (top != null && top !== '' && top !== 'auto') return null;   // already top-anchored
+  const raw = styles.bottom;
+  if (raw == null || raw === '' || raw === 'auto') return null;
+  const bottom = parseFloat(resolveResponsiveUnits(raw, vpWidthPx));
+  if (!isFinite(bottom)) return null;
+  const existing = styles.transform && styles.transform !== 'none' ? ` ${styles.transform}` : '';
+  return {
+    top: `${Math.round(simulatedVpHeight(vpWidthPx) - bottom)}px`,
+    bottom: 'auto',
+    // Pure translations commute, so a centring `translate(-50%)` still applies.
+    transform: `translateY(-100%)${existing}`,
+  };
 }
 
 /** Default viewport width used when an element isn't inside a
@@ -109,7 +146,7 @@ const QUERY_BOUND_RE = /\(\s*(min|max)-width:\s*([\d.]+)px\s*\)/g;
  *  width (`(min-width: W) and (max-width: W)`), with units resolved against
  *  W. Blocks without vw/vh (and non-block text) pass through untouched.
  *  Runs at canvas-injection time only — the source keeps real vw/vh. */
-export function resolveContainerQueryUnits(css: string, viewportWidthsAsc: number[]): string {
+export function resolveContainerQueryUnits(css: string, viewportWidthsAsc: number[], opts?: { drawnLadder?: boolean }): string {
   if (!css || viewportWidthsAsc.length === 0) return css;
   if (!css.includes('vw') && !css.includes('vh')) return css;
   let out = '';
@@ -139,11 +176,15 @@ export function resolveContainerQueryUnits(css: string, viewportWidthsAsc: numbe
     const matching = viewportWidthsAsc.filter(w => w >= min && w <= max);
     if (matching.length === 0) { out += css.slice(at, j); i = j; continue; }
     const toPx = (px: number): string => `${Math.round(px * 100) / 100}px`;
+    // With `drawnLadder` (tiles drawn at their range's START — see canvas-band-queries) each copy
+    // is scoped to the tile's own drawn-ladder range, not its exact width: the container measures
+    // inside the root's padding, so an exact `(min-width: W) and (max-width: W)` missed a padded tile.
+    const desc = opts?.drawnLadder ? [...new Set(viewportWidthsAsc)].sort((a, b) => b - a) : null;
     for (const w of matching) {
       const resolvedBody = body
         .replace(VW_INNER_RE, (_, n) => toPx((parseFloat(n) / 100) * w))
         .replace(VH_INNER_RE, (_, n) => toPx((parseFloat(n) / 100) * simulatedVpHeight(w)));
-      out += `@container (min-width: ${w}px) and (max-width: ${w}px) {${resolvedBody}}\n`;
+      out += `@container ${desc ? drawnTileRange(w, desc) : `(min-width: ${w}px) and (max-width: ${w}px)`} {${resolvedBody}}\n`;
     }
     trace.action('responsive-units:container-block-resolved', { query: query.trim(), widths: matching });
     i = j;

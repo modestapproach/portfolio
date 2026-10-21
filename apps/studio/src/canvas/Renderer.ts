@@ -11,11 +11,13 @@ import { resolveActiveVariant, bandForTile, responsiveVariantForWidth } from './
 import { pinnedResolveWidth, viewportBandPinOps } from './resize/viewport-band-pin-store';
 import { extractStyleCSS } from '../code/parsing/parser';
 import type { ViewportConfig, CollectionItem, NodeOverride, FilterGroup, FilterConfig, SortConfig, OverlayConfig } from '@/shared/types';
+import { renderWidth } from '@/shared/types';
 import { resolveOverlayConfig } from '@/code/parsing/overlay-parser';
 import { trace, pauseDOMObserver, resumeDOMObserver } from '@/shared/debug-trace';
 import { jsxStyleToHTML, coerceCssNumberToPx, mergeStyleLayers } from '@/shared/css-utils';
 import { isSvgTag, isTextTag, WRAPPER_ONLY_STYLE_PROPS, isFitSize, isInlineLevelTag } from '@/shared/constants';
-import { resolveResponsiveUnits, resolveContainerQueryUnits } from '@/shared/responsive-units';
+import { resolveResponsiveUnits, resolveContainerQueryUnits, canvasFixedAnchor } from '@/shared/responsive-units';
+import { mediaToCanvasContainer } from '@/shared/canvas-band-queries';
 import { hasMotionTransformProp, motionPropsToCSSTransform, MOTION_TRANSFORM_PROPS } from '@/shared/motion-transform';
 import { simpleHash } from '@/shared/hash-utils';
 import { getOrCreateCanvasStyleEl, getActiveFilePath } from './node-ops';
@@ -28,9 +30,12 @@ import {
   setResponsiveBreakpoints, setIsComponentMaster, setAllViewportWidthsAsc,
 } from './renderer/responsive';
 import { positionOverlayInPortal, positionCanvasNodeOverlays, collectOverlayElsForRoot, rememberOverlayPlacements, classifyPortalChild, type OverlayPlacement } from './renderer/overlay-portals';
-import { applyStrokeAlignment, setElStyle, clearElStyle, resolveInstanceWrapperOverflow } from './renderer/style-apply';
+import { applyStrokeAlignment, setElStyle, clearElStyle, applyInstanceWrapperClipParity } from './renderer/style-apply';
 import { initCanvasImagePreview, isPreviewAppliedSrc } from './renderer/canvas-image-preview';
 import { applyNodeCmsBindings, applyBindingDataToTree, applyLocaleOverrides, clearLocaleStyleResidue } from './renderer/bindings';
+import { extractCanvasGlobals, canvasThemeMode } from './canvas-theme';
+import { isRtlLocale, RTL_TEXT_CSS } from '@/shared/rtl-text';
+import { scopeSvgMarkupIds, elementSvgScope } from '../shared/svg-id-scope';
 
 const SVG_NS = 'http://www.w3.org/2000/svg';
 
@@ -105,9 +110,8 @@ export function shouldClearEmptiedText(
 // but completely inert — no clicks, no hover, no text selection, nothing
 // reaches them. Without this rule any descendant whose template specifies
 // `pointer-events: auto` or `user-select: text` would punch through the
-// imperative ghost-root flags. The `data-cms-ghost` attribute is set only
-// on CMS-backed ghosts (NOT inline-map ghosts, which need to stay
-// selectable so the user can edit per-item data).
+// imperative ghost-root flags. The `data-cms-ghost` attribute is set on every
+// collection ghost (items 1+ of a CMS collection list).
 let _cmsGhostCSSInjected = false;
 function injectCmsGhostCSS() {
   if (_cmsGhostCSSInjected) return;
@@ -169,6 +173,14 @@ const VALID_TAGS = new Set([
 // patches, locale overrides, slot/wrapper decorations) are NOT covered by
 // the clear, by design.
 const _prevPatchedKeys = new WeakMap<HTMLElement, Set<string>>();
+// Inline style keys the CMS binding pass wrote on a TEMPLATE element in the
+// previous patch (`applyNodeCmsBindings` → `styleKeys`). Companion to
+// `_prevPatchedKeys`: the stale-clear above only reconciles what the style
+// pass wrote, so a bound `backgroundImage` that stopped being bound (× on the
+// Fill pill removes the key from the source) stayed painted on item 0 until a
+// page switch while the ghosts — rebuilt from the binding signature — went
+// clean (user report 2026-09-09).
+const _prevBoundStyleKeys = new WeakMap<HTMLElement, Set<string>>();
 
 // ─── Collection-list ghost binding signature ──────────────────────────────
 // Which CMS fields the template subtree is bound to, recorded on the list
@@ -571,7 +583,7 @@ function resolveConditionalText(
   node: CanvasNode,
   variantName?: string | null,
   vpWidth?: number,
-): string | null {
+): { text: string; rich: boolean } | null {
   if (!node.conditionalText) return null;
   if (vpWidth !== undefined) vpWidth = pinnedResolveWidth(node.id, vpWidth); // viewport-drag pin
   // A SPECIFIC per-viewport variant (page replica) WINS over the base variantName — see
@@ -599,7 +611,13 @@ function resolveConditionalText(
     variant = node.componentVariant;
   }
   if (!variant) return null;
-  return node.conditionalText[variant] ?? node.conditionalText['default'] ?? null;
+  if (node.conditionalText[variant] !== undefined) {
+    return { text: node.conditionalText[variant]!, rich: !!node.conditionalTextRich?.[variant] };
+  }
+  if (node.conditionalText['default'] !== undefined) {
+    return { text: node.conditionalText['default']!, rich: !!node.conditionalTextRich?.['default'] };
+  }
+  return null;
 }
 
 /**
@@ -607,9 +625,6 @@ function resolveConditionalText(
  * Root elements get `data-viewport` + `container-type: inline-size` directly (no wrapper).
  * Replica viewports are clones with prefixed IDs.
  */
-/** Locales whose script is right-to-left — drives the canvas `dir` attr
- *  (mirrored by the live site's Providers). Keyed by primary subtag. */
-const RTL_LOCALES = new Set(['ar', 'he', 'fa', 'ur', 'ps', 'sd', 'ku', 'dv', 'yi']);
 
 // ─── Subtree patch-skip signatures ──────────────────────────────────────────
 // Incremental subtree patching: every node gets a content signature that
@@ -668,7 +683,7 @@ function nodeSigEntry(
   if (cached) return cached;
   let childSigs = '';
   let dynamic = Boolean(
-    node.collectionList || node.inlineMapData || node.isCodeComponent ||
+    node.collectionList || node.isCodeComponent ||
     node.binding || node.attrBindings?.length || node.styleBindings?.length ||
     node.propBindings?.length || node.isCollectionTemplate,
   );
@@ -961,83 +976,13 @@ export function renderNodes(
     // re-apply the font), flashing custom-font text → FOUT on every pan/render.
     let fontsCSS = '';
     if (rawGlobalsCSS) {
-      const safeBlocks: string[] = [];
-      const fontFaceBlocks: string[] = [];
-      // Extract @import rules (typically Google Fonts) and keep them — without
-      // them the iframe falls back to default fonts even when the user's CSS
-      // references custom families. They MUST appear before any other rule
-      // per CSS spec, so we collect them up front and prepend at output time.
-      const fontImports: string[] = [];
-      const withoutImports = rawGlobalsCSS.replace(/@import\s+url\([^)]*\)[^;]*;/g, (match) => {
-        fontImports.push(match);
-        return '';
-      });
-      // Extract :root and [data-theme] blocks — scope them to canvas content
-      const rootRx = /:root\s*\{([^}]*)\}/gs;
-      let m;
-      while ((m = rootRx.exec(withoutImports)) !== null) {
-        // Scope to canvas content area so tokens don't leak to builder UI
-        safeBlocks.push(`[data-content-root] {${m[1]}}`);
-      }
-      // Also extract @keyframes (safe to include globally)
-      // Use brace-depth counting instead of regex (nested braces break regex)
-      {
-        const KF = '@keyframes';
-        let ki = 0;
-        while (ki < withoutImports.length) {
-          const kfStart = withoutImports.indexOf(KF, ki);
-          if (kfStart === -1) break;
-          let j = kfStart + KF.length;
-          while (j < withoutImports.length && withoutImports[j] !== '{') j++;
-          if (j >= withoutImports.length) break;
-          let depth = 1; j++;
-          while (j < withoutImports.length && depth > 0) {
-            if (withoutImports[j] === '{') depth++;
-            else if (withoutImports[j] === '}') depth--;
-            j++;
-          }
-          safeBlocks.push(withoutImports.slice(kfStart, j));
-          ki = j;
-        }
-      }
-      // Extract @font-face blocks (custom / workspace fonts). Safe to include
-      // globally — they only DECLARE a face for the iframe to resolve, they
-      // don't reset or style anything. Without this, text bound to a custom
-      // family falls back to a system font on the canvas even though the
-      // @font-face exists in globals.css. Brace-depth scan (same as
-      // @keyframes) so the single block is captured exactly.
-      {
-        const FF = '@font-face';
-        let fi = 0;
-        while (fi < withoutImports.length) {
-          const ffStart = withoutImports.indexOf(FF, fi);
-          if (ffStart === -1) break;
-          let j = ffStart + FF.length;
-          while (j < withoutImports.length && withoutImports[j] !== '{') j++;
-          if (j >= withoutImports.length) break;
-          let depth = 1; j++;
-          while (j < withoutImports.length && depth > 0) {
-            if (withoutImports[j] === '{') depth++;
-            else if (withoutImports[j] === '}') depth--;
-            j++;
-          }
-          fontFaceBlocks.push(withoutImports.slice(ffStart, j));
-          fi = j;
-        }
-      }
-      // Extract [data-theme] blocks
-      const themeRx = /\[data-theme[^\]]*\]\s*\{([^}]*)\}/gs;
-      while ((m = themeRx.exec(withoutImports)) !== null) {
-        safeBlocks.push(`[data-content-root] {${m[1]}}`);
-      }
-      // Tokens = :root vars + @keyframes + themes ONLY (NO fonts — those go to
-      // `fontsCSS` → the stable [data-canvas-fonts] sheet). This also makes the
-      // marker block match refreshCanvasTokens' regex (which never matched fonts),
-      // so live token updates stay in lockstep.
-      tokensCSS = safeBlocks.join('\n');
-      // @import MUST be the first rule in its sheet (CSS spec) → imports first,
-      // then @font-face declarations.
-      fontsCSS = [...fontImports, ...fontFaceBlocks].join('\n');
+      // Tokens = :root vars (+ the :root.dark values when the editor is in
+      // dark mode) + @keyframes + theme blocks ONLY — the same extractor
+      // refreshCanvasTokens() uses, so a live token update replaces exactly
+      // what was rendered. NEVER resets, body/html, a/img styles.
+      const lifted = extractCanvasGlobals(rawGlobalsCSS, canvasThemeMode());
+      tokensCSS = lifted.tokensCSS;
+      fontsCSS = lifted.fontsCSS;
     }
     // Tokens block contains :root vars, @keyframes, and theme blocks. Font
     // @imports were extracted separately above (they MUST appear before any
@@ -1131,18 +1076,26 @@ export function renderNodes(
     // hover effects only show during the CSS Hover editor preview, not on normal canvas hover (which is
     // used for selection). Both transforms apply to the carried component CSS too — its @media rules must
     // become @container, otherwise an instance's responsive resolves against the whole canvas window.
-    let canvasCSS = pageCSSClean ? pageCSSClean.replace(/@media\s*\(/g, '@container (') : '';
+    // A page whose tiles are drawn at their range's START (`designWidth`: start-model pages, Framer
+    // imports) gets its width queries re-expressed in the DRAWN-width ladder — the container
+    // measures inside the root's padding, which dropped such a tile into the next band down (see
+    // canvas-band-queries.ts). Classic pages keep the plain rename.
+    const drawnLadder = (viewports ?? []).some((v) => renderWidth(v) !== v.width)
+      ? (viewports ?? []).map((v) => renderWidth(v)).filter((w) => Number.isFinite(w) && w > 0).sort((a, b) => a - b)
+      : null;
+    let canvasCSS = pageCSSClean ? mediaToCanvasContainer(pageCSSClean, drawnLadder) : '';
     canvasCSS = canvasCSS.replace(/:hover\s*\{/g, '[data-hover-preview]{');
-    let componentAfterCSS = componentAfterCSSRaw
-      .replace(/@media\s*\(/g, '@container (')
+    let componentAfterCSS = mediaToCanvasContainer(componentAfterCSSRaw, drawnLadder)
       .replace(/:hover\s*\{/g, '[data-hover-preview]{');
     // Resolve vw/vh INSIDE the @container blocks per matching tile width —
     // native CSS would resolve them against the iframe window, so a
     // `clamp(…vw…) !important` override painted the same (huge) size on every
     // tile and beat the correctly-resolved inline merge. Blocks matching
     // multiple tiles are duplicated per width. See responsive-units.ts.
-    canvasCSS = resolveContainerQueryUnits(canvasCSS, _allViewportWidthsAsc);
-    componentAfterCSS = resolveContainerQueryUnits(componentAfterCSS, _allViewportWidthsAsc);
+    // (Drawn-ladder pages resolve against each tile's DRAWN width.)
+    const unitWidths = drawnLadder ?? _allViewportWidthsAsc;
+    canvasCSS = resolveContainerQueryUnits(canvasCSS, unitWidths, { drawnLadder: !!drawnLadder });
+    componentAfterCSS = resolveContainerQueryUnits(componentAfterCSS, unitWidths, { drawnLadder: !!drawnLadder });
     // Component master → drop all responsive @container blocks so the inline base/desktop styles win on
     // every variant tile (the `!important` @container rules would otherwise resolve against each narrow
     // tile and collapse the text to the smallest breakpoint). Pairs with `_isComponentMaster` short-
@@ -1250,19 +1203,32 @@ export function renderNodes(
     }
   }
 
-  // ─── Locale: set lang (+ dir for RTL scripts) on content root ─────────
+  // ─── Locale: set lang on content root; RTL scripts flip TEXT only ─────
+  // Never `dir="rtl"` here: on the content root it mirrored every flex row,
+  // grid and default alignment while absolute nodes kept their physical
+  // `left` — a half-mirrored page (user report 2026-10-16) whose drag/reorder
+  // math (left-to-right visual order) no longer matched what it painted. The
+  // layout never mirrors; the text rule (shared/rtl-text.ts) keys off `lang`,
+  // so an RTL DEFAULT locale gets the attribute too.
   _activeRenderLocale = activeLocale ?? '';
   const isNonDefaultLocale = activeLocale && defaultLocale && activeLocale !== defaultLocale;
-  if (isNonDefaultLocale) {
-    container.setAttribute('lang', activeLocale);
-    // RTL by locale code (closed set — avoids threading the i18n config
-    // through the sandbox bridge; matches the live Providers' rule).
-    if (RTL_LOCALES.has(activeLocale.split('-')[0])) container.setAttribute('dir', 'rtl');
-    else container.removeAttribute('dir');
-    trace.action('renderer:set-lang', { locale: activeLocale, rtl: RTL_LOCALES.has(activeLocale.split('-')[0]) });
+  const shownLocale = isNonDefaultLocale ? activeLocale : (isRtlLocale(defaultLocale) ? defaultLocale : '');
+  if (shownLocale) {
+    container.setAttribute('lang', shownLocale);
+    trace.action('renderer:set-lang', { locale: shownLocale, rtlText: isRtlLocale(shownLocale) });
   } else {
     container.removeAttribute('lang');
-    container.removeAttribute('dir');
+  }
+  // Pre-fix canvases carried the attribute on the live content root.
+  container.removeAttribute('dir');
+  {
+    let rtlEl = container.querySelector(':scope > [data-canvas-rtl-text]') as HTMLStyleElement | null;
+    if (!rtlEl) {
+      rtlEl = document.createElement('style');
+      rtlEl.setAttribute('data-canvas-rtl-text', 'true');
+      rtlEl.textContent = RTL_TEXT_CSS;
+      container.prepend(rtlEl);
+    }
   }
 
   // ─── Viewports: root IS the viewport frame (no wrapper) ───────────────
@@ -1289,6 +1255,10 @@ export function renderNodes(
 
     // For each viewport, we render root directly with viewport attributes.
     // The root element IS the viewport frame.
+    // Responsive values resolve at the width the tile is DRAWN at — what a window that wide shows,
+    // and what its container queries paint. A start-model breakpoint is drawn at its start
+    // (designWidth) while its `width` is its range's end; keyed lookups bucket up to the end.
+    const tileWidth = renderWidth(vp);
     for (const rootNode of viewportRoots) {
       const prefixedId = prefix + rootNode.id;
       let rootEl = container.querySelector(`[data-node-id="${prefixedId}"]`) as HTMLElement | null;
@@ -1318,10 +1288,10 @@ export function renderNodes(
         // from messages/{locale}.json by Canvas.tsx) is the only source of
         // visible copy, including in the default locale. Without this the
         // transformed nodes render empty when the user switches back to EN.
-        patchElement(rootEl, rootNode, nodes, onNodeMouseDown, prefix, variantName, undefined, localeOverrides, vp.width);
+        patchElement(rootEl, rootNode, nodes, onNodeMouseDown, prefix, variantName, undefined, localeOverrides, tileWidth);
       } else {
         // NEW — create root element
-        rootEl = buildNodeElement(rootNode, nodes, onNodeMouseDown, prefix, variantName, undefined, '', localeOverrides, vp.width);
+        rootEl = buildNodeElement(rootNode, nodes, onNodeMouseDown, prefix, variantName, undefined, '', localeOverrides, tileWidth);
         container.appendChild(rootEl);
       }
 
@@ -1354,7 +1324,7 @@ export function renderNodes(
       let masterFitWidth = false;
       let masterHugWidth = false;
       if (isComponentMaster && variantName !== undefined) {
-        const rwv = resolveVariantStyles(rootNode, variantName, vp.width).width ?? rootNode.styles?.width;
+        const rwv = resolveVariantStyles(rootNode, variantName, tileWidth).width ?? rootNode.styles?.width;
         masterFitWidth = isFitSize(rwv);
         masterHugWidth = !rwv || rwv === 'auto';
       }
@@ -1376,7 +1346,14 @@ export function renderNodes(
       // zoom (= blurry zoom). Instead, TransformManager dynamically sets
       // will-change while a scale change is in flight and clears it on
       // debounce so Chrome re-rasterizes at the new scale.
-      if (vp.width > 0 && !isComponentMaster) rootEl.style.width = `${vp.width}px`;
+      // The tile renders at its DESIGN width when it has one — the band it
+      // represents can be wider than the canvas it was drawn on (a phone band
+      // reaching 809px designed at 390). Such a tile sits at the BOTTOM of its
+      // band, and the container measures inside the root's padding/border — so
+      // its queries are re-expressed in the drawn-width ladder (drawnLadder
+      // below, canvas-band-queries.ts), where each tile's range tops out at its
+      // drawn width.
+      if (vp.width > 0 && !isComponentMaster) rootEl.style.width = `${renderWidth(vp)}px`;
       // Optional viewport height — three cases, all sourced from the
       // @canvas block via SizeTool:
       //   • numeric (e.g. 900) → write `height: '900px'`
@@ -1404,7 +1381,7 @@ export function renderNodes(
       // to its content. No-op when the root is in normal flow (the
       // wrapper already grows to fit its child).
       if (isComponentMaster && variantName !== undefined) {
-        const resolved = resolveVariantStyles(rootNode, variantName, vp.width);
+        const resolved = resolveVariantStyles(rootNode, variantName, tileWidth);
         const rootPosition = resolved.position || rootNode.styles?.position;
         if (rootPosition === 'absolute' || rootPosition === 'fixed') {
           if (resolved.width) rootEl.style.width = resolved.width;
@@ -1424,7 +1401,8 @@ export function renderNodes(
         if (masterHugWidth) rootEl.style.width = 'max-content';
       }
       // Store viewport width as data attribute for VW/VH resolution in patchElement
-      rootEl.setAttribute('data-viewport-width', String(vp.width));
+      // vw/vh resolve against what the tile is actually drawn at.
+      rootEl.setAttribute('data-viewport-width', String(renderWidth(vp)));
     }
   }
 
@@ -1465,7 +1443,7 @@ export function renderNodes(
         portal.style.position = 'absolute';
         portal.style.left = `${vp.x}px`;
         portal.style.top = `${vp.y}px`;
-        portal.style.width = `${vp.width}px`;
+        portal.style.width = `${renderWidth(vp)}px`;
         portal.style.height = '0';
         portal.style.zIndex = '20';
         portal.style.pointerEvents = 'none';
@@ -1481,7 +1459,7 @@ export function renderNodes(
         // Update portal position to match viewport
         portal.style.left = `${vp.x}px`;
         portal.style.top = `${vp.y}px`;
-        portal.style.width = `${vp.width}px`;
+        portal.style.width = `${renderWidth(vp)}px`;
         portal.style.containerType = 'inline-size'; // (idempotent — heals portals from older sessions)
       }
 
@@ -1518,7 +1496,7 @@ export function renderNodes(
           // modal covers ~100vh, like it will on the deployed site.
           const vpH = typeof vp.height === 'number' && vp.height > 0
             ? vp.height
-            : (vp.width >= 1024 ? 900 : vp.width >= 600 ? 1024 : 812);
+            : (renderWidth(vp) >= 1024 ? 900 : renderWidth(vp) >= 600 ? 1024 : 812);
           el.style.height = `${vpH}px`;
           // Config-driven backdrop (live, so panel edits show immediately): fill +
           // zIndex come from data-overlay, falling back to the defaults the
@@ -1588,10 +1566,16 @@ export function renderNodes(
         if (_isComponentMaster) {
           // Component variant: `getResponsiveOverridesForNode` bails for masters; resolve
           // the per-variant hide (`hiddenOnVariants`) instead. Here `vp.id` IS the variant.
+          // The PRIMARY tile's `vp.id` is the viewport id ('desktop'), not the
+          // variant name — the node pass maps it to 'default' (see `variantName`
+          // above). Passing `vp.id` raw asked `hiddenOnVariants.has('desktop')`,
+          // so a hide synced onto every variant hid the hover tile but the
+          // primary kept showing the overlay (live find 2026-09-06).
+          const tileVariant = isPrimary ? 'default' : vp.id;
           const ovNode = nodes.get(overlaySrcId);
-          if (ovNode) hideThisTile = resolveVariantStyles(ovNode, vp.id, vp.width).display === 'none';
+          if (ovNode) hideThisTile = resolveVariantStyles(ovNode, tileVariant, renderWidth(vp)).display === 'none';
         } else {
-          hideThisTile = getResponsiveOverridesForNode(overlaySrcId, vp.width).display === 'none';
+          hideThisTile = getResponsiveOverridesForNode(overlaySrcId, renderWidth(vp)).display === 'none';
         }
         if (hideThisTile) el.style.setProperty('display', 'none', 'important');
         else el.style.removeProperty('display');
@@ -1946,9 +1930,15 @@ const GHOST_OWN_ATTRS = new Set(['data-node-id', 'data-collection-ghost', 'style
  * Bound values are unaffected — `applyBindingDataToTree` runs immediately after
  * this and rewrites them per row.
  */
-function syncInlineStyles(templateEl: HTMLElement, ghostEl: HTMLElement): void {
+export function syncInlineStyles(templateEl: HTMLElement, ghostEl: HTMLElement): void {
   const copyPair = (tEl: HTMLElement, gEl: HTMLElement) => {
-    gEl.style.cssText = tEl.style.cssText;
+    // A drag-locked template node carries the LIFT geometry (position/left/
+    // top/zIndex at the cursor) as inline style. Copying that onto the ghost
+    // would fling every ghost's copy of the node to the lifted spot; the
+    // ghost keeps its own last-synced styles until the drop.
+    if (!_dragLockedNodeIds.has(tEl.getAttribute('data-id') ?? '')) {
+      gEl.style.cssText = tEl.style.cssText;
+    }
     for (const attr of Array.from(tEl.attributes)) {
       if (GHOST_OWN_ATTRS.has(attr.name)) continue;
       if (gEl.getAttribute(attr.name) !== attr.value) gEl.setAttribute(attr.name, attr.value);
@@ -2052,7 +2042,7 @@ function syncBgVideoChild(hostEl: HTMLElement, bgVideo: CanvasNode['bgVideo']): 
   }
 }
 
-function patchElement(
+export function patchElement(
   el: HTMLElement,
   node: CanvasNode,
   allNodes: Map<string, CanvasNode>,
@@ -2120,6 +2110,13 @@ function patchElement(
   // commit path got here (mutation-queue → setCode → re-render). Without
   // this the lifted-time computed font/color values would persist on the
   // element forever, even though the user never set them in JSX.
+  // A lift that never went through restoreNode (strategy handoff, cancelled
+  // gesture on a reused element) must not leave the lift markers behind:
+  // `data-lift-inline-snapshot` now also gates the sandbox's ghost mirroring
+  // (ghostFanOutAllowed), so a stale marker would silently freeze ghost
+  // updates for that node (review find 2026-09-09).
+  if (el.hasAttribute('data-lift-inline-snapshot')) el.removeAttribute('data-lift-inline-snapshot');
+  if (el.hasAttribute('data-lift-tracked-keys')) el.removeAttribute('data-lift-tracked-keys');
   const preservedAttr = el.getAttribute('data-lift-preserved-props');
   if (preservedAttr) {
     for (const k of preservedAttr.split(',')) {
@@ -2204,19 +2201,18 @@ function patchElement(
       el.style.removeProperty(prop);
     }
 
-    // Mirror the component ROOT's clipping overflow onto the wrapper (the
-    // wrapper is the real flex item — see resolveInstanceWrapperOverflow's
-    // rationale). Resolved through variants/@media so a per-variant or
-    // per-viewport overflow edit is honoured per tile. An instance-tag
-    // overflow (rare, user-set) still wins: the styleEntries patch loop below
-    // allow-lists `overflow` and runs after this.
+    // The wrapper never clips — it would cut the ROOT's own box-shadow, which
+    // the live site's single div never does. When the root clips, the wrapper
+    // (the real flex item) takes its min-size effect instead: min-width/height
+    // 0. Resolved through variants/@media so a per-variant or per-viewport
+    // overflow edit is honoured per tile. See applyInstanceWrapperClipParity.
     const wrapperRootNode = node.children[0] ? allNodes.get(node.children[0]) : null;
     const wrapperRootStyles = wrapperRootNode ? resolveVariantStyles(wrapperRootNode, variantName, vpWidth) : null;
-    const wrapperOverflow = resolveInstanceWrapperOverflow(wrapperRootStyles);
-    if (el.style.overflow !== wrapperOverflow) {
-      trace.dom('renderer:instance-wrapper-overflow', { nodeId: node.id, overflow: wrapperOverflow });
+    const hadMinParity = el.dataset.rvMinW === '1';
+    const rootClips = applyInstanceWrapperClipParity(el, wrapperRootStyles);
+    if (rootClips !== hadMinParity) {
+      trace.dom('renderer:instance-wrapper-min-parity', { nodeId: node.id, rootClips });
     }
-    el.style.overflow = wrapperOverflow;
     const root = el.firstElementChild as HTMLElement | null;
     if (root) {
       // If wrapper has no explicit dimension OF ITS OWN, take the component
@@ -2355,7 +2351,10 @@ function patchElement(
         // painting the literal `auto` here would stomp it back to a
         // collapsing box.
         if ((key === 'width' || key === 'height') && value === 'auto') return false;
-        if (key === 'width' || key === 'height' || key === 'overflow') return true;
+        // No `overflow`: the instance's own overflow lives on the ROOT (the
+        // expandComponent merge, like `...style` live) — on the wrapper it
+        // would clip the root's shadow. See applyInstanceWrapperClipParity.
+        if (key === 'width' || key === 'height') return true;
         // `display: 'none'` from `hiddenOnVariants` MUST reach the wrapper so a
         // hidden instance is removed from layout (not just its inner content) —
         // otherwise the wrapper keeps its box: still in flow AND selectable on
@@ -2438,6 +2437,17 @@ function patchElement(
   for (const [key, v] of styleEntries) {
     if (v !== '' && readStyle(key) !== coerceCssNumberToPx(key, v)) setElStyle(el, key, v);
   }
+  // A `fixed` node lives inside ONE viewport height on a real screen; the
+  // canvas turned it into `absolute`, which measures `bottom` from the bottom
+  // of the whole page. Re-anchor it to the top of the tile so the dock floats
+  // over the hero instead of sitting past the footer.
+  {
+    const anchor = canvasFixedAnchor(resolvedStyles as Record<string, string>, vpWidthPx);
+    if (anchor) {
+      for (const [key, v] of Object.entries(anchor)) setElStyle(el, key, v);
+      trace.dom('renderer:canvas-fixed-anchor', { nodeId: node.id, top: anchor.top });
+    }
+  }
 
   // BLOCKIFY the inner root of an instance. On the live site the component's
   // single element IS the flex/grid item — or is absolutely positioned — and
@@ -2480,8 +2490,25 @@ function patchElement(
 
   // Apply bindings from collection data (overrides base styles/text for template
   // item 0), honoring per-viewport rebind / unbind→default at vpWidth.
-  if (bindingData) {
-    applyNodeCmsBindings(el, node, bindingData, vpWidth, variantName, { skipHref: true });
+  {
+    const boundNow = bindingData
+      ? applyNodeCmsBindings(el, node, bindingData, vpWidth, variantName, { skipHref: true }).styleKeys
+      : [];
+    // BOUND-KEY STALE-CLEAR: a key the binding pass owned last patch but not
+    // now — and that the model's own styles don't set either — must go, or the
+    // last bound value (e.g. the row-0 image url) lingers on the template.
+    const prevBound = _prevBoundStyleKeys.get(el);
+    if (prevBound) {
+      const nowSet = new Set(boundNow);
+      for (const k of prevBound) {
+        if (nowSet.has(k)) continue;
+        if ((resolvedStyles as Record<string, unknown>)[k] !== undefined && (resolvedStyles as Record<string, unknown>)[k] !== '') continue;
+        clearElStyle(el, k);
+        trace.dom('renderer:bound-style-stale-clear', { nodeId: node.id, idPrefix, key: k });
+      }
+    }
+    if (boundNow.length > 0) _prevBoundStyleKeys.set(el, new Set(boundNow));
+    else if (prevBound) _prevBoundStyleKeys.delete(el);
   }
 
   // Patch HTML attributes (neutralize href on canvas — links must not navigate in the editor)
@@ -2561,7 +2588,9 @@ function patchElement(
   if (node.graphicMarkup !== undefined && isSvgTag(node.type)) {
     if ((el as HTMLElement & { __graphicMarkup?: string }).__graphicMarkup !== node.graphicMarkup) {
       try {
-        el.innerHTML = node.graphicMarkup;
+        // Ids are scoped per element so a culled (display:none) copy of the same
+        // graphic can't steal this one's clipPath/mask refs. See svg-id-scope.
+        el.innerHTML = scopeSvgMarkupIds(node.graphicMarkup, elementSvgScope(el));
         (el as HTMLElement & { __graphicMarkup?: string }).__graphicMarkup = node.graphicMarkup;
         trace.dom('renderer:patch-graphic-markup', { nodeId: node.id, length: node.graphicMarkup.length });
       } catch (err) {
@@ -2592,13 +2621,25 @@ function patchElement(
 
   // Per-variant text: a `{variant === 'x' ? 'a' : 'b'}` child is captured by
   // the parser into `node.conditionalText`; pick the active variant's text.
+  // The literal contract is PER-BRANCH: a rich branch (authored JSX runs)
+  // must render its markup, a plain branch — even on a node whose other
+  // branches are rich — keeps the pasted-source-stays-escaped guarantee.
+  // Without this, a plain-default node's rich variant painted its SOURCE as
+  // literal text on the tile (live find 2026-09-05).
+  let effectiveTextIsLiteral = node.textIsLiteral;
   const variantText = resolveConditionalText(node, variantName, vpWidth);
-  if (variantText !== null) resolvedTextContent = variantText;
+  if (variantText !== null) {
+    resolvedTextContent = variantText.text;
+    effectiveTextIsLiteral = !variantText.rich;
+  }
   // Per-VIEWPORT text override on a replica tile (template/page): the inline `{__mq ? branch : base}`
   // child evaluates against the editor WINDOW, so the canvas resolves it per tile. Takes precedence
   // over base/variant text (an active CMS binding still wins via the `hasActiveTextBinding` guard below).
   const responsiveText = getResponsiveTextValueForNode(node, vpWidth);
-  if (responsiveText !== undefined) resolvedTextContent = responsiveText;
+  if (responsiveText !== undefined) {
+    resolvedTextContent = responsiveText;
+    effectiveTextIsLiteral = node.textIsLiteral;
+  }
   // RICH-TEXT locale runs: a mixed node whose inner JSX carries {t('key')}
   // run calls renders the locale-RESOLVED innerJsx from the override map —
   // the raw source would paint the literal `{t('…')}` markup.
@@ -2621,7 +2662,7 @@ function patchElement(
   const hasActiveTextBinding = !!(bindingData && node.binding
     && node.binding.property === 'text'
     && bindingData[node.binding.field] !== undefined);
-  const useInnerHTML = shouldUseInnerHTML(node.type, resolvedTextContent, node.hasMixedContent, node.children.length, node.isChildrenSlot, node.textIsLiteral);
+  const useInnerHTML = shouldUseInnerHTML(node.type, resolvedTextContent, node.hasMixedContent, node.children.length, node.isChildrenSlot, effectiveTextIsLiteral);
   if (useInnerHTML && !hasActiveTextBinding) {
     try {
       const html = jsxStyleToHTML(resolvedTextContent);
@@ -2675,10 +2716,7 @@ function patchElement(
   // handle them so that adding/removing items in the data array is reflected.
   if (node.collectionList) {
     const { source, templateIds } = node.collectionList;
-    const isInlineMap = source.startsWith('__inline:');
-    const rawData = isInlineMap
-      ? (node.inlineMapData || [])
-      : getCollectionData(source);
+    const rawData = getCollectionData(source);
     // Resolve the active variant the SAME way as applyNodeCmsBindings: artboard
     // variantName → instance per-viewport variant → baked componentVariant. Then
     // applyChainConfig merges base ← per-viewport ← per-variant config overrides.
@@ -2719,35 +2757,6 @@ function patchElement(
         tplEl0.removeAttribute('data-collection-empty-hidden');
         trace.action('renderer:collection-template-unhidden', { nodeId: node.id, templateId: __tplId });
       }
-    }
-
-    // Ensure ghost-select event delegation is attached on the collection parent.
-    // This runs on every patch (not just rebuild) so even preserved ghosts get the handler.
-    if (isInlineMap && !el.hasAttribute('data-ghost-delegated')) {
-      el.setAttribute('data-ghost-delegated', 'true');
-      el.addEventListener('mousedown', (e) => {
-        // Walk up from target to find a ghost root
-        let target = e.target as HTMLElement | null;
-        while (target && target !== el) {
-          if (target.hasAttribute('data-collection-ghost')) {
-            // Extract ghost index from data-node-id suffix
-            const nodeId = target.getAttribute('data-node-id') || '';
-            const match = nodeId.match(/__(\d+)$/);
-            if (match) {
-              const ghostIndex = parseInt(match[1], 10);
-              const tplId = target.getAttribute('data-id') || '';
-              const ghostEvent = new CustomEvent('revyme:ghost-select', {
-                detail: { ghostIndex, templateId: tplId },
-                bubbles: true,
-              });
-              document.dispatchEvent(ghostEvent);
-              trace.action('renderer:ghost-select-delegated', { ghostIndex, templateId: tplId });
-            }
-            return;
-          }
-          target = target.parentElement;
-        }
-      }, true); // capture phase
     }
 
     // If ghost count matches, patch template + update ghost styles from binding data
@@ -2892,21 +2901,9 @@ function patchElement(
         const ghostEl = buildNodeElement(
           templateNode, allNodes, onNodeMouseDown, idPrefix, variantName, bindingItem, ghostSuffix, localeOverrides, vpWidth,
         );
-        if (isInlineMap) {
-          const ghostIdx = i;
-          ghostEl.addEventListener('mousedown', (e) => {
-            const ghostEvent = new CustomEvent('revyme:ghost-select', {
-              detail: { ghostIndex: ghostIdx, templateId: templateNode.id },
-              bubbles: true,
-            });
-            ghostEl.dispatchEvent(ghostEvent);
-            trace.action('renderer:ghost-select', { ghostIndex: ghostIdx, templateId: templateNode.id });
-          }, true);
-        } else {
-          // CMS-backed ghost — see the buildNodeElement path; same rule.
-          injectCmsGhostCSS();
-          ghostEl.setAttribute('data-cms-ghost', 'true');
-        }
+        // CMS-backed ghost — see the buildNodeElement path; same rule.
+        injectCmsGhostCSS();
+        ghostEl.setAttribute('data-cms-ghost', 'true');
         ghostEl.setAttribute('data-collection-ghost', 'true');
         // Insert after previous ghost (or template for first ghost)
         if (insertAfterEl?.nextSibling) {
@@ -2939,9 +2936,7 @@ function patchElement(
       placeholder.style.color = '#888';
       placeholder.style.fontSize = '13px';
       placeholder.style.fontFamily = 'system-ui, sans-serif';
-      placeholder.textContent = isInlineMap
-        ? `No items in ${source.replace('__inline:', '')}`
-        : `No items in ${source}`;
+      placeholder.textContent = `No items in ${source}`;
       el.appendChild(placeholder);
     }
   }
@@ -3511,7 +3506,7 @@ function buildNodeElement(
       // Outer wrapper allow-list: positioning + dimensions + overflow, PLUS
       // `display:'none'` from hiddenOnVariants so a hidden instance is removed
       // from layout (not just its inner content). See the patchElement filter.
-      const wrapperAllowed = key === 'width' || key === 'height' || key === 'overflow'
+      const wrapperAllowed = key === 'width' || key === 'height'
         || (key === 'display' && value === 'none')
         || WRAPPER_ONLY_STYLE_PROPS.has(key);
       if (!wrapperAllowed) continue;
@@ -3541,6 +3536,14 @@ function buildNodeElement(
     const isOverlayPosKey = !!node.attrs?.['data-overlay']
       && (key === 'top' || key === 'left' || key === 'right' || key === 'bottom');
     if (!isOverlayPosKey) buildPatchedKeys.add(key);
+  }
+  // Same re-anchor as patchElement, for the FIRST paint (see canvasFixedAnchor).
+  {
+    const anchor = canvasFixedAnchor(resolvedStyles as Record<string, string>, buildVpWidthPx);
+    if (anchor) {
+      for (const [key, v] of Object.entries(anchor)) { setElStyle(el, key, v); buildPatchedKeys.add(key); }
+      trace.dom('renderer:canvas-fixed-anchor-build', { nodeId: node.id, top: anchor.top });
+    }
   }
   if (buildPatchedKeys.size > 0) {
     _prevPatchedKeys.set(el, buildPatchedKeys);
@@ -3574,17 +3577,12 @@ function buildNodeElement(
       if (!el.style.height && !node.styles.height && buildWrapperRootStyles.height) {
         el.style.height = buildWrapperRootStyles.height;
       }
-      // Mirror the root's clipping overflow on the FIRST paint too (same
-      // rationale as the patchElement path — the wrapper is the flex item, so
-      // its overflow decides the automatic minimum size / collapse parity with
-      // the deployed single-div instance). Instance-tag overflow (applied by
-      // the build style loop above) wins when present.
-      if (!el.style.overflow && !node.styles.overflow) {
-        const buildRootOverflow = resolveInstanceWrapperOverflow(resolveVariantStyles(rootNode, variantName, vpWidth));
-        if (buildRootOverflow !== 'visible') {
-          el.style.overflow = buildRootOverflow;
-          trace.dom('renderer:instance-wrapper-overflow-build', { nodeId: node.id, overflow: buildRootOverflow });
-        }
+      // Clip parity on the FIRST paint too (same rationale as the patchElement
+      // path): the wrapper never clips, and takes the root's min-size effect
+      // when the root clips. An instance-set min bound (applied by the build
+      // style loop above) is left alone.
+      if (applyInstanceWrapperClipParity(el, buildWrapperRootStyles)) {
+        trace.dom('renderer:instance-wrapper-min-parity-build', { nodeId: node.id });
       }
     }
   }
@@ -3629,7 +3627,8 @@ function buildNodeElement(
   // graphicMarkup injection (see there for why innerHTML, not child nodes).
   if (node.graphicMarkup !== undefined && isSvg) {
     try {
-      el.innerHTML = node.graphicMarkup;
+      // Per-element id scoping — see the patch path / svg-id-scope.
+      el.innerHTML = scopeSvgMarkupIds(node.graphicMarkup, elementSvgScope(el));
       (el as HTMLElement & { __graphicMarkup?: string }).__graphicMarkup = node.graphicMarkup;
       trace.dom('renderer:build-graphic-markup', { nodeId: node.id, length: node.graphicMarkup.length });
     } catch (err) {
@@ -3656,10 +3655,17 @@ function buildNodeElement(
     // precedence — same order patchElement applies. It was MISSING from this
     // build chain entirely: the first paint showed primary text on replica
     // tiles until any later patch pass re-resolved it.
+    const buildCond = resolveConditionalText(node, variantName, vpWidth);
     const buildText = localeOverrides?.get(node.id)?.innerJsx
-      ?? getResponsiveTextValueForNode(node, vpWidth) ?? resolveConditionalText(node, variantName, vpWidth)
+      ?? getResponsiveTextValueForNode(node, vpWidth) ?? (buildCond !== null ? buildCond.text : null)
       ?? getTextOverrideBucketValue(node, vpWidth) ?? node.textContent;
-    const buildUseInnerHTML = shouldUseInnerHTML(node.type, buildText, node.hasMixedContent, node.children.length, node.isChildrenSlot, node.textIsLiteral);
+    // Same per-branch literal contract as patchElement: the conditional
+    // branch's own richness decides, but only when IT is what won the chain.
+    const buildCondWon = buildCond !== null
+      && localeOverrides?.get(node.id)?.innerJsx == null
+      && getResponsiveTextValueForNode(node, vpWidth) === undefined;
+    const buildTextIsLiteral = buildCondWon ? !buildCond!.rich : node.textIsLiteral;
+    const buildUseInnerHTML = shouldUseInnerHTML(node.type, buildText, node.hasMixedContent, node.children.length, node.isChildrenSlot, buildTextIsLiteral);
     if (buildUseInnerHTML) {
       try {
         el.innerHTML = jsxStyleToHTML(buildText);
@@ -3727,11 +3733,7 @@ function buildNodeElement(
   // (already built above as a normal child), items 1+ = ghost copies.
   if (node.collectionList) {
     const { source, templateIds } = node.collectionList;
-    // Inline maps (from const arrays) use '__inline:varName' as source
-    const isInlineMap = source.startsWith('__inline:');
-    const rawData = isInlineMap
-      ? (node.inlineMapData || [])
-      : getCollectionData(source);
+    const rawData = getCollectionData(source);
     // Resolve the active variant the SAME way as applyNodeCmsBindings: artboard
     // variantName → instance per-viewport variant → baked componentVariant. Then
     // applyChainConfig merges base ← per-viewport ← per-variant config overrides.
@@ -3739,7 +3741,7 @@ function buildNodeElement(
     // (`__listVariant ?? undefined` below normalizes the null fallback exactly as the old `?? undefined`.)
     const __listVariant = resolveActiveVariant(node, { vpWidth, variant: variantName });
     const data = applyChainConfig(rawData as CollectionItem[], node.collectionList, vpWidth, __listVariant ?? undefined);
-    const schema = isInlineMap ? null : getCollectionSchema(source);
+    const schema = getCollectionSchema(source);
     const hasLayouts = !!(schema?.layouts && schema.layouts.length > 1);
 
     trace.action('renderer:collection-list', {
@@ -3766,9 +3768,7 @@ function buildNodeElement(
       placeholder.style.color = '#888';
       placeholder.style.fontSize = '13px';
       placeholder.style.fontFamily = 'system-ui, sans-serif';
-      placeholder.textContent = isInlineMap
-        ? `No items in ${source.replace('__inline:', '')}`
-        : `No items in ${schema?.name || source}`;
+      placeholder.textContent = `No items in ${schema?.name || source}`;
       el.appendChild(placeholder);
       trace.action('renderer:collection-empty-placeholder', { nodeId: node.id, source });
     } else {
@@ -3778,8 +3778,6 @@ function buildNodeElement(
       for (let i = 0; i < data.length; i++) {
         const item = data[i];
         const isTemplate = i === 0;
-        // Cast inline map items to CollectionItem for binding resolution
-        // (they lack _id/_slug but the binding resolver only reads field keys)
         const bindingItem = item as CollectionItem;
 
         // Resolve which template to use for this item (supports per-item layouts)
@@ -3791,7 +3789,7 @@ function buildNodeElement(
 
         if (!templateNode) {
           trace.error('renderer:collection-template-not-found', {
-            nodeId: node.id, source, index: i, itemId: isInlineMap ? `inline-${i}` : item._id,
+            nodeId: node.id, source, index: i, itemId: item._id,
           });
           continue;
         }
@@ -3812,7 +3810,7 @@ function buildNodeElement(
           }
           lastInsertedEl = templateEl;
           trace.action('renderer:collection-template-rendered', {
-            nodeId: templateNode.id, source, itemId: isInlineMap ? `inline-0` : item._id, index: 0,
+            nodeId: templateNode.id, source, itemId: item._id, index: 0,
           });
         } else {
           // Ghost copies — insert right after template/previous ghost
@@ -3820,23 +3818,11 @@ function buildNodeElement(
           const ghostEl = buildNodeElement(
             templateNode, nodes, onNodeMouseDown, idPrefix, variantName, bindingItem, ghostSuffix, localeOverrides, vpWidth,
           );
-          if (isInlineMap) {
-            const ghostIdx = i;
-            ghostEl.addEventListener('mousedown', (e) => {
-              const ghostEvent = new CustomEvent('revyme:ghost-select', {
-                detail: { ghostIndex: ghostIdx, templateId: templateNode.id },
-                bubbles: true,
-              });
-              ghostEl.dispatchEvent(ghostEvent);
-              trace.action('renderer:ghost-select', { ghostIndex: ghostIdx, templateId: templateNode.id });
-            }, true);
-          } else {
-            // CMS-backed ghost — locked out via the data-cms-ghost CSS rule
-            // (covers descendants too, survives patch cycles, no opacity fade).
-            // Setting the attribute is enough; no inline style writes here.
-            injectCmsGhostCSS();
-            ghostEl.setAttribute('data-cms-ghost', 'true');
-          }
+          // CMS-backed ghost — locked out via the data-cms-ghost CSS rule
+          // (covers descendants too, survives patch cycles, no opacity fade).
+          // Setting the attribute is enough; no inline style writes here.
+          injectCmsGhostCSS();
+          ghostEl.setAttribute('data-cms-ghost', 'true');
           ghostEl.setAttribute('data-collection-ghost', 'true');
           if (lastInsertedEl?.nextSibling) {
             el.insertBefore(ghostEl, lastInsertedEl.nextSibling);
@@ -3845,7 +3831,7 @@ function buildNodeElement(
           }
           lastInsertedEl = ghostEl;
           trace.action('renderer:collection-ghost-rendered', {
-            nodeId: templateNode.id, source, itemId: isInlineMap ? `inline-${i}` : item._id, index: i,
+            nodeId: templateNode.id, source, itemId: item._id, index: i,
             ghostId: templateNode.id + ghostSuffix,
           });
         }

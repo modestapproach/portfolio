@@ -440,3 +440,79 @@ describe('mergeVariantPinStyles', () => {
     expect(base.right).toBe('40px');
   });
 });
+
+describe('calculateAlignment — motion-shorthand centred node (x/y channel)', () => {
+  // A design-component element pinned via motion shorthands (`x/y: '-50%'`),
+  // as the rotation commit stores it. The CSS-string recipe on top of that
+  // doubled the translate (live find 2026-09-05: bar landed half a width left).
+  const elem = { width: 200, height: 100 };
+  const parent = { width: 600, height: 400 };
+  const sh = { left: '10%', top: '50%', x: '-50%', y: '-50%' };
+
+  test('center-h → left 50% + x:-50%, NO transform key', () => {
+    const u = calculateAlignment('center-h', sh, elem, parent);
+    expect(u).toEqual({ left: '50%', right: '', x: '-50%' });
+    expect('transform' in u).toBe(false);
+  });
+  test('left → centre-point % + x:-50%, untouched y', () => {
+    const u = calculateAlignment('left', sh, elem, parent);
+    expect(u).toEqual({ left: '16.6667%', right: '', x: '-50%' });
+  });
+  test('center-v → top 50% + y:-50%', () => {
+    expect(calculateAlignment('center-v', sh, elem, parent)).toEqual({ top: '50%', bottom: '', y: '-50%' });
+  });
+  test('a case that REMOVES the axis translate clears the shorthand (x: "")', () => {
+    // vertical inset + left pinned → string recipe would drop translateX
+    const s = { left: '0px', top: '20px', bottom: '20px', x: '-50%', y: '-50%' };
+    const u = calculateAlignment('center-h', s, elem, parent);
+    expect(u.x).toBe('');
+    expect('transform' in u).toBe(false);
+  });
+  test('string-centred nodes are byte-identical to before', () => {
+    expect(calculateAlignment('center-h', {}, elem, parent))
+      .toEqual({ left: '50%', right: '', transform: 'translateX(-50%)' });
+  });
+});
+
+// ─── rotated element: align by the PAINTED box (2026-09-08) ─────────────────
+// A 1119×75.9 bar rotated 90° inside a 1119×671 frame: its painted box is
+// 75.9×1119. Every horizontal alignment used to write left: 0 (layout width ==
+// parent width), and the top-aligned box sat half outside (translateY(-50%)).
+describe('calculateAlignment — rotated element aligns its painted box', () => {
+  const parent = { width: 1119, height: 671 };
+  const painted = { width: 75.9, height: 1119 }; // elementRect = rotated AABB
+  const styles = { position: 'absolute', width: '1119px', height: '75.9px', left: '112px', top: '610px', transform: 'translateY(-50%) rotate(90deg)' };
+  const w = 1119, h = 75.9;
+  const dxC = (painted.width - w) / 2;   // −521.55
+  const dyC = (painted.height - h) / 2;  // +521.55
+  const ty = -h / 2;                     // translateY(-50%)
+  const px = (v: string) => parseFloat(v);
+
+  test('right: the painted right edge lands on the parent right edge', () => {
+    const u = calculateAlignment('right', styles, painted, parent);
+    const left = px(u.left);
+    expect(left).toBeCloseTo(parent.width - painted.width + dxC, 1);
+    // painted left = left − dxC → painted right = that + painted.width == parent width
+    expect(left - dxC + painted.width).toBeCloseTo(parent.width, 1);
+    expect(u.transform).toBeUndefined(); // px pin keeps the transform untouched
+  });
+  test('left / center-h are distinct and correct', () => {
+    expect(px(calculateAlignment('left', styles, painted, parent).left) - dxC).toBeCloseTo(0, 1);
+    const c = px(calculateAlignment('center-h', styles, painted, parent).left);
+    expect(c - dxC + painted.width / 2).toBeCloseTo(parent.width / 2, 1);
+  });
+  test('top honours the translateY(-50%) so the painted top touches the parent top', () => {
+    const top = px(calculateAlignment('top', styles, painted, parent).top);
+    // painted top = top − dyC + ty
+    expect(top - dyC + ty).toBeCloseTo(0, 1);
+  });
+  test('bottom: painted bottom on the parent bottom', () => {
+    const top = px(calculateAlignment('bottom', styles, painted, parent).top);
+    expect(top - dyC + ty + painted.height).toBeCloseTo(parent.height, 1);
+  });
+  test('an unrotated element is unchanged by the new math', () => {
+    const plain = { position: 'absolute', width: '200px', height: '100px', left: '10px', top: '10px' };
+    expect(calculateAlignment('right', plain, { width: 200, height: 100 }, { width: 1000, height: 500 })).toEqual({ left: '800px' });
+    expect(calculateAlignment('center-h', plain, { width: 200, height: 100 }, { width: 1000, height: 500 })).toEqual({ left: '400px' });
+  });
+});

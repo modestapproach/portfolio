@@ -38,6 +38,9 @@ import { getEffectsForPage, setPageEffectForPage, removePageEffectForPage, route
 import { applyPreset } from '@/code/generation/view-transition-css';
 import { isHomeRoute, type PageEffect } from '@/code/project/page-effects-config';
 import PageEffectPopup from '../PageEffectTool/PageEffectPopup';
+import SmoothScrollPopup from './SmoothScrollPopup';
+import { getSmoothScrollForPage, setSmoothScrollForPage, removeSmoothScrollForPage } from '@/code/project/smooth-scroll-ops';
+import { createDefaultSmoothScroll, type SmoothScrollConfig } from '@/code/project/smooth-scroll-config';
 import { ScrollVariantEditor } from './motion/ScrollVariantEditor';
 import { getScrollVariant, scrollVariantPresentOn, scrollVariantIsOverride, hasScrollVariantTargetScope, hideScrollVariantOn, resetScrollVariantScope, type ScrollVariantSpec, ensureComponentAcceptsRef } from '@/code/generation/scroll-variant-gen';
 import { getInstanceFx, resetTransformScope, hasTransformScope, resetFxValueScope, hasFxValueScope, resetSpeedScope, hasSpeedScope, instanceFxNeedsRef, instanceFxPresentOn, instanceFxIsOverride, addInstanceFxScope, hideInstanceFxOn, resetInstanceFxScope, type InstanceFxSpec, type FxKey } from '@/code/generation/instance-fx-gen';
@@ -51,7 +54,7 @@ import { getActiveAnimationScope, resolveResponsiveMotionProp } from './animatio
 import { getSortedBreakpointWidths, activeComponentVariantAtom } from '@/code/stores/viewport-store';
 import TextEffectPopup from './motion/TextEffectPopup';
 import { getTextAnimForNode } from '@/code/parsing/text-anim-parser';
-import { DEFAULT_TEXT_ANIM, hasTextAnimScope, resetTextAnimScope, type TextAnimConfig, type TextAnimScope } from './motion/text-anim-presets';
+import { DEFAULT_TEXT_ANIM, hasTextAnimScope, resetTextAnimScope, resolveTextAnimForScope, setTextAnimScoped, textAnimPresentOn, type TextAnimConfig, type TextAnimScope } from './motion/text-anim-presets';
 import { consumeAnchorOverride } from '../../controls/unified/UsedByRow';
 import { isTextTag } from '@/shared/constants';
 import { LocalizeGate } from '@/editor/controls/localize-gate';
@@ -237,6 +240,22 @@ export default function AnimationTool({ styles: s, onUpdate, glideOnly }: Props)
     removePageEffectForPage(activePageFile, target);
     setProjVersion((v) => v + 1);
     if (activePopup === 'pageTransition:' + target) setActivePopup(null);
+  };
+  // ─── Smooth Scroll (Lenis) — page-level like Page Transition, one setting per page.
+  const smoothScroll = (glideOnly && activePageFile) ? getSmoothScrollForPage(activePageFile) : null;
+  // The popup's `config` is only its INITIAL draft (it owns the live values),
+  // so the memoized popup must not rebuild on every committed tick.
+  const smoothScrollOpen = !!smoothScroll?.own;
+  const commitSmoothScroll = (cfg: SmoothScrollConfig) => {
+    if (!activePageFile) return;
+    setSmoothScrollForPage(activePageFile, cfg);
+    setProjVersion((v) => v + 1);
+  };
+  const removeSmoothScroll = () => {
+    if (!activePageFile) return;
+    removeSmoothScrollForPage(activePageFile);
+    setProjVersion((v) => v + 1);
+    if (activePopup === 'smoothScroll') setActivePopup(null);
   };
   const allTextAnims = useAtomValue(textAnimCallsAtom);
   const cssHoverStyles = useAtomValue(cssHoverStylesAtom);
@@ -535,8 +554,13 @@ export default function AnimationTool({ styles: s, onUpdate, glideOnly }: Props)
     const textAnim = getTextAnimForNode(allTextAnims, nodeId);
     if (textAnim) {
       const taScope = getActiveAnimationScope() as TextAnimScope | null;
-      entries.push({ type: 'textEffect', summary: textAnim.config.animationType, key: 'textEffect',
-        data: { ...textAnim, isOverride: hasTextAnimScope(textAnim.config, taScope) } });
+      // Presence is PER SCOPE: a tile where the effect is disabled shows no
+      // row — and, through `existingTypes`, gets Text Effect back in its Add
+      // menu. Same model as appear/hover/loop.
+      if (textAnimPresentOn(textAnim.config, taScope)) {
+        entries.push({ type: 'textEffect', summary: textAnim.config.animationType, key: 'textEffect',
+          data: { ...textAnim, isOverride: hasTextAnimScope(textAnim.config, taScope) || !!textAnim.config.disabled } });
+      }
     }
 
     // CSS
@@ -588,6 +612,8 @@ export default function AnimationTool({ styles: s, onUpdate, glideOnly }: Props)
   // instead of updateMotionProp. One `data-instance-fx` spec per instance; every write
   // merges into it.
   const isInstance = !!node?.componentFile;
+  const pasteSourceAnim = useAtomValue(copiedAnimationAtom);
+  const pasteTargets = useAtomValue(selectedIdsAtom);
   const writeInstanceFx = useCallback((mutate: (spec: InstanceFxSpec) => InstanceFxSpec) => {
     const cur = getInstanceFx(code, nodeId) || {};
     const next = mutate({ ...cur });
@@ -702,6 +728,14 @@ export default function AnimationTool({ styles: s, onUpdate, glideOnly }: Props)
         // so siblings glide smoothly when one resizes (e.g. an accordion opening).
         queueMutation({ type: 'updateGlide', nodeId, spec: { transition: { type: 'spring', duration: '0.5', bounce: '0.25', delay: '0' } } });
         setActivePopup('glide'); break;
+      case 'smoothScroll': {
+        if (activePageFile) {
+          setSmoothScrollForPage(activePageFile, createDefaultSmoothScroll());
+          setProjVersion((v) => v + 1);
+          setActivePopup('smoothScroll');
+        }
+        break;
+      }
       case 'pageTransition': {
         // Page Transition (View Transitions) — page-level enter/exit. Seeds a
         // crossfade effect + opens its editor. Default target = 'all' on the
@@ -734,9 +768,30 @@ export default function AnimationTool({ styles: s, onUpdate, glideOnly }: Props)
         queueMutation({ type: 'updateLoop', nodeId, spec: { props: { rotate: '360' }, transition: { duration: '2', repeat: 'Infinity', ease: 'linear' }, ...(lscope ? { scope: [lscope] } : {}) } });
         setActivePopup('loop'); break;
       }
-      case 'textEffect':
-        queueMutation({ type: 'addTextAnim', nodeId, config: { ...DEFAULT_TEXT_ANIM } });
+      case 'textEffect': {
+        // Scoped existence (parity with appear/hover/loop, 2026-09-05):
+        //  - base already exists but is off HERE → flip this scope on
+        //  - fresh add on a replica/variant → base disabled + this scope on,
+        //    so the effect exists ONLY where it was added
+        //  - fresh add on the primary → plain base, everywhere (unchanged)
+        const taScope = getActiveAnimationScope() as TextAnimScope | null;
+        const existing = getTextAnimForNode(allTextAnims, nodeId);
+        if (existing) {
+          const view = { ...resolveTextAnimForScope(existing.config, taScope), disabled: false };
+          expediteStableAtomSync();
+          queueMutation({ type: 'updateTextAnim', nodeId, config: taScope
+            ? setTextAnimScoped(existing.config, view, taScope)
+            : { ...existing.config, disabled: false } });
+        } else if (taScope) {
+          queueMutation({ type: 'addTextAnim', nodeId, config: {
+            ...DEFAULT_TEXT_ANIM, disabled: true,
+            responsive: [{ scope: taScope, config: { disabled: false } }],
+          } });
+        } else {
+          queueMutation({ type: 'addTextAnim', nodeId, config: { ...DEFAULT_TEXT_ANIM } });
+        }
         setActivePopup('textEffect'); break;
+      }
       case 'scrollTransform':
         if (isInstance) { addInstanceFx('transform', { transform: { from: { opacity: 0.5, scale: 0.5 }, to: { opacity: 1, scale: 1 } } }); setActivePopup('scrollTransform'); break; }
         // Scroll Transform = SCRUBBED From→To tied to scroll progress. Its own
@@ -749,7 +804,7 @@ export default function AnimationTool({ styles: s, onUpdate, glideOnly }: Props)
           // Adding on a replica scopes the transform to THAT tile (no scrub off-scope) via
           // the spec; on Desktop/primary it's a base transform (the original direct path).
           if (tScope) writeScrollFx((sp) => ({ ...sp, transform: { trigger: 'onScroll', from, to, transition, scope: [tScope] } }));
-          else queueMutation({ type: 'updateScrollAnim', config: { nodeId, trigger: 'onScroll', stops: [{ progress: 0, props: from }, { progress: 1, props: to }], transition } });
+          else { expediteStableAtomSync(); queueMutation({ type: 'updateScrollAnim', config: { nodeId, trigger: 'onScroll', stops: [{ progress: 0, props: from }, { progress: 1, props: to }], transition } }); }
         }
         setActivePopup('scrollTransform'); break;
       case 'scrollSpeed':
@@ -796,7 +851,7 @@ export default function AnimationTool({ styles: s, onUpdate, glideOnly }: Props)
         break;
       }
     }
-  }, [nodeId, onUpdate, setKeyframeSheet, bumpKeyframes, s.transition, isInstance, writeInstanceFx, addInstanceFx]);
+  }, [nodeId, onUpdate, setKeyframeSheet, bumpKeyframes, s.transition, isInstance, writeInstanceFx, addInstanceFx, allTextAnims]);
 
   const handleRemove = useCallback((type: AnimEntryType, entry?: DetectedEntry) => {
     trace.action('animation:remove', { nodeId, type });
@@ -868,8 +923,26 @@ export default function AnimationTool({ styles: s, onUpdate, glideOnly }: Props)
         }
         break;
       }
-      case 'textEffect':
-        queueMutation({ type: 'removeTextAnim', nodeId }); break;
+      case 'textEffect': {
+        // X on a replica/variant disables the effect for THAT scope only —
+        // it used to strip the whole node's animation from every tile
+        // (live ask 2026-09-05). X on the primary removes for real, except
+        // when a scope was explicitly (re-)enabled there: then the base goes
+        // disabled and the enabled scopes live on ("add only on mobile").
+        const taScope = getActiveAnimationScope() as TextAnimScope | null;
+        const existing = getTextAnimForNode(allTextAnims, nodeId);
+        if (taScope && existing) {
+          const view = { ...resolveTextAnimForScope(existing.config, taScope), disabled: true };
+          expediteStableAtomSync();
+          queueMutation({ type: 'updateTextAnim', nodeId, config: setTextAnimScoped(existing.config, view, taScope) });
+        } else if (existing?.config.responsive?.some((r) => r.config.disabled === false)) {
+          expediteStableAtomSync();
+          queueMutation({ type: 'updateTextAnim', nodeId, config: { ...existing.config, disabled: true } });
+        } else {
+          queueMutation({ type: 'removeTextAnim', nodeId });
+        }
+        break;
+      }
       case 'glide':
         queueMutation({ type: 'removeGlide', nodeId }); break;
       case 'scrollTransform':
@@ -884,7 +957,7 @@ export default function AnimationTool({ styles: s, onUpdate, glideOnly }: Props)
       case 'keyframe': {
         const anims = parseAnimationShorthand(s.animation || '');
         for (const anim of anims) {
-          if (anim.keyframeName) queueMutation({ type: 'removeKeyframes', name: anim.keyframeName });
+          if (anim.keyframeName) { expediteStableAtomSync(); queueMutation({ type: 'removeKeyframes', name: anim.keyframeName }); }
         }
         flushNow();
         refreshCanvasTokens();
@@ -949,6 +1022,7 @@ export default function AnimationTool({ styles: s, onUpdate, glideOnly }: Props)
       const ta = getTextAnimForNode(allTextAnims, nodeId);
       if (ta) {
         trace.action('animation:reset-override', { nodeId, type: 'textEffect', scope });
+        expediteStableAtomSync();
         queueMutation({ type: 'updateTextAnim', nodeId, config: resetTextAnimScope(ta.config, scope as TextAnimScope) });
         setActivePopup(null);
         return;
@@ -969,6 +1043,14 @@ export default function AnimationTool({ styles: s, onUpdate, glideOnly }: Props)
   const popup = useMemo(() => {
     if (!activePopup || !node) return null;
     // Page Transition (View Transitions) — the editor popup for one effect.
+    if (activePopup === 'smoothScroll') {
+      const cfg = smoothScroll?.own;
+      if (!cfg) return null;
+      return {
+        title: 'Smooth Scroll',
+        content: <SmoothScrollPopup config={cfg} onChange={commitSmoothScroll} />,
+      };
+    }
     if (activePopup.startsWith('pageTransition:')) {
       const target = activePopup.slice('pageTransition:'.length);
       const eff = pageEffects.find((e) => e.target === target);
@@ -1071,7 +1153,7 @@ export default function AnimationTool({ styles: s, onUpdate, glideOnly }: Props)
         return { title: 'Text',
           content: <TextEffectPopup key={nodeId} nodeId={nodeId} config={currentConfig}
             scope={getActiveAnimationScope() as TextAnimScope | null}
-            onChange={(cfg) => queueMutation({ type: 'updateTextAnim', nodeId, config: cfg })} /> };
+            onChange={(cfg) => { expediteStableAtomSync(); queueMutation({ type: 'updateTextAnim', nodeId, config: cfg }); }} /> };
       }
       case 'transition': {
         const trans = parseTransitionShorthand(s.transition || '');
@@ -1094,9 +1176,10 @@ export default function AnimationTool({ styles: s, onUpdate, glideOnly }: Props)
       default:
         return null;
     }
-  }, [activePopup, node, nodeId, detected, allTextAnims, cssHoverStyles, writeInstanceFx, pageEffects, pageTargetOptions]);
+  }, [activePopup, node, nodeId, detected, allTextAnims, cssHoverStyles, writeInstanceFx, pageEffects, pageTargetOptions, smoothScrollOpen]);
 
   const handleCreateKeyframe = useCallback((kfName: string) => {
+    expediteStableAtomSync();
     queueMutation({ type: 'updateKeyframes', name: kfName, css: formatKeyframes(createDefaultKeyframeAnimation(kfName)) });
     onUpdate('animation', formatAnimationShorthand([{ ...createDefaultAnimation(), keyframeName: kfName }]));
     flushNow();
@@ -1108,10 +1191,41 @@ export default function AnimationTool({ styles: s, onUpdate, glideOnly }: Props)
 
   if (!node) return null;
 
+  // "Paste <Kind>" in the + menu: the copied animation is applicable here when
+  // its kind can be written on this node through the clipboard's own write
+  // path — a text effect needs a text node; the motion-prop kinds (appear /
+  // hover / tap) are written as whileX/initial, which an instance root doesn't
+  // take (instances go through instance-fx). Fans out over the selection like
+  // the row-level Paste Style.
+  const pasteApplicable = !!pasteSourceAnim && (
+    pasteSourceAnim.kind === 'textEffect'
+      ? isTextTag(node.type)
+      : !isInstance && !isOverlayNode && !glideOnly
+  );
+  const pasteItem = pasteApplicable && pasteSourceAnim ? {
+    label: pasteSourceAnim.label,
+    onClick: () => {
+      const copied = pasteSourceAnim;
+      const targets = pasteTargets.length > 0 ? pasteTargets : [nodeId];
+      trace.action('anim-clipboard:paste-from-add-menu', { kind: copied.kind, count: targets.length });
+      expediteStableAtomSync();
+      for (const id of targets) {
+        const target = id === nodeId ? node : getNodeFromCache(id);
+        applyCopiedAnimation(copied, id, target);
+        // A fresh Appear (no enter state on the target yet) needs the
+        // once-only viewport trigger the + Appear path writes.
+        if (copied.kind === 'appear' && !target?.motionProps?.initial) {
+          queueMutation({ type: 'updateMotionProp', nodeId: id, propName: 'viewport', props: { once: 'true' } });
+        }
+      }
+    },
+  } : null;
+
   return (
     <LocalizeGate hidden>
-      <ToolSection title="Animation" collapsible hasContent={detected.length > 0 || pageEffects.length > 0}
-        action={<AddEffectDropdown onAdd={handleAdd} existing={existingTypes} isTextNode={!!node && isTextTag(node.type)}
+      <ToolSection title="Animation" collapsible hasContent={detected.length > 0 || pageEffects.length > 0 || !!smoothScroll?.own}
+        action={<AddEffectDropdown onAdd={handleAdd} existing={smoothScroll?.own ? new Set([...existingTypes, 'smoothScroll'] as any) : existingTypes} isTextNode={!!node && isTextTag(node.type)}
+          pasteItem={pasteItem}
           isComponentInstance={!!node?.componentFile}
           appearOnly={isOverlayNode}
           glideOnly={glideOnly}
@@ -1251,6 +1365,21 @@ export default function AnimationTool({ styles: s, onUpdate, glideOnly }: Props)
                 </ToolRow>,
               );
             });
+            // Smooth Scroll row (viewport only) — the config authored on this page.
+            if (smoothScroll?.own) {
+              const own = smoothScroll.own;
+              out.push(
+                <ToolRow key="smooth-scroll" label="Scroll">
+                  <ControlActionRow className="!pr-2" onClick={() => setActivePopup('smoothScroll')}>
+                    <span className="flex items-center justify-center w-5 h-5 rounded shrink-0" style={{ backgroundColor: 'var(--accent)' }}>
+                      <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="var(--accent-fg)" strokeWidth="2.5" strokeLinecap="round"><path d="M12 4v16M7 15l5 5 5-5" /></svg>
+                    </span>
+                    <span className="truncate flex-1">{own.enabled ? `Smooth · ${own.intensity}` : 'Smooth · Off'}</span>
+                    <RemoveButton onClick={removeSmoothScroll} />
+                  </ControlActionRow>
+                </ToolRow>,
+              );
+            }
             return out;
           })()}
         </div>

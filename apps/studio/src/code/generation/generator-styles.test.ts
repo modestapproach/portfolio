@@ -4,7 +4,7 @@ import {
   updateContainerQueryStyle, updateVariantStyleInCode, setConditionalStyleInCode,
   rewriteResponsiveBreakpoints, addResponsiveBreakpoint, removeResponsiveBreakpoint,
   setConditionalOrderInCode, clearContainerStylesInSubtree,
-  rewriteContainerBreakpoints, clearContainerStylesForNode,
+  rewriteContainerBreakpoints, clearContainerStylesForNode, removeScopedChildRulesInCode,
 } from './generator-styles';
 import { updateNodeInCode } from './generator-crud';
 import { parseJSXToNodes } from '../parsing/parser';
@@ -1854,5 +1854,140 @@ describe('band re-serialization preserves NON-band top-level rules (the vanished
     expect(out).toContain('select[data-id="interest-select"]');
     expect(out).toContain('@keyframes pulse-x');
     expect(out).not.toContain('padding: 24px !important');
+  });
+
+  // A component instance's children get render-time ids of the form
+  // `<instanceId>:<childId>`. They are not in the instance's JSX, so deleting the
+  // instance is the only chance to shed their rules.
+  const INSTANCE_PAGE = `export default function Page() {
+  return (
+    <div data-id="root">
+      <style>{\`
+    @media (max-width: 810px) {
+      [data-id="frame-mu84qri4-1"] { display: none !important; }
+      [data-id="frame-mu84qri4-1:header-root"] { flex-direction: column !important; }
+      [data-id="frame-mu84qri4-1:header-nav"] { display: none !important; }
+      [data-id="keep-me"] { gap: 4px !important; }
+    }
+  \`}</style>
+    </div>
+  );
+}`;
+
+  test('clearContainerStylesForNode leaves instance-scoped child rules alone by default', () => {
+    const out = clearContainerStylesForNode(INSTANCE_PAGE, 'frame-mu84qri4-1');
+    expect(out).not.toContain('[data-id="frame-mu84qri4-1"]');
+    expect(out).toContain('[data-id="frame-mu84qri4-1:header-root"]');
+  });
+
+  test('clearContainerStylesForNode sheds instance-scoped child rules when asked', () => {
+    const out = clearContainerStylesForNode(INSTANCE_PAGE, 'frame-mu84qri4-1', true);
+    expect(out).not.toContain('frame-mu84qri4-1');
+    expect(out).toContain('[data-id="keep-me"]');
+  });
+
+  // The prefix must be the full id plus ':' — never a bare startsWith, or deleting
+  // `hero` would take `hero-title` with it.
+  test('clearContainerStylesForNode does not eat ids that merely share a prefix', () => {
+    const page = INSTANCE_PAGE.replace('[data-id="keep-me"]', '[data-id="frame-mu84qri4-11"]');
+    const out = clearContainerStylesForNode(page, 'frame-mu84qri4-1', true);
+    expect(out).toContain('[data-id="frame-mu84qri4-11"]');
+    expect(out).not.toContain('[data-id="frame-mu84qri4-1:header-nav"]');
+  });
+
+  test('removeScopedChildRulesInCode sheds pseudo/hover rules an instance child owned', () => {
+    const page = `export default function Page() {
+  return (
+    <div data-id="root">
+      <style>{\`
+    [data-id="inst-1:link"]:hover { color: red; }
+    [data-id="inst-1:field"]::placeholder {
+      color: #999;
+      opacity: 1;
+    }
+    [data-id="inst-1"]:hover { color: blue; }
+    [data-id="inst-11:other"]:hover { color: green; }
+    [data-id="keep"]:hover { color: black; }
+  \`}</style>
+    </div>
+  );
+}`;
+    const out = removeScopedChildRulesInCode(page, 'inst-1');
+    expect(out).not.toContain('inst-1:link');
+    expect(out).not.toContain('inst-1:field');
+    // Multi-line decl blocks come out whole — no orphaned tail.
+    expect(out).not.toContain('opacity: 1');
+    // The instance's OWN rule is the exact-selector removers' job, not this one.
+    expect(out).toContain('[data-id="inst-1"]:hover');
+    // A longer id that merely shares the prefix is untouched.
+    expect(out).toContain('inst-11:other');
+    expect(out).toContain('[data-id="keep"]:hover');
+  });
+});
+
+// PRUNING AN AUTHORED BRANCH IS NOT LOSS-FREE.
+//
+// `setConditionalOrderInCode` drops branches equal to the default to stop dead
+// `v1 ? 1 : 1` accumulating. Applied to an ALREADY-AUTHORED branch that is
+// only momentarily equal, it converts "Tablet is pinned at 3" into "Tablet
+// inherits Desktop" — so the NEXT primary reorder drags Tablet along. The user
+// saw exactly that: first primary drag fine, second one moved Tablet
+// (2026-09-19).
+describe('setConditionalOrderInCode — authored branches survive coinciding with the default', () => {
+  const el = (order: string) => `export default function C({ initialVariant = 'default' }) {
+  return (
+    <div data-id="root" style={{ display: 'flex' }}>
+      <div data-id="a" style={{ order: ${order} }}>A</div>
+    </div>
+  );
+}`;
+  const orderOf = (code: string) => {
+    const m = code.match(/data-id="a"[\s\S]*?order:\s*([^,\n}]+)/);
+    return m ? m[1].trim() : '-';
+  };
+
+  test('keeps a variant branch when the new default happens to equal it', () => {
+    const src = el("initialVariant === 'variant-1' ? 3 : 1");
+    const out = setConditionalOrderInCode(src, 'a', { default: 3 });
+    expect(orderOf(out)).toContain("initialVariant === 'variant-1' ? 3");
+  });
+
+  // The regression itself: after the collapse, a later default change dragged
+  // the variant with it.
+  test('a later default change does NOT move the variant', () => {
+    const src = el("initialVariant === 'variant-1' ? 3 : 1");
+    const once = setConditionalOrderInCode(src, 'a', { default: 3 });
+    const twice = setConditionalOrderInCode(once, 'a', { default: 5 });
+    expect(orderOf(twice)).toContain("initialVariant === 'variant-1' ? 3");
+    expect(orderOf(twice)).toContain(': 5');
+  });
+
+  test('several authored branches all survive', () => {
+    const src = el("initialVariant === 'variant-1' ? 2 : initialVariant === 'variant-2' ? 4 : 1");
+    const out = setConditionalOrderInCode(src, 'a', { default: 4 });
+    const o = orderOf(out);
+    expect(o).toContain("'variant-1' ? 2");
+    expect(o).toContain("'variant-2' ? 4");
+  });
+
+  // The behaviour the pruning exists for is preserved: a branch this call is
+  // INTRODUCING that equals the default is still dropped, so repeated no-op
+  // reorders don't accumulate dead branches.
+  test('still drops a NEW branch that equals the default', () => {
+    const src = el("'1'");
+    const out = setConditionalOrderInCode(src, 'a', { default: 2, 'variant-1': 2 });
+    expect(orderOf(out)).toBe("'2'");
+  });
+
+  test('a new branch that DIFFERS from the default is written', () => {
+    const src = el("'1'");
+    const out = setConditionalOrderInCode(src, 'a', { default: 2, 'variant-1': 5 });
+    expect(orderOf(out)).toContain("'variant-1' ? 5");
+    expect(orderOf(out)).toContain(': 2');
+  });
+
+  test('a plain order with no branches still collapses to a quoted literal', () => {
+    const out = setConditionalOrderInCode(el("'1'"), 'a', { default: 3 });
+    expect(orderOf(out)).toBe("'3'");
   });
 });

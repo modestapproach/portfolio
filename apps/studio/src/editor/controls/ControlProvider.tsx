@@ -1,3 +1,21 @@
+
+/** Does this variant entry own the value the live patch is about to write?
+ *
+ * Matching on the KEY ALONE misses the transform family, because the two speak
+ * different channels: the Transform popup writes the CSS string `transform`,
+ * while a variant stores its rotation as the motion prop `rotate` (and scale /
+ * skew / x / y likewise). So a tile with `variants['variant-1'].rotate` was not
+ * recognised as owning `transform`, and a drag of the DEFAULT tile's Rotate
+ * slider spun every tile with it, restoring only on release (user report
+ * 2026-09-20). Either spelling of the same thing counts as ownership. */
+export function variantOwnsKey(entry: Record<string, unknown> | undefined, key: string): boolean {
+  if (!entry) return false;
+  const owns = (k: string) => entry[k] != null && entry[k] !== '';
+  if (owns(key)) return true;
+  if (key === 'transform') return [...MOTION_TRANSFORM_PROPS].some(owns);
+  if (MOTION_TRANSFORM_PROPS.has(key)) return owns('transform');
+  return false;
+}
 // ControlProvider.tsx — Centralized control context for property tools.
 //
 // Provides: value reading, style writing (inline vs container query routing),
@@ -7,7 +25,7 @@
 // that was duplicated across every tool in PropertiesPanel.
 
 import { createContext, useContext, useCallback, useMemo, useRef, type ReactNode } from 'react';
-import { useAtomValue, useSetAtom } from 'jotai';
+import { useAtomValue } from 'jotai';
 // Live nodes — the panel must show the current parent (for parentLayout /
 // parentFlexDirection / parent-relative child controls) the moment a
 // reparent commits mid-drag. The freeze fix lives at the parser-atom level.
@@ -15,20 +33,22 @@ import { useAtomValue, useSetAtom } from 'jotai';
 // whole-map `useAtomValue(nodesAtom)` read: same live data, but the provider
 // only re-renders when a node/result it actually uses changes. Callbacks read
 // fresh via `getNodesSnapshot()`.
-import { selectedNodeAtom, selectedIdsAtom, mapItemIndexAtom, mapContextAtom, isComponentInstanceInCache, getNodesSnapshot } from '@/code/stores/store';
+import { selectedNodeAtom, selectedIdsAtom, isComponentInstanceInCache, getNodesSnapshot } from '@/code/stores/store';
 import { useNode, useLiveNode, useNodesComputed } from '@/code/stores/node-family';
-import { isReplicaViewportAtom, interactingViewportWidthAtom, interactingViewportIdAtom, isComponentVariantViewportAtom, activeComponentVariantAtom } from '@/code/stores/viewport-store';
+import { isReplicaViewportAtom, interactingViewportWidthAtom, interactingViewportRenderWidthAtom, interactingViewportIdAtom, isComponentVariantViewportAtom, activeComponentVariantAtom } from '@/code/stores/viewport-store';
 import { resolveParentVariantStyle } from './parent-variant-style';
 import { containerOverridesAtom, getOverrideBreakpoints, hasOverrideAtWidth, getOverridesAtWidth, clearShorthandSupersededLonghands, overrideAliasKeys } from '@/code/stores/container-query-store';
+import { renderCodeComponentStyleLive } from '@/canvas/CodeComponentHost';
 import { isDefaultLocaleAtom, localeOverridesAtom } from '@/code/stores/locale-store';
 import { queueMutation, flushNow } from '@/code/mutation/mutation-queue';
 import { removeComponentPropProjectWide } from '@/code/features/remove-component-prop';
-import { propagateToGhosts } from '@/code/generation/map-ghost-propagate';
 import { updateNodeStyles, getContentRoot, getViewportPrefix, forceCanvasRender, parseRectCacheKey, vpIdFromPrefix } from '@/canvas/node-ops';
 import { getCanvasBridge } from '@/canvas/canvas-bridge';
-import { makeGhostId } from '@/shared/ghost-id';
 import { detectValueSource, BORDER_LONGHANDS, type ValueSource } from '@/code/features/variable-ops';
 import { isComponentFileAtom } from '@/code/stores/store';
+import { activeFilePathAtom } from '@/code/project/active-file-store';
+import { isIconSetFilePath } from '@/code/project/file-path-kind';
+import { MOTION_TRANSFORM_PROPS } from '@/shared/motion-transform';
 import { pageVariablesAtom } from '@/code/stores/page-variables-store';
 import { defaultForType, pageVariableTypeForProperty, isConditionalDisplayProperty, conditionalBranchesFor } from '@/code/features/page-variables';
 import { styleControlVariableSpec } from './control-variable-type';
@@ -103,15 +123,6 @@ export interface ControlContextValue {
    *  also drops the prop from the component signature; the controls-panel × keeps it. */
   removeVariable: (property: string, propName: string, defaultValue: string, deleteProp?: boolean) => void;
 
-  /** Map item override context (null when not editing a ghost) */
-  mapOverride: {
-    itemIndex: number;
-    itemCount: number;
-    isOverridden: (property: string) => boolean;
-    resetOverride: (property: string) => void;
-    goToItem: (index: number | null) => void;
-  } | null;
-
   /**
    * CMS-collection-template context. Non-null when the selected node is
    * inside a `.map()` over a CMS collection. Drives the "Bind to Field"
@@ -164,6 +175,9 @@ export function ControlProvider({ children }: { children: ReactNode }) {
   const vpId = useAtomValue(interactingViewportIdAtom);
   const isReplica = useAtomValue(isReplicaViewportAtom);
   const vpWidth = useAtomValue(interactingViewportWidthAtom);
+  // Per-breakpoint VALUE ranges are judged at the width the tile is DRAWN at (a start-model
+  // breakpoint's start); `vpWidth` stays the KEY its overrides are stored under.
+  const drawnWidth = useAtomValue(interactingViewportRenderWidthAtom);
   const overrides = useAtomValue(containerOverridesAtom);
   // Component master variants: parallel to `isReplica`/`overrides` for
   // pages but sourced from `motionVariants[variantName]` instead of
@@ -177,11 +191,8 @@ export function ControlProvider({ children }: { children: ReactNode }) {
   const isDefaultLocale = useAtomValue(isDefaultLocaleAtom);
   const localeOverrides = useAtomValue(localeOverridesAtom);
 
-  const mapItemIndex = useAtomValue(mapItemIndexAtom);
-  const mapContext = useAtomValue(mapContextAtom);
-  const setMapItemIndex = useSetAtom(mapItemIndexAtom);
-
   const isComponentFile = useAtomValue(isComponentFileAtom);
+  const isIconSetFile = isIconSetFilePath(useAtomValue(activeFilePathAtom) ?? '');
   const pageVariables = useAtomValue(pageVariablesAtom);
 
   // LIVE cache-first read: a drop commits styles/structure to the imperative
@@ -214,10 +225,10 @@ export function ControlProvider({ children }: { children: ReactNode }) {
   // wrapper's `width: '100%'`, so the Size tool showed an uneditable "auto"
   // for every FIT text (live find 2026-07-13).
   // MEMOISED — the identity of this object is load-bearing, not just its
-  // contents. It feeds the `styles` memo below, whose result feeds
-  // `effectiveStyles`' useNodesComputed DEPS; a fresh object here rebuilds that
-  // selectAtom every render, and jotai's useAtomValue re-subscribes + calls its
-  // own rerender() whenever the atom identity changes → unbounded render loop.
+  // contents. It feeds the `styles` memo below, which every control reads; a
+  // fresh object here re-ran that memo every render, and jotai's useAtomValue
+  // re-subscribed + called its own rerender() whenever a derived atom identity
+  // changed → unbounded render loop.
   // Both branches used to allocate: `{ ...inner, ...node }` on every FIT-wrapper
   // render, and `{}` on every render with NO resolvable node — which is exactly
   // the state a component-variant drag-out lands in (the exit clone's
@@ -271,6 +282,20 @@ export function ControlProvider({ children }: { children: ReactNode }) {
     // from the parser's per-variant style map. Without this, painting
     // a different fill on variant-2 leaves the Fill control showing
     // the base color and there's no visible override indicator.
+    // The `default` entry is ALWAYS active — framer-motion keeps
+    // `animate={['default', variant]}` on, and the Renderer merges it over the
+    // base on EVERY tile including the primary (Renderer.ts:478-483). The panel
+    // gated the whole merge on being on a VARIANT tile, so a value living only
+    // in that entry read as absent on the default tile: a frame rotated via
+    // `variants.default.rotate: 185.3` showed Rotate 0 in the Transform popup
+    // while the canvas painted it rotated (user report 2026-09-20). Merge it
+    // wherever we are, then layer the active variant on top as before.
+    if (isComponentFile && node?.motionVariants) {
+      const defaultEntry = (node.motionVariants as Record<string, Record<string, string>>)['default'];
+      if (defaultEntry && Object.keys(defaultEntry).length > 0) {
+        result = { ...result, ...defaultEntry };
+      }
+    }
     if (isComponentVariantViewport && activeComponentVariant && node?.motionVariants) {
       const variantStyles = (node.motionVariants as Record<string, Record<string, string>>)[activeComponentVariant];
       if (variantStyles && Object.keys(variantStyles).length > 0) {
@@ -328,32 +353,7 @@ export function ControlProvider({ children }: { children: ReactNode }) {
     }
 
     return result;
-  }, [baseStyles, isDefaultLocale, selectedId, localeOverrides, isReplica, vpWidth, overrides, isComponentVariantViewport, activeComponentVariant, node]);
-
-  // Map-aware effective styles: overlay map data overrides onto base styles
-  // (bounded template-subtree scan → useNodesComputed so it stays live per
-  // commit but only re-renders when the merged result differs).
-  const effectiveStyles = useNodesComputed((nodes) => {
-    if (mapItemIndex == null || !mapContext) return styles;
-    const itemData = mapContext.mapData[mapItemIndex];
-    if (!itemData) return styles;
-
-    const overrides: Record<string, string> = {};
-    const queue = [mapContext.templateId];
-    while (queue.length > 0) {
-      const nid = queue.shift()!;
-      const n = nodes.get(nid);
-      if (!n) continue;
-      for (const sb of (n.styleBindings || [])) {
-        if (itemData[sb.field] !== undefined) {
-          overrides[sb.styleProp] = itemData[sb.field];
-        }
-      }
-      for (const childId of n.children) queue.push(childId);
-    }
-
-    return { ...styles, ...overrides };
-  }, [styles, mapItemIndex, mapContext]);
+  }, [baseStyles, isDefaultLocale, selectedId, localeOverrides, isReplica, vpWidth, drawnWidth, overrides, isComponentVariantViewport, activeComponentVariant, isComponentFile, node]);
 
   // Derive parent layout type for grid/flex child controls. EFFECTIVE for the
   // INTERACTING viewport: a replica @media can flip the parent's
@@ -407,6 +407,7 @@ export function ControlProvider({ children }: { children: ReactNode }) {
     'lineHeight', 'textAlign', 'textTransform', 'textDecoration', 'whiteSpace',
     'writingMode', 'textDecorationLine', 'textDecorationColor', 'textDecorationStyle',
     'textDecorationThickness', 'textUnderlineOffset', 'WebkitTextStroke',
+    'WebkitTextStrokeWidth', 'WebkitTextStrokeColor',
     'WebkitTextFillColor', 'WebkitBackgroundClip', 'backgroundClip',
   ]);
   const fitInnerIdRef = useRef(fitInnerNode?.id ?? null);
@@ -476,6 +477,11 @@ export function ControlProvider({ children }: { children: ReactNode }) {
       // 60fps. (Primary/base edits below commit to INLINE styles — no !important
       // needed there.)
       for (const id of selectedIds) bridge.patchStyles(id, prefix, styles, true);
+      // A code component paints these on its own root, over the wrapper — see
+      // renderCodeComponentStyleLive. Page replicas are left to the commit.
+      if (isComponentVariantViewport && activeComponentVariant) {
+        for (const id of selectedIds) renderCodeComponentStyleLive(id, styles, activeComponentVariant);
+      }
       return;
     }
 
@@ -514,148 +520,18 @@ export function ControlProvider({ children }: { children: ReactNode }) {
       for (const prefix of prefixes) {
         if (mv) {
           const variantName = prefix === '' ? 'default' : vpIdFromPrefix(prefix);
-          const own = variantName !== 'default' ? mv[variantName]?.[key] : undefined;
-          if (own != null && own !== '') continue;
+          if (variantName !== 'default' && variantOwnsKey(mv[variantName], key)) continue;
         }
         bridge.patchStyles(id, prefix, styles, important);
       }
+      // A code component paints forwarded styles on its own root, over the
+      // wrapper just patched — re-render it with them (no-op for other nodes).
+      renderCodeComponentStyleLive(id, styles);
     }
-  }, [selectedIds, isComponentVariantViewport, isReplica, vpId, isComponentFile]);
-
-  // Map-aware style update: routes writes to map data when editing a ghost item
-  // Track which properties we've already auto-bound during this session
-  // (parser re-parse is async, so styleBindings may be stale during continuous editing)
-  const boundFieldsRef = useRef(new Map<string, string>());
-
-  // Keep selectedId in a ref so mapAwareUpdateStyle always reads the latest value
-  const selectedIdRef = useRef(selectedId);
-  selectedIdRef.current = selectedId;
-
-  const mapAwareUpdateStyle = useCallback((keyOrStyles: string | Record<string, string>, value?: string) => {
-    if (mapItemIndex == null || !mapContext) {
-      updateStyle(keyOrStyles, value);
-      return;
-    }
-
-    const allEntries = typeof keyOrStyles === 'string' ? { [keyOrStyles]: value! } : keyOrStyles;
-
-    // `display` (the Hide toggle) is a TEMPLATE-level structural prop, NEVER a
-    // per-item CMS field. The map-aware path below AUTO-BINDS each style key to a
-    // CMS field (`item.<key>`) — meaningless for `display`, so Hide on a CMS row
-    // silently no-op'd (it tried to bind a non-existent `display` field). Route it
-    // through the normal style write so it reaches node-ops/replica-context: inline
-    // `display:none` on the primary, a per-variant `display: variant === 'x' ?
-    // 'none' : '<base>'` ternary on a variant — both hide the row's rendered rows.
-    const entries: Record<string, string> = {};
-    const structural: Record<string, string> = {};
-    for (const [k, v] of Object.entries(allEntries)) {
-      if (k === 'display') structural[k] = v;
-      else entries[k] = v;
-    }
-    if (Object.keys(structural).length > 0) {
-      updateStyle(structural);
-      // A CMS-row `display:none` must RE-SYNC the collection ghosts: the panel write
-      // patches the template + queues the mutation, but the ghost copies (and the
-      // resolved template) only re-render on a full Renderer cycle — so the rows
-      // stay visible until a drag forces one. Flush + force a render now (same
-      // pattern pagination uses), so Hide takes effect immediately. Deferred a tick
-      // so the queued mutation is in code before the Renderer re-reads it.
-      flushNow();
-      requestAnimationFrame(() => forceCanvasRender());
-    }
-    if (Object.keys(entries).length === 0) return;
-
-    const itemData = { ...(mapContext.mapData[mapItemIndex] || {}) };
-
-    for (const [key, val] of Object.entries(entries)) {
-      // Check parsed bindings first, then local cache
-      let fieldName: string | null = boundFieldsRef.current.get(key) || null;
-      if (!fieldName) {
-        const currentNodes = getNodesSnapshot();
-        const queue = [mapContext.templateId];
-        while (queue.length > 0) {
-          const nid = queue.shift()!;
-          const n = currentNodes.get(nid);
-          if (!n) continue;
-          for (const sb of (n.styleBindings || [])) {
-            if (sb.styleProp === key) { fieldName = sb.field; break; }
-          }
-          if (fieldName) break;
-          for (const childId of n.children) queue.push(childId);
-        }
-      }
-
-      if (fieldName) {
-        if (mapItemIndex === 0) {
-          const oldVal = itemData[fieldName];
-          itemData[fieldName] = val;
-          queueMutation({ type: 'updateMapItem', varName: mapContext.varName, index: 0, item: itemData });
-          propagateToGhosts(mapContext.varName, fieldName, oldVal, val, mapContext.mapData);
-        } else {
-          itemData[fieldName] = val;
-          queueMutation({ type: 'updateMapItem', varName: mapContext.varName, index: mapItemIndex, item: itemData });
-        }
-      } else {
-        // Auto-bind: convert static style to per-item field (only once per property)
-        const sid = selectedIdRef.current;
-        trace.action('control:map-auto-bind', { key, sid, varName: mapContext.varName, currentValue: styles[key] || '' });
-        if (sid) {
-          flushNow();
-          queueMutation({
-            type: 'bindStyleToMap',
-            nodeId: sid,
-            varName: mapContext.varName,
-            styleProp: key,
-            fieldName: key,
-            currentValue: styles[key] || '',
-          });
-          // Cache the binding so subsequent edits use updateMapItem directly
-          boundFieldsRef.current.set(key, key);
-          itemData[key] = val;
-          queueMutation({ type: 'updateMapItem', varName: mapContext.varName, index: mapItemIndex, item: itemData });
-          if (mapItemIndex === 0) {
-            propagateToGhosts(mapContext.varName, key, styles[key] || '', val, mapContext.mapData);
-          }
-        }
-      }
-
-      trace.action('control:map-update-style', { key, value: val, mapItemIndex, fieldName });
-    }
-
-    // Imperative DOM update via the canvas bridge so the change is visible
-    // instantly without waiting for the mutation queue to flush + re-parse.
-    // For .map() ghost edits the data binding only changes ONE item in the
-    // array, so the patch must target the specific ghost (not all of them).
-    // The bridge's patchStyles selector matches data-node-id exactly — pass
-    // the ghost-suffixed id to hit just that ghost. For mapItemIndex===0 we
-    // target the template AND mirror to all ghosts because that path either
-    // edits the shared style (canonical write, no field binding) or
-    // propagates a field default to ghosts (handled above by
-    // propagateToGhosts).
-    const sid = selectedIdRef.current;
-    if (sid) {
-      const targetNodeId = makeGhostId(sid, mapItemIndex ?? 0);
-      const bridge = getCanvasBridge();
-      // Patch primary viewport
-      bridge.patchStyles(targetNodeId, '', entries);
-      // Replica viewports: enumerate viewport prefixes from the bridge cache
-      // (the rectCache holds keys `${vpPrefix}:${nodeId}`). Patch each replica
-      // viewport's matching ghost too.
-      const rectCache = (bridge as any).rectCache as Map<string, DOMRect> | undefined;
-      if (rectCache) {
-        const seenPrefixes = new Set<string>();
-        for (const key of rectCache.keys()) {
-          const vpPrefix = parseRectCacheKey(key)?.vpPrefix;
-          if (!vpPrefix || seenPrefixes.has(vpPrefix)) continue;
-          seenPrefixes.add(vpPrefix);
-          bridge.patchStyles(targetNodeId, vpPrefix, entries);
-        }
-      }
-    }
-  }, [mapItemIndex, mapContext, updateStyle, styles]);
+  }, [selectedIds, isComponentVariantViewport, isReplica, vpId, isComponentFile, activeComponentVariant]);
 
   // Backward compat alias — tools that call updateMultipleStyles still work
-  const updateMultipleStyles = mapAwareUpdateStyle as (styles: Record<string, string>) => void;
+  const updateMultipleStyles = updateStyle as (styles: Record<string, string>) => void;
 
   const hasOverride = useCallback((property: string) => {
     if (!selectedId) return false;
@@ -720,14 +596,14 @@ export function ControlProvider({ children }: { children: ReactNode }) {
       if (property === 'textContent' && node?.responsiveTextValues) {
         for (const b of Object.keys(node.responsiveTextValues).map(Number)) {
           const min = node.responsiveTextBands?.[b] ?? 0;
-          if (vpWidth <= b && vpWidth >= min) return true;
+          if (drawnWidth <= b && drawnWidth >= min) return true;
         }
       }
       const rsv = node?.responsiveStyleVariables?.[property];
       if (rsv) {
         for (const b of Object.keys(rsv).map(Number)) {
           const min = node?.responsiveStyleBands?.[property]?.[b] ?? 0;
-          if (vpWidth <= b && vpWidth >= min) return true;
+          if (drawnWidth <= b && drawnWidth >= min) return true;
         }
       }
     }
@@ -737,7 +613,7 @@ export function ControlProvider({ children }: { children: ReactNode }) {
     // override on mobile — see hasOverrideAtWidth's docstring for why.
     if (!isReplica || !vpWidth) return false;
     return hasOverrideAtWidth(overrides, selectedId, property, vpWidth);
-  }, [selectedId, overrides, isReplica, vpWidth, isComponentVariantViewport, activeComponentVariant, node]);
+  }, [selectedId, overrides, isReplica, vpWidth, drawnWidth, isComponentVariantViewport, activeComponentVariant, node]);
 
   const getOverrides = useCallback((property: string) => {
     if (!selectedId) return [];
@@ -756,7 +632,7 @@ export function ControlProvider({ children }: { children: ReactNode }) {
       if (isReplica && vpWidth && node?.responsiveTextValues) {
         for (const b of Object.keys(node.responsiveTextValues).map(Number).sort((a, c) => a - c)) {
           const min = node.responsiveTextBands?.[b] ?? 0;
-          if (vpWidth <= b && vpWidth >= min) {
+          if (drawnWidth <= b && drawnWidth >= min) {
             const branchVar = node.responsiveTextVariables?.[b];
             return branchVar
               ? { source: 'prop' as ValueSource, ref: branchVar }
@@ -837,7 +713,7 @@ export function ControlProvider({ children }: { children: ReactNode }) {
       for (const b of Object.keys(byW).map(Number).sort((a, c) => a - c)) {
         // BAND, not cascade: the override's pill shows on its own viewport only.
         const min = node?.responsiveStyleBands?.[property]?.[b] ?? 0;
-        if (vpWidth <= b && vpWidth >= min) return byW[b];
+        if (drawnWidth <= b && drawnWidth >= min) return byW[b];
       }
       return undefined;
     })();
@@ -847,10 +723,15 @@ export function ControlProvider({ children }: { children: ReactNode }) {
     const variableRef = responsiveVarRef ?? condVarRef
       ?? ((overriddenInVariant || overriddenInViewport) ? undefined : node?.styleVariables?.[property]);
     return detectValueSource(val, variableRef);
-  }, [styles, node, isComponentVariantViewport, activeComponentVariant, isReplica, vpWidth, hasOverride]);
+  }, [styles, node, isComponentVariantViewport, activeComponentVariant, isReplica, vpWidth, drawnWidth, hasOverride]);
 
-  const createVariable = useCallback((property: string, propName: string, defaultValue?: string, clearLonghands?: string[]) => {
+  const createVariable = useCallback((requestedProperty: string, propName: string, defaultValue?: string, clearLonghands?: string[]) => {
     if (!selectedId) return;
+    // `textContentFormatted` = the Content row's "Create formatted text variable": the TEXT routing below,
+    // but the component create binds an HTML prop (bold/italic/links survive) — on the primary, or on one
+    // variant only. Page variables stay plain text.
+    const formattedText = requestedProperty === 'textContentFormatted';
+    const property = formattedText ? 'textContent' : requestedProperty;
 
     // ─── TRANSITION variable (framer-motion transition, NOT a CSS style) ────────────────────────────────
     // A transition variable binds the framer-motion transition to a variable IDENTIFIER — per-variant native:
@@ -961,7 +842,12 @@ export function ControlProvider({ children }: { children: ReactNode }) {
     // phase. Falls through to the component-text helper below; the
     // ControlLabel menu gating skips textContent on page files anyway
     // until we add it.
-    if (!isComponentFile && property !== 'textContent') {
+    // An ICON SET is a component in every way that matters here — its file
+    // declares props and its instances pass them — it just does not live under
+    // `components/`, so `isComponentFile` is false and a variable created on a
+    // vector's fill would be written as a PAGE variable, which an icon set has
+    // no way to read. Fall through to the component path instead.
+    if (!isComponentFile && !isIconSetFile && property !== 'textContent') {
       const inferredType = pageVariableTypeForProperty(property);
       if (inferredType) {
         let captured = defaultValue ?? styles[property] ?? defaultForType(inferredType);
@@ -1049,8 +935,8 @@ export function ControlProvider({ children }: { children: ReactNode }) {
       // variants keep their literal text. Otherwise it'd bind `{content}` on the shared child = every
       // variant. Works for both "Create Variable" (prop added) and "Set Variable" (existing prop).
       if (isComponentFile && isComponentVariantViewport && activeComponentVariant && activeComponentVariant !== 'default') {
-        trace.action('control:bind-text-variable-for-variant', { nodeId: selectedId, propName, variant: activeComponentVariant });
-        queueMutation({ type: 'bindTextVariableForVariant', nodeId: selectedId, variantName: activeComponentVariant, propName, propDefault: text });
+        trace.action('control:bind-text-variable-for-variant', { nodeId: selectedId, propName, variant: activeComponentVariant, formatted: formattedText });
+        queueMutation({ type: 'bindTextVariableForVariant', nodeId: selectedId, variantName: activeComponentVariant, propName, propDefault: text, ...(formattedText ? { formatted: true } : {}) });
         return;
       }
       if (!isComponentFile) {
@@ -1061,8 +947,8 @@ export function ControlProvider({ children }: { children: ReactNode }) {
         queueMutation({ type: 'createTextPageVariable', nodeId: selectedId, propName, defaultValue: text });
         return;
       }
-      trace.action('control:create-text-variable', { nodeId: selectedId, propName, defaultValue: text });
-      queueMutation({ type: 'createTextVariable', nodeId: selectedId, propName, defaultValue: text });
+      trace.action('control:create-text-variable', { nodeId: selectedId, propName, defaultValue: text, formatted: formattedText });
+      queueMutation({ type: 'createTextVariable', nodeId: selectedId, propName, defaultValue: text, ...(formattedText ? { formatted: true } : {}) });
       return;
     }
     const value = defaultValue ?? styles[property] ?? '';
@@ -1094,7 +980,7 @@ export function ControlProvider({ children }: { children: ReactNode }) {
         queueMutation({ type: 'setComponentPropNumberMeta', propName, meta: { min: reg.min ?? null, max: reg.max ?? null, step: reg.step ?? null, control: 'slider' } });
       }
     }
-  }, [selectedId, styles, node, isComponentFile, pageVariables, isComponentVariantViewport, activeComponentVariant, isReplica, vpWidth]);
+  }, [selectedId, styles, node, isComponentFile, pageVariables, isComponentVariantViewport, activeComponentVariant, isReplica, vpWidth, drawnWidth]);
 
   const removeVariable = useCallback((property: string, propName: string, defaultValue: string, deleteProp = false) => {
     if (!selectedId) return;
@@ -1256,53 +1142,7 @@ export function ControlProvider({ children }: { children: ReactNode }) {
     // normal single-node unbind below, prop kept) when not a component master or other nodes still use it.
     if (removeComponentPropProjectWide(selectedId, property, propName, defaultValue)) return;
     queueMutation({ type: 'removeVariable', nodeId: selectedId, styleProperty: property, propName, defaultValue, deleteProp });
-  }, [selectedId, isComponentFile, isComponentVariantViewport, activeComponentVariant, styles, pageVariables, node, isReplica, vpWidth, updateStyle]);
-
-  // Map override context for ghost item editing
-  const mapOverrideCtx = useMemo(() => {
-    if (mapItemIndex == null || !mapContext) return null;
-    const itemData = mapContext.mapData[mapItemIndex] || {};
-    const item0 = mapContext.mapData[0] || {};
-
-    return {
-      itemIndex: mapItemIndex,
-      itemCount: mapContext.mapData.length,
-      isOverridden: (property: string) => {
-        const currentNodes = getNodesSnapshot();
-        const queue = [mapContext.templateId];
-        while (queue.length > 0) {
-          const nid = queue.shift()!;
-          const n = currentNodes.get(nid);
-          if (!n) continue;
-          for (const sb of (n.styleBindings || [])) {
-            if (sb.styleProp === property && itemData[sb.field] !== undefined && itemData[sb.field] !== item0[sb.field]) {
-              return true;
-            }
-          }
-          for (const childId of n.children) queue.push(childId);
-        }
-        return false;
-      },
-      resetOverride: (property: string) => {
-        const currentNodes = getNodesSnapshot();
-        const queue = [mapContext.templateId];
-        while (queue.length > 0) {
-          const nid = queue.shift()!;
-          const n = currentNodes.get(nid);
-          if (!n) continue;
-          for (const sb of (n.styleBindings || [])) {
-            if (sb.styleProp === property) {
-              const updated = { ...itemData, [sb.field]: item0[sb.field] || '' };
-              queueMutation({ type: 'updateMapItem', varName: mapContext.varName, index: mapItemIndex, item: updated });
-              return;
-            }
-          }
-          for (const childId of n.children) queue.push(childId);
-        }
-      },
-      goToItem: (index: number | null) => setMapItemIndex(index),
-    };
-  }, [mapItemIndex, mapContext, setMapItemIndex]);
+  }, [selectedId, isComponentFile, isComponentVariantViewport, activeComponentVariant, styles, pageVariables, node, isReplica, vpWidth, drawnWidth, updateStyle]);
 
   // CMS-collection-template context. Two sources surface this:
   //
@@ -1439,6 +1279,15 @@ export function ControlProvider({ children }: { children: ReactNode }) {
             const styleProp = (property === 'backgroundColor' && isImage) ? 'backgroundImage' : property;
             trace.action('control:bind-style-for-variant', { nodeId: selectedId, fieldId, styleProp, variant: activeComponentVariant });
             queueMutation({ type: 'setVariantCmsStyle', nodeId: selectedId, styleProp, variantName: activeComponentVariant, itemVar, override: { kind: 'field', field: fieldId, isImage } });
+            // backgroundSize/Position are the node's OWN styles (not bound) — seed the
+            // cover/center every image-fill path writes, or the bound image renders at
+            // its natural size while the panel says "Cover" (2026-09-09).
+            if (isImage && styleProp === 'backgroundImage') {
+              const seed: Record<string, string> = {};
+              if (!styles.backgroundSize) seed.backgroundSize = 'cover';
+              if (!styles.backgroundPosition) seed.backgroundPosition = 'center';
+              if (Object.keys(seed).length) queueMutation({ type: 'updateStyles', nodeId: selectedId, styles: seed });
+            }
             flushNow();
             return;
           }
@@ -1547,13 +1396,13 @@ export function ControlProvider({ children }: { children: ReactNode }) {
   const value: ControlContextValue = {
     nodeId: selectedId,
     node,
-    styles: effectiveStyles,
+    styles,
     vpId,
     isReplica,
     vpWidth,
     parentLayout,
     parentFlexDirection,
-    updateStyle: mapAwareUpdateStyle,
+    updateStyle,
     updateMultipleStyles,
     updateStyleLive,
     hasOverride,
@@ -1561,7 +1410,6 @@ export function ControlProvider({ children }: { children: ReactNode }) {
     getValueSource,
     createVariable,
     removeVariable,
-    mapOverride: mapOverrideCtx,
     cmsBinding: cmsBindingCtx,
   };
 
@@ -1598,7 +1446,6 @@ const FALLBACK_CONTEXT: ControlContextValue = {
   getValueSource: () => ({ source: 'inline' as ValueSource, ref: null }),
   createVariable: () => {},
   removeVariable: () => {},
-  mapOverride: null,
   cmsBinding: null,
 };
 

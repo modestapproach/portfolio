@@ -4,12 +4,15 @@
 // Fill mode: maps to CSS `flex: N 0 0px` when parent is flex along that axis.
 
 import { useCallback, useMemo, useState, useEffect, useRef } from 'react';
+import { vectorSetLinkedWrite, vectorSetUnitAction, readFitDim, isFitRow, FIT_DIM_ATTR, VECTOR_SET_DISABLED_UNITS } from '@/code/icons/vector-set-fit';
+import { parseIconSetConfig } from '@/code/icons/icon-set-config';
+import { projectFS } from '@/code/project/project-fs';
 import { useLivePreview } from '../hooks/useLivePreview';
 import { useAtomValue, useSetAtom, getDefaultStore } from 'jotai';
-import { canvasInteractingAtom, getNodesSnapshot } from '@/code/stores/store';
+import { canvasInteractingAtom, getNodesSnapshot, selectedIdsAtom } from '@/code/stores/store';
 import { useNode, useNodesComputed } from '@/code/stores/node-family';
 import { injectFlexLayoutOnFrame, shouldInjectLayoutOnAuto, freezeParentRelativeChildrenForAuto } from './layout-injection';
-import { viewportsConfigAtom, viewportWidthsAtom, syncViewportWidths, activeComponentVariantAtom } from '@/code/stores/viewport-store';
+import { viewportsConfigAtom, viewportWidthsAtom, syncViewportWidths, activeComponentVariantAtom, interactingViewportRenderWidthAtom } from '@/code/stores/viewport-store';
 import { applyViewportWidthChange } from '@/code/generation/viewport-width-rewrite';
 import { activeFilePathAtom, isVectorSetComponentFile } from '@/code/project/active-file-store';
 import { modifyProjectFile } from '@/code/project/modify-file';
@@ -22,10 +25,19 @@ import ControlLabel from '../controls/ControlLabel';
 import { getInsetState, computeDimensionInsetStyles, parsePx } from '@/shared/pin-utils';
 import { findNodeSize, findNodeParentInnerSize, findNodeComputedStyles, forceCanvasRender, getInteractingViewport } from '@/canvas/node-ops';
 import { beginViewportWidthScrub, type ViewportWidthScrub } from '@/canvas/resize/viewport-width-scrub';
-import { canUseFill, isMainAxis, isFillMode, getFillMultiplier, makeFillFlex, parseFlex, formatFlex, crossAxisFillPatch } from '@/shared/flex-helpers';
+import { activeLadderIsStartModel, commitBreakpointStart } from '@/canvas/helpers/breakpoint-commit';
+import { startOf } from '@/code/project/breakpoint-ladder';
+import { renderWidth } from '@/shared/types';
+import { canUseFill, isMainAxis, isFillMode, getFillMultiplier, makeFillFlex, parseFlex, formatFlex, crossAxisFillPatch, isCrossAxisFillFor } from '@/shared/flex-helpers';
 import { convertPxToDimUnit, estimatedVpHeight, pickLiveDim, fitSizeRedirectTarget, exitFillFlexPatch, isAutoDim, resolveUnitChangePx } from './size-helpers';
 import { resizeLiveOps } from '@/canvas/resize/resize-live-store';
+import { captureVisualRect } from '@/canvas/visual-rect';
+import { needsSizeCompensation, sizeInputWrite } from '@/canvas/resize/size-input-compensation';
 import { trace } from '@/shared/debug-trace';
+import {
+  parseAspectRatio, canLockAspect, aspectLockOnPatch, aspectUnlockPatch,
+  lockedDimensionWrite, lockedFitWrite, vectorDisplayValue, vectorSizePatch, vectorLockPatch,
+} from './aspect-lock';
 
 // ─── Unit parsing ───────────────────────────────────────────────────────────
 
@@ -69,8 +81,10 @@ const UNIT_OPTIONS: { value: string; label: string }[] = [
 
 // ─── Dimension Row ──────────────────────────────────────────────────────────
 
-function DimensionRow({ label, property, value, onChange, onChangeLive, onUnitChange, computedSize, parentSize, unitOptions, currentUnit, chevronLabel, disabled, overridden, onResetOverride, hideResetStyle }: {
+export function DimensionRow({ label, property, value, onChange, onChangeLive, onUnitChange, computedSize, parentSize, unitOptions, currentUnit, fillCross, chevronLabel, disabled, overridden, onResetOverride, hideResetStyle, mirrorNegative }: {
   label: string;
+  /** Zero-crossing display for the chevron scrub — see ToolInput.mirrorNegative. */
+  mirrorNegative?: boolean;
   /** CSS property name. When provided, the row uses ControlLabel — gets accent color
    *  on responsive override and a click-to-reset menu. Pass `undefined` for non-style
    *  rows (e.g. the FIT pseudo-row). */
@@ -90,6 +104,10 @@ function DimensionRow({ label, property, value, onChange, onChangeLive, onUnitCh
   unitOptions: { value: string; label: string; disabled?: boolean }[];
   /** Override detected unit (e.g. 'fill' when fill mode is active) */
   currentUnit?: DimUnit;
+  /** Fill on the parent's CROSS axis (crossAxisFillPatch: a 100% width / a stretched height) — no `fr` multiplier
+   *  exists there, so the row reads like Fit: the measured size, greyed; typing a number
+   *  switches to px. */
+  fillCross?: boolean;
   /** Override label shown on the unit selector chevron (e.g. 'fr') */
   chevronLabel?: string;
   /** Disable input (e.g. FIT height) */
@@ -116,24 +134,29 @@ function DimensionRow({ label, property, value, onChange, onChangeLive, onUnitCh
   const activeUnit = currentUnit ?? parsed.unit;
   const isAuto = activeUnit === 'auto';
   const isFill = activeUnit === 'fill';
+  // Main-axis fill carries an `fr` multiplier; a cross-axis fill (stretch) has none.
+  const isFillMultiplier = isFill && !fillCross;
+  // Rows whose number is the MEASURED size, not an authored one: Fit and cross-axis Fill.
+  const showsMeasured = isAuto || (isFill && !!fillCross);
 
-  // Display value: computed size when auto/disabled, multiplier when fill, otherwise actual value
+  // Display value: computed size when auto/disabled/cross-fill, multiplier when main-axis fill,
+  // otherwise actual value
   const displayValue = disabled
     ? String(Math.round(computedSize) || 0)
-    : isFill
+    : isFillMultiplier
       ? value
-      : isAuto ? String(Math.round(computedSize) || 0) : String(parsed.num);
+      : showsMeasured ? String(Math.round(computedSize) || 0) : String(parsed.num);
 
   const handleNumChange = (v: string) => {
-    if (isFill) {
+    if (isFillMultiplier) {
       // In fill mode, pass through the raw multiplier value
       onChange(v);
       return;
     }
     const num = parseFloat(v) || 0;
-    // When auto: typing a value switches to px mode
-    if (isAuto) {
-      onUnitChange('auto', 'px', num);
+    // When auto (or a cross-axis fill): typing a value switches to px mode
+    if (showsMeasured) {
+      onUnitChange(activeUnit, 'px', num);
       return;
     }
     onChange(formatValue(num, activeUnit));
@@ -143,8 +166,8 @@ function DimensionRow({ label, property, value, onChange, onChangeLive, onUnitCh
   // auto→px switch is a unit change (commit) so it's never live; fill passes the raw multiplier through.
   const handleNumChangeLive = (v: string) => {
     if (!onChangeLive || disabled) return;
-    if (isFill) { onChangeLive(v); return; }
-    if (isAuto) return;
+    if (isFillMultiplier) { onChangeLive(v); return; }
+    if (showsMeasured) return;
     onChangeLive(formatValue(parseFloat(v) || 0, activeUnit));
   };
 
@@ -194,9 +217,10 @@ function DimensionRow({ label, property, value, onChange, onChangeLive, onUnitCh
             // REVERT to the start value on release (no code write). Routes through handleNumChange to format.
             onCommit={disabled ? undefined : handleNumChange}
             step={isFill ? 1 : 1}
-            className={isAuto || disabled ? 'opacity-50' : ''}
-            chevronLabel={isFill ? 'fr' : chevronLabel}
+            className={showsMeasured || disabled ? 'opacity-50' : ''}
+            chevronLabel={isFillMultiplier ? 'fr' : chevronLabel}
             disabled={disabled}
+            mirrorNegative={mirrorNegative}
           />
         </div>
         <div className="flex-1">
@@ -248,6 +272,13 @@ export function axisFillActive(
   fillFromOverride: boolean,
 ): boolean {
   return canFill && isMain && isFillMode(flexVal) && (!sizeVal || isFitSize(sizeVal) || fillFromOverride);
+}
+
+/** A size can't be negative: a chevron scrub past 0 on a node that can't
+ *  mirror (a layout child) clamps at 0 instead of writing `-34px`. */
+function clampNonNegative(v: string): string {
+  const m = /^\s*-([\d.]+)(px|%|vh|vw|rem|em)?\s*$/.exec(v || '');
+  return m ? `0${m[2] ?? 'px'}` : v;
 }
 
 export default function SizeTool({ styles: stylesProp, nodeId: nodeIdProp, vpId, onUpdate: onUpdateProp, onUpdateMultiple: onUpdateMultipleProp, pxOnly }: Props) {
@@ -340,6 +371,38 @@ export default function SizeTool({ styles: stylesProp, nodeId: nodeIdProp, vpId,
   // primary's locked ratio. Only fires when a "Reset Override" is actually
   // shown (i.e. the dimension is overridden on this replica/variant).
   const isVectorSet = !!node && isVectorSetComponentFile(node.componentFile);
+  // A plain VECTOR (a shape / group `<svg>` on the page or in a master) sizes
+  // like a reference shape: W×H in px plus the aspect lock — no unit choice,
+  // so no Fit / % / Fill (Bug #17, 2026-10-12: Fit + the lock on a vector was
+  // a maze of auto/px flips). A nested group CHILD keeps the normal rows (its
+  // box lives in x/y/width/height attributes), the Fit-text wrapper and vector
+  // sets have their own contracts.
+  const vectorParent = useNode(node?.parentId ?? null);
+  const isPlainVector = node?.type === 'svg'
+    && vectorParent?.type !== 'svg'
+    && !isVectorSet
+    && !isFitSvgWrapper
+    && !isViewportFrame;
+  // The selected variant's NATURAL size, for the locked-aspect Fit below. A
+  // vector's aspect is fixed — the reference greys out the lock icon for exactly this
+  // reason — so Fit on one dimension means "the size that keeps this variant's
+  // aspect", derived from the OTHER dimension. The generic instance-hug path
+  // produces the variant's INTRINSIC size instead, which is why a 26px-wide
+  // icon came out 217px tall (user report 2026-09-21).
+  const vectorVariantNatural = useMemo(() => {
+    if (!isVectorSet || !node?.componentFile) return null;
+    try {
+      const code = projectFS.readFile(node.componentFile);
+      if (!code) return null;
+      const iconName = typeof node.attrs?.name === 'string' ? node.attrs.name : null;
+      const cfgs = parseIconSetConfig(code);
+      const cfg = (iconName ? cfgs.find(c => c.name === iconName) : null) ?? cfgs.find(c => c.isPrimary) ?? cfgs[0];
+      return cfg && cfg.width > 0 && cfg.height > 0 ? { width: cfg.width, height: cfg.height } : null;
+    } catch { return null; }
+  }, [isVectorSet, node?.componentFile, node?.attrs?.name]);
+  // Which row is on Fit — a display MODE held in a marker attribute, because the
+  // stored sizes are always definite px (see vector-set-fit.ts).
+  const vectorFitDim = isVectorSet ? readFitDim(node?.attrs) : null;
   const resetVectorSetSize = useCallback(
     () => onUpdateMultiple({ width: '', height: '' }),
     [onUpdateMultiple],
@@ -397,7 +460,9 @@ export default function SizeTool({ styles: stylesProp, nodeId: nodeIdProp, vpId,
     if (!Number.isFinite(num) || num <= 0) return;
     const rounded = Math.round(num);
     if (!scrubRef.current) {
-      const startWidth = getDefaultStore().get(viewportsConfigAtom).find(v => v.id === vpId)?.width ?? rounded;
+      // The tile's DRAWN width — a start-model breakpoint is drawn at its start (designWidth).
+      const cfgVp = getDefaultStore().get(viewportsConfigAtom).find(v => v.id === vpId);
+      const startWidth = cfgVp ? renderWidth(cfgVp) : rounded;
       scrubRef.current = beginViewportWidthScrub({ vpId, nodeId, startWidth, activeFilePath });
     }
     scrubRef.current.tick(rounded);
@@ -426,6 +491,19 @@ export default function SizeTool({ styles: stylesProp, nodeId: nodeIdProp, vpId,
     // width the bands are currently keyed by (same rule the tile-drag path
     // documents in SelectionOverlay's onViewportResize).
     const prevWidth = getDefaultStore().get(viewportsConfigAtom).find(v => v.id === vpId)?.width ?? rounded;
+
+    // START MODEL: the field is the breakpoint's START. Moving it moves the next narrower
+    // breakpoint's end with it (breakpoint-ladder.ts); one commit does the rewrite + config.
+    if (activeLadderIsStartModel()) {
+      const cfgVp = getDefaultStore().get(viewportsConfigAtom).find(v => v.id === vpId);
+      if (!cfgVp || startOf(cfgVp) === rounded || !activeFilePath) return bail();
+      setForceRender();
+      commitBreakpointStart(activeFilePath, vpId, rounded);
+      forceCanvasRender();
+      trace.action('size:viewport-breakpoint-change', { vpId, prevStart: startOf(cfgVp), newStart: rounded, model: 'start' });
+      return;
+    }
+
     if (prevWidth === rounded) return bail();
 
     setViewportWidths(prev => {
@@ -452,7 +530,13 @@ export default function SizeTool({ styles: stylesProp, nodeId: nodeIdProp, vpId,
       // dropped:[298]). The tile-drag path always had this order.
       applyViewportWidthChange(activeFilePath, vpId, prevWidth, rounded);
     }
-    setViewportsConfig(prev => prev.map(v => v.id === vpId ? { ...v, width: rounded } : v));
+    // Sizing a tile by hand DEFINES it: drop any `designWidth` the import
+    // left behind. That field only records the width the source designed a
+    // band at (a phone band reaching 809px drawn on a 390px canvas) — once
+    // the user picks a width, the tile they asked for is the tile they get,
+    // and the band and the render width are one number again. Keeping it
+    // made the field change while the tile stayed the size it was.
+    setViewportsConfig(prev => prev.map(v => v.id === vpId ? { ...v, width: rounded, designWidth: undefined } : v));
     forceCanvasRender();
     trace.action('size:viewport-breakpoint-change', { vpId, prevWidth, newWidth: rounded });
   }, [vpId, activeFilePath, setViewportsConfig, setViewportWidths]);
@@ -653,19 +737,21 @@ export default function SizeTool({ styles: stylesProp, nodeId: nodeIdProp, vpId,
   const heightIsMainAxis = isMainAxis(parentFlexDirection, 'height');
 
   // Main-axis fill: flex grow with no width/height → shows multiplier (Nfr)
-  // Cross-axis fill: NOT auto-detected (100% is ambiguous). User selects fill via dropdown.
+  // Cross-axis fill: what crossAxisFillPatch writes — `width: 100%` in a column (or the
+  // stretch it wrote 2026-09-29..10-15), `alignSelf: 'stretch'` + no own height in a row —
+  // shows the measured px. A `100%` HEIGHT reads as the % it is (isCrossAxisFillFor).
   // `flexFillOverridden`: the fill flex comes from THIS viewport's override map
   // (replica @media / variant object) — the primary's inline size stays in the
   // base styles, so the size guard inside axisFillActive must be waived AND the
   // row must show the override accent + Reset Override (see axisFillActive).
   const flexFillOverridden = !isPrimary && hasOverride('flex') && isFillMode(flexVal);
   const isWidthFillMain = axisFillActive(flexVal, styles.width, widthCanFill, widthIsMainAxis, flexFillOverridden);
-  const isWidthFillCross = false; // cross-axis fill not auto-detected
-  const isWidthFill = isWidthFillMain;
+  const isWidthFillCross = widthCanFill && !widthIsMainAxis && isCrossAxisFillFor('width', styles.alignSelf, styles.width);
+  const isWidthFill = isWidthFillMain || isWidthFillCross;
 
   const isHeightFillMain = axisFillActive(flexVal, styles.height, heightCanFill, heightIsMainAxis, flexFillOverridden);
-  const isHeightFillCross = false; // cross-axis fill not auto-detected
-  const isHeightFill = isHeightFillMain;
+  const isHeightFillCross = heightCanFill && !heightIsMainAxis && isCrossAxisFillFor('height', styles.alignSelf, styles.height);
+  const isHeightFill = isHeightFillMain || isHeightFillCross;
 
   const fillMultiplier = getFillMultiplier(flexVal);
 
@@ -688,8 +774,31 @@ export default function SizeTool({ styles: stylesProp, nodeId: nodeIdProp, vpId,
   // them — same UX as the reference's disabled "Fit Content" on code components.
   // Concrete units (px/%/vw/vh/fill) all resolve to a definite size and
   // stay available.
+  // MULTI-SELECT: the generic writers (onUpdate / onUpdateMultiple) fan out
+  // over the whole selection, but the design-INSTANCE hug mutations below
+  // were queued for `nodeId` alone — with several instances selected only
+  // the last one hugged (user report 2026-09-06). Apply them to every
+  // selected instance (page instances; masters/other nodes are skipped).
+  const selectedIdsForSize = useAtomValue(selectedIdsAtom);
+  const forEachSelectedInstance = useCallback((fn: (id: string) => void) => {
+    const ids = selectedIdsForSize.length > 1 ? selectedIdsForSize : [nodeId];
+    const snap = getNodesSnapshot();
+    for (const id of ids) {
+      const n = snap.get(id);
+      if (id === nodeId || (n?.componentFile != null && !n.isCodeComponent)) fn(id);
+    }
+  }, [selectedIdsForSize, nodeId]);
   const selfNodeSub = useNode(nodeId);
-  const isCodeComponentInstance = selfNodeSub?.isCodeComponent === true;
+  // An ICON SET is flagged `isCodeComponent` only so it LIVE-RENDERS through the
+  // Babel-standalone runtime instead of being expanded inline (project-parser's
+  // `@iconSet` branch). It is not a black box like a real code component: it
+  // renders an SVG with an intrinsic size, so Fit is as meaningful for it as
+  // for a design-component instance — and the panel greyed it out purely
+  // because the two share that one flag (user report 2026-09-21, "no height
+  // auto available on the vector set although it should act like the design
+  // component"). Gate on what the option MEANS, not on how the node renders.
+  const isIconSetInstance = isVectorSetComponentFile(selfNodeSub?.componentFile);
+  const isCodeComponentInstance = selfNodeSub?.isCodeComponent === true && !isIconSetInstance;
   const disableAutoForCode = useCallback(
     (opts: { value: string; label: string; disabled?: boolean }[]) =>
       isCodeComponentInstance
@@ -700,21 +809,39 @@ export default function SizeTool({ styles: stylesProp, nodeId: nodeIdProp, vpId,
 
   const widthUnitOptions = useMemo(() => {
     if (pxOnly) return UNIT_OPTIONS.map(o => o.value === 'px' ? o : { ...o, disabled: true });
+    // VECTOR SET: a viewport unit or a flex fill sizes ONE axis from outside
+    // and breaks the ratio the two dimensions share (choosing `vw` produced a
+    // 504 × 32 sliver) — listed, but disabled (user report 2026-09-21).
+    if (isIconSetInstance) {
+      return [...UNIT_OPTIONS, { value: 'fill', label: 'fill' }]
+        .map(o => VECTOR_SET_DISABLED_UNITS.has(o.value) ? { ...o, disabled: true } : o);
+    }
+    // FIT text: the wrapper's width is the box the text scales INTO, so only a
+    // definite Fixed (px) or Relative (%) makes sense — reference parity
+    // (Fill / Fit Content greyed). auto/vw/vh/fill are disabled.
+    if (isFitSvgWrapper) return UNIT_OPTIONS.map(o => o.value === 'px' || o.value === '%' ? o : { ...o, disabled: true });
     if (isTopLevel) {
       return disableAutoForCode(UNIT_OPTIONS.map(o => o.value === 'px' || o.value === 'auto' ? o : { ...o, disabled: true }));
     }
     if (!widthCanFill) return disableAutoForCode(UNIT_OPTIONS);
     return disableAutoForCode([...UNIT_OPTIONS, { value: 'fill', label: 'fill' }]);
-  }, [widthCanFill, isTopLevel, pxOnly, disableAutoForCode]);
+  }, [widthCanFill, isTopLevel, pxOnly, disableAutoForCode, isFitSvgWrapper, isIconSetInstance]);
 
   const heightUnitOptions = useMemo(() => {
     if (pxOnly) return UNIT_OPTIONS.map(o => o.value === 'px' ? o : { ...o, disabled: true });
+    // VECTOR SET: a viewport unit or a flex fill sizes ONE axis from outside
+    // and breaks the ratio the two dimensions share (choosing `vw` produced a
+    // 504 × 32 sliver) — listed, but disabled (user report 2026-09-21).
+    if (isIconSetInstance) {
+      return [...UNIT_OPTIONS, { value: 'fill', label: 'fill' }]
+        .map(o => VECTOR_SET_DISABLED_UNITS.has(o.value) ? { ...o, disabled: true } : o);
+    }
     if (isTopLevel) {
       return disableAutoForCode(UNIT_OPTIONS.map(o => o.value === 'px' || o.value === 'auto' ? o : { ...o, disabled: true }));
     }
     if (!heightCanFill) return disableAutoForCode(UNIT_OPTIONS);
     return disableAutoForCode([...UNIT_OPTIONS, { value: 'fill', label: 'fill' }]);
-  }, [heightCanFill, isTopLevel, pxOnly, disableAutoForCode]);
+  }, [heightCanFill, isTopLevel, pxOnly, disableAutoForCode, isIconSetInstance]);
 
   // Min/max width/height accept ONLY Fixed (px) or % — auto/vw/vh don't apply as a
   // constraint (clearing a min/max = REMOVE the row via its ×, not an "auto" unit).
@@ -740,38 +867,29 @@ export default function SizeTool({ styles: stylesProp, nodeId: nodeIdProp, vpId,
   // ─── Aspect Ratio Lock ─────────────────────────────────────────────────
   //
   // Stored as the CSS `aspect-ratio` property (`"1.5 / 1"` standard
-  // format). When locked, CSS maintains the ratio for us: we set
-  // `aspect-ratio` AND flip ONE of width/height to `auto` so the browser
-  // computes the other from the ratio. Lock toggle reads the current
-  // computed CSS pixel dimensions through the bridge (`computed.width/height`
-  // already go through `findNodeComputedStyles`, which returns logical CSS
-  // px regardless of canvas zoom) — that's the source-of-truth for the
-  // ratio. Unlocking writes back the visible pixel value so the auto
-  // dimension doesn't collapse the moment the lock comes off.
+  // format). When locked, CSS maintains the ratio for us: `aspect-ratio`
+  // plus exactly ONE definite side, the other on Fit so the browser derives
+  // it. The patches (and why the free side is `min-content`, never a literal
+  // `auto`) live in aspect-lock.ts. The toggle reads the current computed
+  // CSS pixel dimensions through the bridge (`computed.width/height` already
+  // go through `findNodeComputedStyles`, which returns logical CSS px
+  // regardless of canvas zoom) — that's the source-of-truth for the ratio.
   const aspectRatioValue = styles.aspectRatio || '';
   const isAspectRatioLocked = !!aspectRatioValue
     && aspectRatioValue !== 'auto'
     && aspectRatioValue !== 'unset';
 
-  // Parse a CSS `aspect-ratio` value into a numeric width/height ratio.
-  // Accepts `"1.5 / 1"`, `"16 / 9"`, or a bare `"1.5"`. Null when missing
-  // or malformed — callers fall back to the normal (unlocked) write path.
-  const aspectRatioNum = useMemo(() => {
-    if (!isAspectRatioLocked) return null;
-    const s = String(aspectRatioValue).trim();
-    const slash = s.match(/([\d.]+)\s*\/\s*([\d.]+)/);
-    if (slash) {
-      const a = parseFloat(slash[1]);
-      const b = parseFloat(slash[2]);
-      if (a > 0 && b > 0) return a / b;
-    }
-    const num = parseFloat(s);
-    return Number.isFinite(num) && num > 0 ? num : null;
-  }, [isAspectRatioLocked, aspectRatioValue]);
+  // Numeric width/height ratio; null when unlocked or malformed — callers
+  // fall back to the normal (unlocked) write path.
+  const aspectRatioNum = useMemo(
+    () => (isAspectRatioLocked ? parseAspectRatio(aspectRatioValue) : null),
+    [isAspectRatioLocked, aspectRatioValue],
+  );
 
   // Show the lock affordance when either (a) it's already locked — so the
-  // user can unlock — or (b) both width AND height are set to non-auto
-  // values, making a lock actually meaningful. Hide on viewport frames
+  // user can unlock — or (b) one side is definite and the other definite or
+  // Fit (canLockAspect), making a lock meaningful. Locking from "W px + H
+  // Fit" just adds the ratio — it used to need both back on px. Hide on viewport frames
   // (those rows write to `@canvas` config, not CSS), fill mode (flex
   // sizing drives the geometry), FIT SVG wrappers (the wrapper's height
   // is intentionally `auto` and locked elsewhere), and when insets are
@@ -784,91 +902,165 @@ export default function SizeTool({ styles: stylesProp, nodeId: nodeIdProp, vpId,
     && !isHeightFill
     && !inset.horizontalInset
     && !inset.verticalInset
-    && (
-      isAspectRatioLocked
-      || (
-        !!styles.width && !isFitSize(styles.width)
-        && !!styles.height && !isFitSize(styles.height)
-      )
-    );
+    && (isAspectRatioLocked || canLockAspect(styles));
 
   const handleAspectRatioToggle = useCallback(() => {
+    const size = { width: computed.width, height: computed.height };
+    if (isPlainVector) {
+      const next = vectorLockPatch(styles, size, isAspectRatioLocked);
+      if (!next) return;
+      onUpdateMultiple(next);
+      trace.action(isAspectRatioLocked ? 'size:vector-lock-off' : 'size:vector-lock-on', { nodeId, ...next });
+      return;
+    }
     if (isAspectRatioLocked) {
-      // Unlock — drop `aspect-ratio` and restore any `auto` dimension to
-      // its current computed CSS-pixel value so the element doesn't
-      // visually jump on toggle.
-      const next: Record<string, string> = { aspectRatio: '' };
-      if (styles.width === 'auto') next.width = `${Math.round(computed.width)}px`;
-      if (styles.height === 'auto') next.height = `${Math.round(computed.height)}px`;
+      const next = aspectUnlockPatch(styles, size);
       onUpdateMultiple(next);
       trace.action('size:aspect-lock-off', { nodeId, ...next });
       return;
     }
-    // Lock — read live computed dimensions through the bridge, compute
-    // width/height ratio, and write `aspect-ratio` + flip ONE dimension to
-    // `auto`. Priority matches the old builder so the lock-on transition
-    // doesn't fight a user's existing % unit:
-    //   • width is %   → height becomes auto
-    //   • height is %  → width becomes auto
-    //   • both px (or other) → width keeps its value, height becomes auto
-    const w = computed.width;
-    const h = computed.height;
-    if (!(w > 0 && h > 0)) return;
-    const ratio = w / h;
-    const arValue = `${ratio.toFixed(5)} / 1`;
-    const widthIsPct = String(styles.width || '').endsWith('%');
-    const heightIsPct = String(styles.height || '').endsWith('%');
-    const next: Record<string, string> = { aspectRatio: arValue };
-    if (widthIsPct) next.height = 'auto';
-    else if (heightIsPct) next.width = 'auto';
-    else next.height = 'auto';
+    const next = aspectLockOnPatch(styles, size);
+    if (!next) return;
     onUpdateMultiple(next);
-    trace.action('size:aspect-lock-on', { nodeId, ratio: arValue, ...next });
-  }, [isAspectRatioLocked, computed.width, computed.height, styles.width, styles.height, nodeId, onUpdateMultiple]);
+    trace.action('size:aspect-lock-on', { nodeId, ...next });
+  }, [isPlainVector, isAspectRatioLocked, computed.width, computed.height, styles, nodeId, onUpdateMultiple]);
 
   // ─── Width change handler ─────────────────────────────────────────────
+  // TRANSFORMED absolute element: a typed px size behaves like the resize
+  // handle — the element's own top-left corner stays visually fixed (the
+  // ResizeManager's opposite-corner compensation). Without it a rotated bar
+  // slid along its axis on every value change (2026-09-08). Returns the
+  // combined size + inset write, or null when the plain write is right.
+  const transformedSizeWrite = useCallback((axis: 'width' | 'height', v: string): Record<string, string> | null => {
+    const trimmed = (v || '').trim();
+    if (parentLayout !== 'none') return null;
+    const pos = styles.position;
+    if (pos !== 'absolute' && pos !== 'fixed') return null;
+    // px or % (the Dimensions unit toggle); anything else keeps the plain write.
+    const m = /^(-?[\d.]+)(px|%)?$/.exec(trimmed);
+    if (!m) return null;
+    const matrixStr = findNodeComputedStyles(nodeId, vpId, ['transform']).transform || '';
+    // Rotated → corner compensation; a NEGATIVE value (chevron past 0) → zero
+    // crossing (mirror across the anchored edge), rotated or not.
+    if (!needsSizeCompensation(matrixStr) && parseFloat(m[1]) >= 0) return null;
+    // Parent size from the bridge; the ORIGINAL box comes from the SOURCE
+    // styles (the live scrub has already changed the DOM by commit time).
+    const parent = findNodeParentInnerSize(nodeId, vpId);
+    const fallback = captureVisualRect(nodeId, vpId);
+    const parentWidth = parent.width || fallback?.parentWidth || 0;
+    const parentHeight = parent.height || fallback?.parentHeight || 0;
+    const parentSize = axis === 'width' ? parentWidth : parentHeight;
+    const isPctValue = m[2] === '%';
+    if (isPctValue && !(parentSize > 0)) return null;
+    const newValue = isPctValue ? (parseFloat(m[1]) / 100) * parentSize : parseFloat(m[1]);
+    const out = sizeInputWrite({
+      styles, parentWidth, parentHeight,
+      matrixStr, axis, newValue, writeValue: isPctValue ? `${m[1]}%` : undefined,
+      fallbackBox: fallback ? { left: fallback.left, top: fallback.top, width: fallback.width, height: fallback.height } : undefined,
+    });
+    if (out) trace.action('size:transformed-input-compensation', { nodeId, axis, value: newValue, write: out });
+    return out;
+  }, [parentLayout, styles, nodeId, vpId]);
+
+  // The box can mirror through zero (absolute/fixed outside a layout) — the
+  // field then shows the magnitude while scrubbing past 0.
+  const canMirrorThroughZero = parentLayout === 'none' && (styles.position === 'absolute' || styles.position === 'fixed');
+
+  // Live scrub twin: patch every key of the compensated write DOM-only so the
+  // element stays anchored WHILE the chevron drags, not only on release.
+  const liveSizeScrub = useCallback((axis: 'width' | 'height', v: string) => {
+    // VECTOR SET: patch BOTH dimensions, from the same function the commit
+    // uses — see vectorSetLinkedWrite. `liveSize` carries the other row's
+    // number so it counts along instead of sitting on the pre-scrub value.
+    const linked = isVectorSet ? vectorSetLinkedWrite(vectorVariantNatural, axis, v) : null;
+    if (linked) {
+      for (const [k, val] of Object.entries(linked)) updateStyleLive(k, val);
+      setLiveSize({ w: linked.width, h: linked.height });
+      return;
+    }
+    const w = transformedSizeWrite(axis, v);
+    if (!w) { updateStyleLive(axis, clampNonNegative(v)); return; }
+    for (const [k, val] of Object.entries(w)) updateStyleLive(k, val);
+  }, [transformedSizeWrite, updateStyleLive, isVectorSet, vectorVariantNatural, setLiveSize]);
+
+  // ─── Plain vector: W×H px + lock (see isPlainVector) ──────────────────
+  // Both writes go through vectorSizePatch: locked → the other side follows
+  // through the stored ratio; unlocked → only the typed side (a legacy
+  // non-px other side is frozen to px). A fill flex or a stretch left on the
+  // vector would override a px size, so it comes off in the same write.
+  const vectorWrite = useCallback((axis: 'width' | 'height', v: string): Record<string, string> | null => {
+    const size = { width: computed.width, height: computed.height };
+    const patch = vectorSizePatch(axis, v, styles, size, aspectRatioNum);
+    if (!patch) return null;
+    if (isWidthFillMain || isHeightFillMain) Object.assign(patch, exitFillFlexPatch(true, flexVal));
+    if ((isWidthFillCross || isHeightFillCross) && styles.alignSelf === 'stretch') patch.alignSelf = '';
+    return patch;
+  }, [styles, computed.width, computed.height, aspectRatioNum, isWidthFillMain, isHeightFillMain, isWidthFillCross, isHeightFillCross, flexVal]);
+
+  const handleVectorSize = useCallback((axis: 'width' | 'height', v: string) => {
+    const patch = vectorWrite(axis, v);
+    if (!patch) return;
+    // Unlocked single-axis write on a rotated absolute vector: keep its
+    // corner anchored, same as the normal rows.
+    const keys = Object.keys(patch);
+    const compensated = keys.length === 1 ? transformedSizeWrite(axis, patch[axis]) : null;
+    onUpdateMultiple(compensated ?? patch);
+    trace.action('size:vector-size', { nodeId, axis, locked: !!aspectRatioNum, ...(compensated ?? patch) });
+  }, [vectorWrite, transformedSizeWrite, onUpdateMultiple, nodeId, aspectRatioNum]);
+
+  const liveVectorScrub = useCallback((axis: 'width' | 'height', v: string) => {
+    const patch = vectorWrite(axis, v);
+    if (!patch) return;
+    for (const k of ['width', 'height'] as const) if (patch[k]) updateStyleLive(k, patch[k]);
+    setLiveSize({ w: patch.width ?? '', h: patch.height ?? '' });
+  }, [vectorWrite, updateStyleLive, setLiveSize]);
+
   const handleWidthChange = useCallback((v: string) => {
+    // VECTOR SET — the two dimensions are ONE number: a vector has a single
+    // aspect, so typing either field writes BOTH as definite px through the
+    // variant's ratio. Definite px is what the live-component pipeline is built
+    // around (the sandbox wrapper bakes user dims as px); `auto` +
+    // `aspect-ratio` failed on this node twice — an auto width sat at a stale
+    // 227px because the wrapper feeds its old measurement back
+    // (`hasUserDim` counts 'auto'), and an auto height was dropped by the
+    // instance style writer, leaving the wrapper at its 40px placeholder (user
+    // reports 2026-09-21). `aspectRatio: ''` clears any ratio an earlier
+    // attempt stored, which would otherwise route the NEXT edit through the
+    // generic lock and flip a dimension back to `auto`.
+    const linkedW = isVectorSet ? vectorSetLinkedWrite(vectorVariantNatural, 'width', v) : null;
+    if (linkedW) {
+      onUpdateMultiple({ ...linkedW, aspectRatio: '' });
+      // A px written INTO a Fit row (label scrub — typing arrives as a unit
+      // change) makes it the fixed one; the label must not go on saying auto.
+      if (isFitRow(vectorFitDim, 'width')) queueMutation({ type: 'updateHtmlAttrs', nodeId, attrs: { [FIT_DIM_ATTR]: 'height' } });
+      trace.action('size:width-change-vector-set', { nodeId, ...linkedW });
+      return;
+    }
     // Currently in fill mode — changing the multiplier (preserve shrink + basis)
-    if (isWidthFill) {
+    if (isWidthFillMain) {
       const mult = Math.max(1, parseFloat(v) || 1);
       trace.action('size:width-fill-change', { nodeId, multiplier: mult });
       onUpdate('flex', formatFlex({ ...flex, grow: mult }));
       return;
     }
-    // Aspect ratio locked — keep ratio honest while the user types.
-    // Strategy: width is allowed to be the controlling dimension; if the
-    // user changes width while height was the controller (height
-    // non-auto), flip height to `auto` so the browser recomputes via
-    // `aspect-ratio`. % values get normalised to the visible width so
-    // unit swaps don't jump the element. Insets disable the lock path
-    // up at `shouldShowAspectLock`, but guard here too in case a user
-    // re-enabled an inset somehow.
+    // A size typed on a CROSS-axis fill leaves Fill: drop a stretch spelling with the write
+    // (a 100% width has none — an authored alignSelf stays).
+    if (isWidthFillCross && styles.alignSelf === 'stretch') onUpdate('alignSelf', '');
+    // Aspect ratio locked — the width the user wrote drives, height derives
+    // (lockedDimensionWrite). Insets disable the lock path up at
+    // `shouldShowAspectLock`, but guard here too in case a user re-enabled
+    // an inset somehow.
     if (aspectRatioNum && !inset.horizontalInset) {
       const trimmed = (v || '').trim().toLowerCase();
-      if (trimmed === '' || trimmed === 'auto' || trimmed === 'fill') {
+      if (trimmed === '' || isFitSize(trimmed) || trimmed === 'fill') {
         // Auto/fill paths flow through the unit handler instead — fall
         // through to the normal write here to avoid double-handling.
         onUpdate('width', v);
         return;
       }
-      const newUnit = (v.replace(/[\d.-]/g, '').trim() || 'px') as DimUnit;
-      const heightIsAuto = styles.height === 'auto';
-      if (heightIsAuto) {
-        // Width is already the controlling dimension — straight update.
-        // CSS keeps height aligned to the ratio for free.
-        onUpdate('width', v);
-      } else {
-        // Switching control over to width. Convert the value to the
-        // matching percentage of parent if the user picked `%`, then
-        // flip height to auto.
-        let finalWidth = v;
-        if (newUnit === '%' && computed.parentWidth > 0) {
-          const pct = (computed.width / computed.parentWidth) * 100;
-          finalWidth = `${pct.toFixed(5)}%`;
-        }
-        onUpdateMultiple({ width: finalWidth, height: 'auto' });
-      }
-      trace.action('size:width-change-locked', { nodeId, value: v, finalUnit: newUnit });
+      const patch = lockedDimensionWrite('width', v, styles);
+      onUpdateMultiple(patch);
+      trace.action('size:width-change-locked', { nodeId, ...patch });
       return;
     }
     // Normal (non-fill, non-locked) handling
@@ -878,9 +1070,11 @@ export default function SizeTool({ styles: stylesProp, nodeId: nodeIdProp, vpId,
       const newStyles = computeDimensionInsetStyles(inset, styles, 'width', newWidth, computed.parentWidth);
       onUpdateMultiple(newStyles);
     } else {
-      onUpdate('width', v);
+      const compensated = transformedSizeWrite('width', v);
+      if (compensated) onUpdateMultiple(compensated);
+      else onUpdate('width', clampNonNegative(v));
     }
-  }, [isWidthFill, inset, styles, nodeId, computed.parentWidth, computed.width, aspectRatioNum, onUpdate, onUpdateMultiple]);
+  }, [isWidthFillMain, isWidthFillCross, inset, styles, nodeId, computed.parentWidth, computed.width, aspectRatioNum, onUpdate, onUpdateMultiple, transformedSizeWrite, isVectorSet, vectorVariantNatural, vectorFitDim]);
 
   // Shared trigger for the "switch to auto on a no-layout frame" case.
   // Called from both width AND height unit-change handlers BEFORE writing
@@ -907,6 +1101,23 @@ export default function SizeTool({ styles: stylesProp, nodeId: nodeIdProp, vpId,
   }, [nodeId, vpId]);
 
   const handleWidthUnitChange = useCallback((fromUnit: DimUnit, toUnit: DimUnit, typedNum?: number) => {
+    // VECTOR SET: the unit dropdown drives a Fit MODE, not the stored unit.
+    if (isVectorSet && vectorVariantNatural) {
+      const act = vectorSetUnitAction({
+        dim: 'width', toUnit, typedNum, variant: vectorVariantNatural,
+        computedWidth: computed.width, computedHeight: computed.height, fitDim: vectorFitDim,
+      });
+      if (act === 'blocked') {
+        trace.action('size:unit-change-blocked', { label: 'W', reason: 'vector-set-unit', toUnit });
+        return;
+      }
+      if (Object.keys(act.styles).length > 0) onUpdateMultiple(act.styles);
+      if (act.fitDim !== undefined) queueMutation({ type: 'updateHtmlAttrs', nodeId, attrs: { [FIT_DIM_ATTR]: act.fitDim } });
+      trace.action('size:unit-change', { label: 'W', from: fromUnit, to: toUnit, vectorSet: act });
+      if (!act.passThrough) return;
+    }
+    // Leaving a CROSS-axis fill for any other unit: drop a stretch spelling with the write.
+    if (isWidthFillCross && toUnit !== 'fill' && styles.alignSelf === 'stretch') onUpdate('alignSelf', '');
     // Switching TO fill
     if (toUnit === 'fill') {
       trace.action('size:width-fill', { nodeId, isMainAxis: widthIsMainAxis });
@@ -914,9 +1125,10 @@ export default function SizeTool({ styles: stylesProp, nodeId: nodeIdProp, vpId,
         // Main axis: use flex grow
         onUpdateMultiple({ width: '', flex: makeFillFlex(1) });
       } else {
-        // Cross axis: 100% — on a replica with a flipped parent, pair the
-        // flex re-base so the base row-fill doesn't collapse the height.
-        onUpdateMultiple(crossAxisFillPatch('width', !isPrimary, flexVal));
+        // Cross axis: 100% (drops a stretch left from the old spelling) — on a
+        // replica with a flipped parent, pair the flex re-base so the base
+        // row-fill doesn't collapse the height.
+        onUpdateMultiple(crossAxisFillPatch('width', !isPrimary, flexVal, styles.alignSelf));
       }
       return;
     }
@@ -932,17 +1144,26 @@ export default function SizeTool({ styles: stylesProp, nodeId: nodeIdProp, vpId,
     // EXCEPT when the user typed a number over the auto placeholder: that
     // number is the intent, not the size the element happens to have.
     const currentPx = resolveUnitChangePx(toUnit, typedNum, computed.width);
-    const { vpWidth: simVpWidth } = getInteractingViewport();
+    // vw / vh / % are measured against the width the tile is DRAWN at (a start-model breakpoint's
+    // start) — never the stored width, which is where its range ends.
+    const simVpWidth = getDefaultStore().get(interactingViewportRenderWidthAtom);
     const simVpHeight = estimatedVpHeight(simVpWidth);
     if (toUnit === 'auto') {
       const selfNode = getNodesSnapshot().get(nodeId);
       // CODE COMPONENT instance: auto is not a legal state (the option is
       // greyed out in the dropdown; this guards keyboard/legacy paths).
       // Removing the override would leave the wrapper sizeless → collapse.
-      if (selfNode?.isCodeComponent) {
+      // An ICON SET carries `isCodeComponent` only so it LIVE-RENDERS instead of
+      // being expanded inline; it paints an SVG with an intrinsic size, so auto
+      // resolves. Enabling the dropdown option alone did nothing because this
+      // guard still refused the write (user report 2026-09-21) — the two
+      // decisions have to agree, so both ask the same question.
+      if (selfNode?.isCodeComponent && !isVectorSetComponentFile(selfNode.componentFile)) {
         trace.action('size:unit-change-blocked', { label: 'W', reason: 'code-component-fixed-only' });
         return;
       }
+      // VECTOR SET: locked aspect — derive this dimension from the other rather
+      // than hugging the variant's intrinsic size. See vectorSetFitSize.
       // Exiting main-axis FILL: neutralise the grow flex in the SAME write —
       // a fit-size width with `flex: '1 0 0px'` left behind still DETECTS as
       // fill (isWidthFillMain), so the dropdown snaps back and the node keeps
@@ -973,21 +1194,27 @@ export default function SizeTool({ styles: stylesProp, nodeId: nodeIdProp, vpId,
         if (!activeVar && interactVp && !interactVp.isPrimary) {
           if (unfill) onUpdateMultiple({ width: 'auto', ...unfill });
           else onUpdate('width', 'auto');
-          queueMutation({ type: 'ensureInstanceHugMarker', nodeId, dim: 'width' });
+          forEachSelectedInstance((id) => queueMutation({ type: 'ensureInstanceHugMarker', nodeId: id, dim: 'width' }));
           trace.action('size:unit-change', { label: 'W', from: fromUnit, to: toUnit, value: 0, instanceHugMaster: true, viewportBand: interactVp.id, unfill: !!unfill });
           return;
         }
-        if (unfill) queueMutation({ type: 'updateStyles', nodeId, styles: { ...unfill } });
-        queueMutation({ type: 'autoSizeInstanceDim', nodeId, dim: 'width', activeVariant: activeVar });
+        forEachSelectedInstance((id) => {
+          if (unfill) queueMutation({ type: 'updateStyles', nodeId: id, styles: { ...unfill } });
+          queueMutation({ type: 'autoSizeInstanceDim', nodeId: id, dim: 'width', activeVariant: activeVar });
+        });
         trace.action('size:unit-change', { label: 'W', from: fromUnit, to: toUnit, value: 0, instanceHugMaster: true, activeVar: activeComponentVariant, unfill: !!unfill });
         return;
       }
       maybeInjectLayoutForAuto();
       freezeChildrenForAuto('width');
-      // "Fit" → min-content (sizes to content on flex/layout)
-      if (unfill) onUpdateMultiple({ width: FIT_SIZE, ...unfill });
+      // "Fit" → min-content (sizes to content on flex/layout). Locked: if
+      // height was the Fit side, it takes over as the driver.
+      const fit = aspectRatioNum && !inset.horizontalInset
+        ? lockedFitWrite('width', styles, computed)
+        : { width: FIT_SIZE };
+      if (unfill || Object.keys(fit).length > 1) onUpdateMultiple({ ...fit, ...unfill });
       else onUpdate('width', FIT_SIZE);
-      trace.action('size:unit-change', { label: 'W', from: fromUnit, to: toUnit, value: 0, unfill: !!unfill });
+      trace.action('size:unit-change', { label: 'W', from: fromUnit, to: toUnit, value: 0, unfill: !!unfill, locked: !!aspectRatioNum });
       return;
     }
     const newVal = convertPxToDimUnit(currentPx, toUnit, computed.parentWidth, simVpWidth, simVpHeight);
@@ -999,71 +1226,51 @@ export default function SizeTool({ styles: stylesProp, nodeId: nodeIdProp, vpId,
       else onUpdate('width', newVal);
       return;
     }
+    // Locked: a definite width typed into (or picked for) the Fit side makes
+    // width the driver — leaving height definite too would drop the ratio.
+    if (aspectRatioNum && !inset.horizontalInset) {
+      const patch = lockedDimensionWrite('width', newVal, styles);
+      onUpdateMultiple(patch);
+      trace.action('size:unit-change', { label: 'W', from: fromUnit, to: toUnit, currentPx, locked: true, ...patch });
+      return;
+    }
     onUpdate('width', newVal);
     trace.action('size:unit-change', { label: 'W', from: fromUnit, to: toUnit, currentPx, newVal });
-  }, [widthIsMainAxis, isWidthFillMain, flexVal, nodeId, computed, onUpdate, onUpdateMultiple, maybeInjectLayoutForAuto, freezeChildrenForAuto, activeComponentVariant]);
+  }, [widthIsMainAxis, isWidthFillMain, isWidthFillCross, styles, flexVal, nodeId, computed, onUpdate, onUpdateMultiple, maybeInjectLayoutForAuto, freezeChildrenForAuto, activeComponentVariant, isVectorSet, vectorVariantNatural, vectorFitDim, aspectRatioNum, inset.horizontalInset]);
 
   // ─── Height change handler ────────────────────────────────────────────
   const handleHeightChange = useCallback((v: string) => {
+    // VECTOR SET — mirror of handleWidthChange: both dimensions, definite px,
+    // linked through the variant's ratio.
+    const linkedH = isVectorSet ? vectorSetLinkedWrite(vectorVariantNatural, 'height', v) : null;
+    if (linkedH) {
+      onUpdateMultiple({ ...linkedH, aspectRatio: '' });
+      if (isFitRow(vectorFitDim, 'height')) queueMutation({ type: 'updateHtmlAttrs', nodeId, attrs: { [FIT_DIM_ATTR]: 'width' } });
+      trace.action('size:height-change-vector-set', { nodeId, ...linkedH });
+      return;
+    }
     // Currently in fill mode — changing the multiplier (preserve shrink + basis)
-    if (isHeightFill) {
+    if (isHeightFillMain) {
       const mult = Math.max(1, parseFloat(v) || 1);
       trace.action('size:height-fill-change', { nodeId, multiplier: mult });
       onUpdate('flex', formatFlex({ ...flex, grow: mult }));
       return;
     }
-    // Aspect ratio locked — mirror image of the width handler. Two cases
-    // diverge slightly so the user can change a pixel HEIGHT while width
-    // is the controlling dimension and still get a stable result:
-    //   • height in %/vh: same as width — flip control, recompute % from
-    //     visible height vs parent height.
-    //   • height in px: compute the delta and apply `delta * ratio` to
-    //     width so the result lands EXACTLY where the user expects
-    //     (typing 200 → 250 grows width by `50 * ratio`, not "set width
-    //     to a brand new 250 * ratio"). This matches the reference's "drag
-    //     height by 50 → width grows by 50 * ratio" behaviour and the
-    //     old builder's delta-based math.
+    // A size typed on a CROSS-axis fill leaves Fill: drop the stretch with the write.
+    if (isHeightFillCross) onUpdate('alignSelf', '');
+    // Aspect ratio locked — mirror of the width handler: the height the user
+    // wrote drives, width derives. (It used to keep WIDTH as the driver and
+    // turn the typed height into a width delta, so typing a height flipped
+    // both units back.)
     if (aspectRatioNum && !inset.verticalInset) {
       const trimmed = (v || '').trim().toLowerCase();
-      if (trimmed === '' || trimmed === 'auto' || trimmed === 'fill') {
+      if (trimmed === '' || isFitSize(trimmed) || trimmed === 'fill') {
         onUpdate('height', v);
         return;
       }
-      const newUnit = (v.replace(/[\d.-]/g, '').trim() || 'px') as DimUnit;
-      const widthIsAuto = styles.width === 'auto';
-      if (widthIsAuto) {
-        // Height is already the controlling dimension — straight update.
-        onUpdate('height', v);
-      } else if (newUnit === '%' || newUnit === 'vh' || newUnit === 'vw') {
-        // Switch control to height. Normalise % from the visible height.
-        let finalHeight = v;
-        if (newUnit === '%' && computed.parentHeight > 0) {
-          const pct = (computed.height / computed.parentHeight) * 100;
-          finalHeight = `${pct.toFixed(5)}%`;
-        }
-        onUpdateMultiple({ width: 'auto', height: finalHeight });
-      } else {
-        // Pixel height with non-auto width — keep WIDTH as the canonical
-        // controller and compute the new width that satisfies the ratio
-        // delta. Preserve width's existing unit (px or %) by converting
-        // back through parent if needed. Then set height to `auto` so CSS
-        // re-derives it from the ratio (no risk of drift between the
-        // value we computed and what the browser actually paints).
-        const newHeightPx = parseFloat(v) || 0;
-        const heightDelta = newHeightPx - computed.height;
-        const widthDelta = heightDelta * aspectRatioNum;
-        const newWidthPx = computed.width + widthDelta;
-        const widthUnit = (String(styles.width || '').replace(/[\d.-]/g, '').trim() || 'px') as DimUnit;
-        let finalWidth: string;
-        if (widthUnit === '%' && computed.parentWidth > 0) {
-          const pct = (newWidthPx / computed.parentWidth) * 100;
-          finalWidth = `${pct.toFixed(5)}%`;
-        } else {
-          finalWidth = `${Math.round(newWidthPx)}${widthUnit}`;
-        }
-        onUpdateMultiple({ width: finalWidth, height: 'auto' });
-      }
-      trace.action('size:height-change-locked', { nodeId, value: v, finalUnit: newUnit });
+      const patch = lockedDimensionWrite('height', v, styles);
+      onUpdateMultiple(patch);
+      trace.action('size:height-change-locked', { nodeId, ...patch });
       return;
     }
     // Normal (non-fill, non-locked) handling
@@ -1073,18 +1280,37 @@ export default function SizeTool({ styles: stylesProp, nodeId: nodeIdProp, vpId,
       const newStyles = computeDimensionInsetStyles(inset, styles, 'height', newHeight, computed.parentHeight);
       onUpdateMultiple(newStyles);
     } else {
-      onUpdate('height', v);
+      const compensated = transformedSizeWrite('height', v);
+      if (compensated) onUpdateMultiple(compensated);
+      else onUpdate('height', clampNonNegative(v));
     }
-  }, [isHeightFill, inset, styles, nodeId, computed.parentHeight, computed.height, computed.width, computed.parentWidth, aspectRatioNum, onUpdate, onUpdateMultiple]);
+  }, [isHeightFillMain, isHeightFillCross, inset, styles, nodeId, computed.parentHeight, computed.height, computed.width, computed.parentWidth, aspectRatioNum, onUpdate, onUpdateMultiple, transformedSizeWrite, isVectorSet, vectorVariantNatural, vectorFitDim]);
 
   const handleHeightUnitChange = useCallback((fromUnit: DimUnit, toUnit: DimUnit, typedNum?: number) => {
+    // VECTOR SET: the unit dropdown drives a Fit MODE, not the stored unit.
+    if (isVectorSet && vectorVariantNatural) {
+      const act = vectorSetUnitAction({
+        dim: 'height', toUnit, typedNum, variant: vectorVariantNatural,
+        computedWidth: computed.width, computedHeight: computed.height, fitDim: vectorFitDim,
+      });
+      if (act === 'blocked') {
+        trace.action('size:unit-change-blocked', { label: 'H', reason: 'vector-set-unit', toUnit });
+        return;
+      }
+      if (Object.keys(act.styles).length > 0) onUpdateMultiple(act.styles);
+      if (act.fitDim !== undefined) queueMutation({ type: 'updateHtmlAttrs', nodeId, attrs: { [FIT_DIM_ATTR]: act.fitDim } });
+      trace.action('size:unit-change', { label: 'H', from: fromUnit, to: toUnit, vectorSet: act });
+      if (!act.passThrough) return;
+    }
+    // Leaving a CROSS-axis fill for any other unit: drop the stretch with the write.
+    if (isHeightFillCross && toUnit !== 'fill') onUpdate('alignSelf', '');
     // Switching TO fill
     if (toUnit === 'fill') {
       trace.action('size:height-fill', { nodeId, isMainAxis: heightIsMainAxis });
       if (heightIsMainAxis) {
         onUpdateMultiple({ height: '', flex: makeFillFlex(1) });
       } else {
-        // Cross axis: 100% — replica-flipped parent pairs the flex re-base
+        // Cross axis: a stretch — replica-flipped parent pairs the flex re-base
         // (see handleWidthUnitChange).
         onUpdateMultiple(crossAxisFillPatch('height', !isPrimary, flexVal));
       }
@@ -1095,15 +1321,21 @@ export default function SizeTool({ styles: stylesProp, nodeId: nodeIdProp, vpId,
     // EXCEPT when the user typed a number over the auto placeholder: that
     // number is the intent, not the size the element happens to have.
     const currentPx = resolveUnitChangePx(toUnit, typedNum, computed.height);
-    const { vpWidth: simVpWidth } = getInteractingViewport();
+    // vw / vh / % are measured against the width the tile is DRAWN at (a start-model breakpoint's
+    // start) — never the stored width, which is where its range ends.
+    const simVpWidth = getDefaultStore().get(interactingViewportRenderWidthAtom);
     const simVpHeight = estimatedVpHeight(simVpWidth);
     if (toUnit === 'auto') {
       const selfNode = getNodesSnapshot().get(nodeId);
       // CODE COMPONENT instance: fixed-only — see handleWidthUnitChange.
-      if (selfNode?.isCodeComponent) {
+      // Icon sets are exempt for the same reason as the width branch above:
+      // the flag means "live-rendered", not "no intrinsic size".
+      if (selfNode?.isCodeComponent && !isVectorSetComponentFile(selfNode.componentFile)) {
         trace.action('size:unit-change-blocked', { label: 'H', reason: 'code-component-fixed-only' });
         return;
       }
+      // VECTOR SET: locked aspect — derive this dimension from the other rather
+      // than hugging the variant's intrinsic size. See vectorSetFitSize.
       // Exiting main-axis FILL: clear the grow flex in the same write — see
       // handleWidthUnitChange. Same fix mirrored here.
       const unfill = exitFillFlexPatch(heightIsMainAxis, flexVal);
@@ -1117,21 +1349,27 @@ export default function SizeTool({ styles: stylesProp, nodeId: nodeIdProp, vpId,
         if (!activeVar && interactVp && !interactVp.isPrimary) {
           if (unfill) onUpdateMultiple({ height: 'auto', ...unfill });
           else onUpdate('height', 'auto');
-          queueMutation({ type: 'ensureInstanceHugMarker', nodeId, dim: 'height' });
+          forEachSelectedInstance((id) => queueMutation({ type: 'ensureInstanceHugMarker', nodeId: id, dim: 'height' }));
           trace.action('size:unit-change', { label: 'H', from: fromUnit, to: toUnit, value: 0, instanceHugMaster: true, viewportBand: interactVp.id, unfill: !!unfill });
           return;
         }
-        if (unfill) queueMutation({ type: 'updateStyles', nodeId, styles: { ...unfill } });
-        queueMutation({ type: 'autoSizeInstanceDim', nodeId, dim: 'height', activeVariant: activeVar });
+        forEachSelectedInstance((id) => {
+          if (unfill) queueMutation({ type: 'updateStyles', nodeId: id, styles: { ...unfill } });
+          queueMutation({ type: 'autoSizeInstanceDim', nodeId: id, dim: 'height', activeVariant: activeVar });
+        });
         trace.action('size:unit-change', { label: 'H', from: fromUnit, to: toUnit, value: 0, instanceHugMaster: true, activeVar: activeComponentVariant, unfill: !!unfill });
         return;
       }
       maybeInjectLayoutForAuto();
       freezeChildrenForAuto('height');
-      // "Fit" → min-content
-      if (unfill) onUpdateMultiple({ height: FIT_SIZE, ...unfill });
+      // "Fit" → min-content. Locked: if width was the Fit side, it takes
+      // over as the driver.
+      const fit = aspectRatioNum && !inset.verticalInset
+        ? lockedFitWrite('height', styles, computed)
+        : { height: FIT_SIZE };
+      if (unfill || Object.keys(fit).length > 1) onUpdateMultiple({ ...fit, ...unfill });
       else onUpdate('height', FIT_SIZE);
-      trace.action('size:unit-change', { label: 'H', from: fromUnit, to: toUnit, value: 0, unfill: !!unfill });
+      trace.action('size:unit-change', { label: 'H', from: fromUnit, to: toUnit, value: 0, unfill: !!unfill, locked: !!aspectRatioNum });
       return;
     }
     const newVal = convertPxToDimUnit(currentPx, toUnit, computed.parentHeight, simVpWidth, simVpHeight);
@@ -1141,9 +1379,17 @@ export default function SizeTool({ styles: stylesProp, nodeId: nodeIdProp, vpId,
       else onUpdate('height', newVal);
       return;
     }
+    // Locked: a definite height typed into (or picked for) the Fit side makes
+    // height the driver — see handleWidthUnitChange.
+    if (aspectRatioNum && !inset.verticalInset) {
+      const patch = lockedDimensionWrite('height', newVal, styles);
+      onUpdateMultiple(patch);
+      trace.action('size:unit-change', { label: 'H', from: fromUnit, to: toUnit, currentPx, locked: true, ...patch });
+      return;
+    }
     onUpdate('height', newVal);
     trace.action('size:unit-change', { label: 'H', from: fromUnit, to: toUnit, currentPx, newVal });
-  }, [heightIsMainAxis, isHeightFillMain, flexVal, nodeId, computed, onUpdate, onUpdateMultiple, maybeInjectLayoutForAuto, freezeChildrenForAuto, activeComponentVariant]);
+  }, [heightIsMainAxis, isHeightFillMain, isHeightFillCross, styles, flexVal, nodeId, computed, onUpdate, onUpdateMultiple, maybeInjectLayoutForAuto, freezeChildrenForAuto, activeComponentVariant, isVectorSet, vectorVariantNatural, vectorFitDim, aspectRatioNum, inset.verticalInset]);
 
   // ─── Flex shorthand parsing ──────────────────────────────────────────
   const flex = parseFlex(styles.flex || '');
@@ -1199,7 +1445,8 @@ export default function SizeTool({ styles: stylesProp, nodeId: nodeIdProp, vpId,
   // ─── Render ───────────────────────────────────────────────────────────
   // Viewport frame has no min/max CSS knobs — the breakpoint width is the
   // only configurable dimension. Suppress the add-property menu.
-  const addAction = !isViewportFrame && advancedOptions.length > 0 ? (
+  // A plain vector has no min/max either — its size is W×H px (see isPlainVector).
+  const addAction = !isViewportFrame && !isPlainVector && advancedOptions.length > 0 ? (
     <div className="relative">
       <button
         onClick={() => setDropdownOpen(v => !v)}
@@ -1229,8 +1476,64 @@ export default function SizeTool({ styles: stylesProp, nodeId: nodeIdProp, vpId,
     </div>
   ) : null;
 
+  // Plain vector size row values — px always (a legacy Fit / % side shows
+  // what it renders at); a live scrub's numbers win while it runs.
+  const vectorW = parseFloat(liveSize?.w || vectorDisplayValue('width', styles, computed)) || 0;
+  const vectorH = parseFloat(liveSize?.h || vectorDisplayValue('height', styles, computed)) || 0;
+  const aspectLockIcon = (locked: boolean) => (
+    <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+      <rect x="3" y="11" width="18" height="11" rx="2" ry="2" />
+      <path d={locked ? 'M7 11V7a5 5 0 0 1 10 0v4' : 'M7 11V7a5 5 0 0 1 9.9-1'} />
+    </svg>
+  );
+
   return (
     <ToolSection title="Dimensions" action={addAction}>
+      {isPlainVector ? (
+        // Plain vector: one Size row — W×H px + the lock, no unit choice
+        // (reference shape parity, see isPlainVector). Reset Override clears
+        // BOTH sides: one without the other would distort the shape.
+        <div className="flex items-center justify-between w-full">
+          <ControlLabel
+            label="Size"
+            property="width"
+            hideCreateVariable
+            hideResetStyle={isPrimary}
+            overridden={hasOverride('width') || hasOverride('height') || undefined}
+            onResetOverride={() => onUpdateMultiple({ width: '', height: '' })}
+          />
+          {/* The lock hangs absolute off the inputs' left edge so W/H keep
+              the same widths as every other two-input row (Space X/Y). */}
+          <div className="relative flex items-center gap-1 w-full">
+            <button
+              type="button"
+              onClick={handleAspectRatioToggle}
+              className={`absolute right-full mr-1 top-1/2 -translate-y-1/2 p-0.5 cut-corners cursor-pointer transition-colors hover:bg-[var(--bg-hover)] ${isAspectRatioLocked ? 'text-[var(--accent-text)]' : 'text-[var(--text-secondary)]'}`}
+              title={isAspectRatioLocked ? 'Unlock aspect ratio' : 'Lock aspect ratio'}
+            >
+              {aspectLockIcon(isAspectRatioLocked)}
+            </button>
+            <div className="flex-1" data-vector-size="width">
+              <ToolInput
+                value={String(vectorW)}
+                onChange={(v) => handleVectorSize('width', v)}
+                onChangeLive={(v) => liveVectorScrub('width', v)}
+                onCommit={(v) => handleVectorSize('width', v)}
+                chevronLabel="W"
+              />
+            </div>
+            <div className="flex-1" data-vector-size="height">
+              <ToolInput
+                value={String(vectorH)}
+                onChange={(v) => handleVectorSize('height', v)}
+                onChangeLive={(v) => liveVectorScrub('height', v)}
+                onCommit={(v) => handleVectorSize('height', v)}
+                chevronLabel="H"
+              />
+            </div>
+          </div>
+        </div>
+      ) : (<>
       {isViewportFrame && currentViewportConfig ? (
         // Viewport breakpoint row: writes the canvas viewport `width` config
         // (persisted to the @canvas block), NOT a CSS dimension. Height is
@@ -1240,14 +1543,14 @@ export default function SizeTool({ styles: stylesProp, nodeId: nodeIdProp, vpId,
         // apply. Unit is locked to px.
         <DimensionRow
           label="Width"
-          value={`${currentViewportConfig.width}px`}
+          value={`${startOf(currentViewportConfig)}px`}
           onChange={handleViewportBreakpointChange}
           // Chevron scrub live-tracks the tile via the widths atom only; the
           // commit (onChange via ToolInput's onCommit) runs the band rewrite
           // ONCE on release — same live/commit split as the tile drag.
           onChangeLive={handleViewportBreakpointLive}
           onUnitChange={() => {}}
-          computedSize={currentViewportConfig.width}
+          computedSize={startOf(currentViewportConfig)}
           parentSize={currentViewportConfig.width}
           unitOptions={[{ value: 'px', label: 'px' }]}
           hideResetStyle
@@ -1265,12 +1568,14 @@ export default function SizeTool({ styles: stylesProp, nodeId: nodeIdProp, vpId,
           // smooth", live find 2026-07-19). DOM-only patch per tick; the
           // release commits once via onCommit → handleWidthChange. Fill
           // multipliers and inset-derived widths keep the legacy path.
-          onChangeLive={isWidthFill || inset.horizontalInset ? undefined : (v) => updateStyleLive('width', v)}
+          onChangeLive={isWidthFill || inset.horizontalInset ? undefined : (v) => liveSizeScrub('width', v)}
+          mirrorNegative={canMirrorThroughZero && !isWidthFill && !inset.horizontalInset}
           onUnitChange={handleWidthUnitChange}
-          computedSize={computed.width}
+          computedSize={isVectorSet && liveSize?.w ? parseFloat(liveSize.w) : computed.width}
           parentSize={computed.parentWidth}
           unitOptions={widthUnitOptions}
-          currentUnit={widthHug ? 'auto' : isWidthFill ? 'fill' : undefined}
+          currentUnit={isFitRow(vectorFitDim, 'width') ? 'auto' : widthHug ? 'auto' : isWidthFill ? 'fill' : undefined}
+          fillCross={isWidthFillCross}
           hideResetStyle={isPrimary}
           overridden={isWidthFill && flexFillOverridden ? true : undefined}
           onResetOverride={isVectorSet ? resetVectorSetSize : (isWidthFill && flexFillOverridden ? resetFlexFillOverride : undefined)}
@@ -1319,16 +1624,25 @@ export default function SizeTool({ styles: stylesProp, nodeId: nodeIdProp, vpId,
               />
             </svg>
 
+            {/* A VECTOR SET's ratio is not a user choice — the artwork has one
+                aspect and both dimensions derive from it, so the toggle is shown
+                locked and disabled (reference parity: the reference greys this icon out
+                for a vector). Everything else keeps the normal toggle. */}
             <button
               type="button"
-              onClick={handleAspectRatioToggle}
-              className={`p-0.5 hover:bg-[var(--bg-hover)] cut-corners transition-colors absolute z-10 pointer-events-auto cursor-pointer ${
-                isAspectRatioLocked ? 'text-[var(--accent-text)]' : 'text-[var(--text-secondary)]'
+              onClick={isVectorSet ? undefined : handleAspectRatioToggle}
+              disabled={isVectorSet}
+              className={`p-0.5 cut-corners transition-colors absolute z-10 pointer-events-auto ${
+                isVectorSet
+                  ? 'text-[var(--text-secondary)] opacity-50 cursor-default'
+                  : `cursor-pointer hover:bg-[var(--bg-hover)] ${isAspectRatioLocked ? 'text-[var(--accent-text)]' : 'text-[var(--text-secondary)]'}`
               }`}
               style={{ left: -7, top: 2 }}
-              title={isAspectRatioLocked ? 'Unlock aspect ratio' : 'Lock aspect ratio'}
+              title={isVectorSet
+                ? 'A vector keeps its aspect ratio'
+                : isAspectRatioLocked ? 'Unlock aspect ratio' : 'Lock aspect ratio'}
             >
-              {isAspectRatioLocked ? (
+              {(isAspectRatioLocked || isVectorSet) ? (
                 <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
                   <rect x="3" y="11" width="18" height="11" rx="2" ry="2" />
                   <path d="M7 11V7a5 5 0 0 1 10 0v4" />
@@ -1431,18 +1745,21 @@ export default function SizeTool({ styles: stylesProp, nodeId: nodeIdProp, vpId,
           value={heightHug ? 'auto' : isFitSvgWrapper ? `${Math.round(computed.height) || 0}px` : isHeightFillMain ? String(fillMultiplier) : isHeightFillCross ? String(Math.round(computed.height)) : (inset.verticalInset ? `${Math.round(computed.height)}px` : (roundPxDisplay(pickLiveDim(styles.height, liveSize?.h) || styles.height) || 'auto'))}
           onChange={isFitSvgWrapper ? () => {} : handleHeightChange}
           // LIVE scrub — same as the Width row above.
-          onChangeLive={isFitSvgWrapper || isHeightFill || inset.verticalInset ? undefined : (v) => updateStyleLive('height', v)}
+          onChangeLive={isFitSvgWrapper || isHeightFill || inset.verticalInset ? undefined : (v) => liveSizeScrub('height', v)}
+          mirrorNegative={canMirrorThroughZero && !isFitSvgWrapper && !isHeightFill && !inset.verticalInset}
           onUnitChange={isFitSvgWrapper ? () => {} : handleHeightUnitChange}
-          computedSize={computed.height}
+          computedSize={isVectorSet && liveSize?.h ? parseFloat(liveSize.h) : computed.height}
           parentSize={computed.parentHeight}
           unitOptions={isFitSvgWrapper ? [{ value: 'fit', label: 'Fit' }, ...heightUnitOptions.map(o => ({ ...o, disabled: true }))] : heightUnitOptions}
-          currentUnit={heightHug ? 'auto' : isFitSvgWrapper ? 'fit' as DimUnit : isHeightFill ? 'fill' : undefined}
+          currentUnit={isFitRow(vectorFitDim, 'height') ? 'auto' : heightHug ? 'auto' : isFitSvgWrapper ? 'fit' as DimUnit : isHeightFill ? 'fill' : undefined}
+          fillCross={isHeightFillCross}
           disabled={!!isFitSvgWrapper}
           hideResetStyle={isPrimary}
           overridden={isHeightFill && flexFillOverridden ? true : undefined}
           onResetOverride={isVectorSet ? resetVectorSetSize : (isHeightFill && flexFillOverridden ? resetFlexFillOverride : undefined)}
         />
       )}
+      </>)}
 
       {/* Flex/Grid child controls — only for relative children in flex/grid parents, never for top-level */}
       {(() => {

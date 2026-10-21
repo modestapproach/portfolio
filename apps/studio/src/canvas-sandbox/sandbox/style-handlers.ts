@@ -11,7 +11,7 @@ import { coerceCssNumberToPx, toKebab } from '@/shared/css-utils';
 import { findElByNodeId, findAllByNodeId } from '../sandbox-dom-utils';
 import { syncEditorFromLiveSvg as syncShapeEditorFromLiveSvg } from '../shape-edit-host';
 import { contentRoot, emit } from './sandbox-state';
-import { cornersForElement, shouldRefreshSubtree, emitSubtreeRefresh, emitElementRefresh, cornersAreDecoupled } from './rect-emit';
+import { cornersForElement, shouldRefreshSubtree, emitSubtreeRefresh, emitElementRefresh, cornersAreDecoupled, scheduleSubtreeRefresh } from './rect-emit';
 import { isSandboxDndInteracting } from '../sandbox-dnd-host';
 
 /** Two-pass style application — clear empty values first, then set non-empty.
@@ -110,7 +110,7 @@ export function untrackLiveImportant(el: HTMLElement, kebab: string): void {
    *  template.cssText` re-sync that can fire mid-drag — an inline `display:none`
    *  would get wiped by that, an `!important` rule wins over the non-important
    *  inline display the cssText copy restores. Cleared on drag end. */
-export function setCollectionGhostsHidden(containerId: string, vpPrefix: string, hidden: boolean): void {
+export function setCollectionGhostsHidden(containerId: string, vpPrefix: string, hidden: boolean, nodeId?: string): void {
     if (!contentRoot) return;
     const STYLE_ID = 'collection-ghost-hide-style';
     let styleEl = document.getElementById(STYLE_ID) as HTMLStyleElement | null;
@@ -120,11 +120,53 @@ export function setCollectionGhostsHidden(containerId: string, vpPrefix: string,
         styleEl.id = STYLE_ID;
         document.head.appendChild(styleEl);
       }
-      styleEl.textContent = `[data-node-id="${vpPrefix}${containerId}"] > [data-collection-ghost] { display: none !important; }`;
+      // `nodeId` = a node INSIDE the row is being dragged (a title, an image):
+      // hide only ITS copies in the ghost rows — `visibility` so every row keeps
+      // its layout — never the rows themselves. Ghost descendants carry
+      // data-node-id = vpPrefix + id + '__N' (see Renderer ghost build).
+      styleEl.textContent = nodeId
+        ? `[data-node-id="${vpPrefix}${containerId}"] > [data-collection-ghost] [data-node-id^="${vpPrefix}${nodeId}__"] { visibility: hidden !important; }`
+        : `[data-node-id="${vpPrefix}${containerId}"] > [data-collection-ghost] { display: none !important; }`;
     } else if (styleEl) {
       styleEl.textContent = '';
     }
-    trace.action('sandbox:collection-ghosts-hidden', { containerId, vpPrefix, hidden });
+    trace.action('sandbox:collection-ghosts-hidden', { containerId, vpPrefix, hidden, nodeId: nodeId ?? null });
+}
+
+/** Transient per-node hide for the host's drop pipeline (an auto-sized drop
+ *  is placed on the ghost size, measured, re-centred, THEN shown). Lives in a
+ *  document.head stylesheet — `injectCSS` writes into `[data-canvas-styles]`,
+ *  which the renderer REWRITES on every render, so a rule injected there was
+ *  wiped by the very render that painted the node (2026-09-08: the button
+ *  flashed at the ghost placement, then jumped). Idempotent per node. */
+const hiddenNodeKeys = new Set<string>();
+export function setNodeHidden(nodeId: string, vpPrefix: string, hidden: boolean): void {
+    const STYLE_ID = 'node-transient-hide-style';
+    const key = `${vpPrefix}${nodeId}`;
+    if (hidden) hiddenNodeKeys.add(key); else hiddenNodeKeys.delete(key);
+    let styleEl = document.getElementById(STYLE_ID) as HTMLStyleElement | null;
+    if (!styleEl) {
+      if (!hidden) return;
+      styleEl = document.createElement('style');
+      styleEl.id = STYLE_ID;
+      document.head.appendChild(styleEl);
+    }
+    styleEl.textContent = [...hiddenNodeKeys]
+      .map((k) => `[data-node-id="${k.replace(/"/g, '\\"')}"] { visibility: hidden !important; }`)
+      .join('\n');
+    trace.action('sandbox:node-transient-hide', { nodeId, vpPrefix, hidden, count: hiddenNodeKeys.size });
+}
+
+/** Ghost mirroring must NOT run while the canonical element is LIFTED by a
+ *  layout drag (liftNode stamps `data-lift-inline-snapshot` for the duration):
+ *  the per-frame lift geometry (left/top at the cursor, z-index…) would land on
+ *  every ghost copy, displacing the rows. Nothing repaired it afterwards when
+ *  the drop's forced render was skipped — the collection rows "disappeared"
+ *  after dragging the template row and releasing in place (2026-09-09). */
+function ghostFanOutAllowed(nodeId: string, vpPrefix: string): boolean {
+  if (!contentRoot) return false;
+  const canonical = findElByNodeId(contentRoot, vpPrefix, nodeId) as HTMLElement | null;
+  return !(canonical && canonical.hasAttribute('data-lift-inline-snapshot'));
 }
 
 export function patchStyles(nodeId: string, vpPrefix: string, styles: Record<string, string>, important: boolean): void {
@@ -182,7 +224,7 @@ export function patchStyles(nodeId: string, vpPrefix: string, styles: Record<str
     // ghost suffix (caller targeted a specific ghost) — apply only to
     // exact match in that case.
     const isCanonicalNodeId = !/__\d+$/.test(nodeId);
-    if (isCanonicalNodeId) {
+    if (isCanonicalNodeId && ghostFanOutAllowed(nodeId, vpPrefix)) {
       const ghostSiblings = Array.from(
         contentRoot.querySelectorAll<HTMLElement>(`[data-node-id^="${vpPrefix}${nodeId}__"]`),
       ).filter(g => g.getAttribute('data-id') === nodeId);
@@ -207,7 +249,11 @@ export function patchStyles(nodeId: string, vpPrefix: string, styles: Record<str
     // border-radius, opacity, …) so the cheap drag paths stay cheap.
     if (shouldRefreshSubtree(styles)) {
       if (isSandboxDndInteracting()) emitElementRefresh(el, emit);
-      else emitSubtreeRefresh(subtreeRefreshScope(el), emit);
+      // COALESCED: a committed batch patches each node separately and they
+      // usually share one scope (all root sections have the same parent), so
+      // the refresh runs once per frame per distinct scope — see
+      // `scheduleSubtreeRefresh`.
+      else scheduleSubtreeRefresh(subtreeRefreshScope(el), emit);
     }
 }
 
@@ -296,7 +342,7 @@ export function patchMultipleStyles(updates: PatchUpdate[]): void {
       // looked smooth on the row-zero template but ghosts only updated
       // after release. Symmetric fix.
       const isCanonicalNodeId = !/__\d+$/.test(update.nodeId);
-      if (isCanonicalNodeId) {
+      if (isCanonicalNodeId && ghostFanOutAllowed(update.nodeId, update.vpPrefix)) {
         const ghostSiblings = Array.from(
           contentRoot.querySelectorAll<HTMLElement>(`[data-node-id^="${update.vpPrefix}${update.nodeId}__"]`),
         ).filter(g => g.getAttribute('data-id') === update.nodeId);
@@ -348,7 +394,7 @@ export function patchMultipleStyles(updates: PatchUpdate[]): void {
       // on an auto-sized box, transform on a viewport root, etc.).
       if (shouldRefreshSubtree(update.styles)) {
         if (isSandboxDndInteracting()) emitElementRefresh(primary, emit);
-        else emitSubtreeRefresh(subtreeRefreshScope(primary), emit);
+        else scheduleSubtreeRefresh(subtreeRefreshScope(primary), emit);
       }
     }
 }

@@ -458,7 +458,17 @@ export function sortChildrenByVisualOrder(
   isComponentFile: boolean,
 ): string[] {
   if (!parent || childIds.length < 2) return [...childIds];
-  const display = parent.styles?.display || '';
+  // Resolve `display` for THIS viewport/variant, exactly as the `order` below
+  // is resolved. Reading `parent.styles.display` saw only the BASE value, so a
+  // frame that is flex only on a band (block or `display: none` at base, flex in
+  // an @media rule or a variant entry) bailed to JSX order here — while
+  // `isOrderedLayout` in the drag path resolved display properly and ran the
+  // commit anyway. The two disagreeing is what flattened a hand-built
+  // arrangement into source order in one drag (B18), and what left a bare JSX
+  // reorder on a parent hidden at base (user report 2026-09-21). One resolver
+  // for both, so they cannot drift apart again.
+  const display = getEffectiveLayerStyle(parent, 'display', layerVpId, vpConfigs, containerOverrides, isComponentFile)
+    || parent.styles?.display || '';
   if (display !== 'flex' && display !== 'inline-flex' && display !== 'grid' && display !== 'inline-grid') {
     return [...childIds];
   }
@@ -604,14 +614,13 @@ export function computeSelectionSets(
 // ─── Layer Row (pure — no useMemo, no layers array) ──────────────────────
 
 export const LayerRow = React.memo(function LayerRow({
-  layer, isSelected, isMapTemplate, isChildOfSelected, hasHighlightedChildren, isLastHighlightedChild,
+  layer, isSelected, isChildOfSelected, hasHighlightedChildren, isLastHighlightedChild,
   isDragOver, dropPosition, dropDepth, isDragging, effectiveHidden,
   onSelect, onToggleExpand, onDragStart, onContextMenu, onToggleLock, onToggleVisibility,
   isRenaming, onRenameCommit, onVariantRenameCommit, onDoubleClickLayout, isComponentMode, nodes, presetTokens, layerDisplay, layerFlexDirection,
 }: {
   layer: FlatLayer;
   isSelected: boolean;
-  isMapTemplate: boolean;
   isComponentMode: boolean;
   /** The row's RESOLVED `display` for its own viewport/variant (from
    *  resolveDisplayForLayer, computed once by the panel and shared with the eye
@@ -717,20 +726,16 @@ export const LayerRow = React.memo(function LayerRow({
   // over props already in memory, and memoising would need the styles object's
   // identity to be stable across edits, which it isn't.
   const preview = previewFailed ? null : deriveLayerPreview(node, nodes, 18, presetTokens);
-  // Map template nodes use orange, component mode/instances use purple, regular nodes use blue
+  // Component mode/instances use purple, regular nodes use blue
   const isComponentInstance = !!node.componentFile;
   const usePurple = isComponentMode || (isComponentInstance && !isSvgVector);
-  const selColor = isMapTemplate ? 'rgb(249, 115, 22)' : usePurple ? 'var(--accent-secondary)' : 'var(--accent)';
+  const selColor = usePurple ? 'var(--accent-secondary)' : 'var(--accent)';
   // Foreground for anything sitting ON the selected row's accent fill —
   // label, icons, chevron. Mirrors selColor's branching.
-  const selFg = isMapTemplate
-    ? '#0d1017'
-    : usePurple ? 'var(--accent-secondary-fg)' : 'var(--accent-fg)';
-  const selColorFaded = isMapTemplate
-    ? 'rgba(249, 115, 22, 0.2)'
-    : usePurple
-      ? 'color-mix(in srgb, var(--accent-secondary) 20%, transparent)'
-      : 'color-mix(in srgb, var(--accent) 20%, transparent)';
+  const selFg = usePurple ? 'var(--accent-secondary-fg)' : 'var(--accent-fg)';
+  const selColorFaded = usePurple
+    ? 'color-mix(in srgb, var(--accent-secondary) 20%, transparent)'
+    : 'color-mix(in srgb, var(--accent) 20%, transparent)';
 
   // The selection/child background lives on a SEPARATE, viewport-pinned layer
   // (rendered in the JSX below) so it can stay inset from both edges while the
@@ -836,7 +841,21 @@ export const LayerRow = React.memo(function LayerRow({
           </>
         )}
         {isDragOver && dropPosition === 'inside' && (
-          <div className="absolute inset-0 cut-corners pointer-events-none z-50" style={{ boxShadow: `inset 0 0 0 2px ${selColor}` }} />
+          // Drawn as a CUT SHELL, not an inset box-shadow: the overlay carries the
+          // row's clip-path, which slices a shadow ring straight off along the two
+          // diagonal cuts — the ring showed open notched corners (live find
+          // 2026-09-06). The house pattern for any bordered cut element is a
+          // rect `border` + `.cut-border` (gradient strokes that repaint the
+          // diagonal segments) colored through --cut-border-color. A faint fill
+          // keeps the target obvious at hairline width.
+          <div
+            className="absolute inset-0 cut-corners cut-border pointer-events-none z-50"
+            style={{
+              border: `1px solid ${selColor}`,
+              ['--cut-border-color' as string]: selColor,
+              backgroundColor: `color-mix(in srgb, ${selColor} 14%, transparent)`,
+            } as React.CSSProperties}
+          />
         )}
 
         {/* Expand/Collapse — chevron button when the row has children,
@@ -952,6 +971,7 @@ export const LayerRow = React.memo(function LayerRow({
         {isRenaming ? (
           <RenameInput
             initialName={node.name || node.type}
+            color={isSelected ? selFg : 'var(--text-primary)'}
             onCommit={(name) => {
               if (layer.isVariantHeader && layer.viewportId) {
                 onVariantRenameCommit(layer.viewportId, name);
@@ -983,8 +1003,10 @@ export const LayerRow = React.memo(function LayerRow({
         {/* Spacer to push actions to the right */}
         <div className="flex-1" />
 
-        {/* Lock & Visibility actions — visible on hover, always visible when hidden/locked */}
-        {!isViewer && !isVpHeader && layer.nodeId && (() => {
+        {/* Lock & Visibility actions — visible on hover, always visible when hidden/locked.
+         *  Out of the row WHILE RENAMING: the name field sits where they'd be clicked by mistake,
+         *  and the name gets the full width. They come back with the commit. */}
+        {!isRenaming && !isViewer && !isVpHeader && layer.nodeId && (() => {
           // Use the row-level `effectiveHidden` from the resolver (which
           // already cascades base + default-variant + per-variant + @media
           // overrides). The previous `|| node.styles.display === 'none'`
@@ -993,23 +1015,33 @@ export const LayerRow = React.memo(function LayerRow({
           // a non-default variant un-hides via `display: ''`.
           const isHidden = effectiveHidden;
           const isLocked = node.styles.pointerEvents === 'none';
-          const alwaysShow = isHidden || isLocked;
+          // Each action shows ON ITS OWN when its state is on: a locked row shows
+          // the padlock (solid fill, full-strength colour), a hidden row shows the
+          // crossed eye — the other icon stays hover-only. Showing both at once made
+          // the lock read as generic hover chrome (user report 2026-09-09).
+          const hoverOnly = 'opacity-0 group-hover:opacity-100';
+          const strokeColor = isSelected ? `color-mix(in srgb, ${selFg} 70%, transparent)` : '#666';
+          const onColor = isSelected ? selFg : 'var(--text-primary)';
           return (
-            <div className={`flex items-center gap-0.5 shrink-0 sticky right-2 z-10 transition-opacity ${alwaysShow ? 'opacity-100' : 'opacity-0 group-hover:opacity-100'}`}>
+            <div className="flex items-center gap-0.5 shrink-0 sticky right-2 z-10">
               <button
                 draggable={false}
                 onMouseDown={(e) => e.stopPropagation()}
                 onClick={(e) => { e.stopPropagation(); onToggleLock(layer.nodeId!); }}
-                className="p-0.5 rounded hover:bg-[var(--bg-hover)] transition-colors"
+                className={`p-0.5 rounded hover:bg-[var(--bg-hover)] transition-all ${isLocked ? 'opacity-100' : hoverOnly}`}
                 title={isLocked ? 'Unlock layer' : 'Lock layer'}
+                data-locked={isLocked ? 'true' : undefined}
               >
                 {isLocked ? (
-                  <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke={isSelected ? `color-mix(in srgb, ${selFg} 70%, transparent)` : '#666'} strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-                    <rect x="3" y="11" width="18" height="11" rx="2" /><path d="M7 11V7a5 5 0 0 1 10 0v4" />
+                  // SOLID padlock: filled body + closed shackle, full colour.
+                  <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke={onColor} strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                    <rect x="3" y="11" width="18" height="11" rx="2" fill={onColor} /><path d="M7 11V7a5 5 0 0 1 10 0v4" />
                   </svg>
                 ) : (
-                  <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke={isSelected ? `color-mix(in srgb, ${selFg} 70%, transparent)` : '#666'} strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-                    <rect x="3" y="11" width="18" height="11" rx="2" /><path d="M7 11V7a5 5 0 0 1 5-5 5 5 0 0 1 5 5v4" /><line x1="1" y1="1" x2="23" y2="23" />
+                  // Open padlock outline (shackle lifted) — no slash, so "unlocked"
+                  // can't be mistaken for "locked and crossed".
+                  <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke={strokeColor} strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                    <rect x="3" y="11" width="18" height="11" rx="2" /><path d="M7 11V7a5 5 0 0 1 9.9-1" />
                   </svg>
                 )}
               </button>
@@ -1017,15 +1049,15 @@ export const LayerRow = React.memo(function LayerRow({
                 draggable={false}
                 onMouseDown={(e) => e.stopPropagation()}
                 onClick={(e) => { e.stopPropagation(); onToggleVisibility(layer.nodeId!, layer.viewportId); }}
-                className="p-0.5 rounded hover:bg-[var(--bg-hover)] transition-colors"
+                className={`p-0.5 rounded hover:bg-[var(--bg-hover)] transition-all ${isHidden ? 'opacity-100' : hoverOnly}`}
                 title={isHidden ? 'Show layer' : 'Hide layer'}
               >
                 {isHidden ? (
-                  <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke={isSelected ? `color-mix(in srgb, ${selFg} 70%, transparent)` : '#666'} strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                  <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke={onColor} strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
                     <path d="M17.94 17.94A10.07 10.07 0 0 1 12 20c-7 0-11-8-11-8a18.45 18.45 0 0 1 5.06-5.94" /><path d="M9.9 4.24A9.12 9.12 0 0 1 12 4c7 0 11 8 11 8a18.5 18.5 0 0 1-2.16 3.19" /><line x1="1" y1="1" x2="23" y2="23" />
                   </svg>
                 ) : (
-                  <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke={isSelected ? `color-mix(in srgb, ${selFg} 70%, transparent)` : '#666'} strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                  <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke={strokeColor} strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
                     <path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z" /><circle cx="12" cy="12" r="3" />
                   </svg>
                 )}
@@ -1047,7 +1079,12 @@ export const LayerRow = React.memo(function LayerRow({
 
 // ─── Inline Rename Input ────────────────────────────────────────────────────
 
-function RenameInput({ initialName, onCommit }: { initialName: string; onCommit: (name: string) => void }) {
+function RenameInput({ initialName, onCommit, color }: {
+  initialName: string;
+  onCommit: (name: string) => void;
+  /** The static label's color, so the name reads the same while you type. */
+  color: string;
+}) {
   const [value, setValue] = React.useState(initialName);
   const [active, setActive] = React.useState(false);
   const inputRef = React.useRef<HTMLInputElement>(null);
@@ -1086,10 +1123,106 @@ function RenameInput({ initialName, onCommit }: { initialName: string; onCommit:
         if (e.key === 'Escape') finish(initialName);
       }}
       onBlur={() => { if (active) finish(value); }}
-      // `-my-0.5` cancels `py-0.5`'s height contribution so the row stays exactly as tall as the static
-      // label (which has no padding) — the white pill keeps its padding but doesn't grow the row.
-      className="text-xs font-medium leading-4 bg-white text-black border-0 outline-none px-1 py-0.5 -my-0.5 box-border rounded w-full"
-      style={{ minWidth: 40 }}
+      // INVISIBLE field: same font, color and box as the static label (no background, no padding),
+      // so renaming reads as typing straight into the layer name — just the caret and the selection.
+      className="text-xs font-medium leading-4 bg-transparent border-0 outline-none p-0 m-0 box-border w-full selection:bg-white/30"
+      style={{ minWidth: 40, color, caretColor: color }}
     />
   );
+}
+
+/**
+ * Every row that must be expanded for an overlay's contents to be visible.
+ *
+ * An overlay row is displayed under its TRIGGER, not under its real parent
+ * (see `overlaysByTrigger` in LayersPanel), so the path that reveals it runs up
+ * the trigger's ancestry. On a component instance that is the only path there
+ * is: the instance is a forced leaf whose sole child is the overlay it
+ * triggers, which is why entering overlay mode there left the whole subtree
+ * collapsed with no way to see the layers being edited (2026-09-18).
+ *
+ * Returns the viewport header, the overlay itself (so its children show), and
+ * each ancestor of its trigger — or of its real parent when it has no trigger.
+ */
+export function overlayExpandPath(
+  nodes: Map<string, CanvasNode>,
+  overlayId: string,
+  vpId: string,
+): string[] {
+  const overlay = nodes.get(overlayId);
+  if (!overlay) return [];
+  let triggerId: string | undefined;
+  try { triggerId = JSON.parse(overlay.attrs?.['data-overlay'] ?? '{}').triggerId; } catch { /* malformed spec */ }
+  const out = [`__vp_${vpId}`, `${vpId}:${overlayId}`];
+  let cur: string | null | undefined = (triggerId && nodes.has(triggerId)) ? triggerId : overlay.parentId;
+  const seen = new Set<string>();
+  while (cur && !seen.has(cur)) {
+    seen.add(cur);
+    out.push(`${vpId}:${cur}`);
+    cur = nodes.get(cur)?.parentId ?? null;
+  }
+  return out;
+}
+
+/** ONE ROW PER (viewport, node).
+ *
+ *  The layers tree is assembled by several loops — page children, canvas-node
+ *  roots, variant tiles, and overlays re-parented under their TRIGGER — and each
+ *  carries its own idea of what to skip. When two of them claim the same node
+ *  the panel shows it twice, which reads as corruption even though the file is
+ *  fine: a single overlay in the source rendered as four identical `Overlay`
+ *  rows (user report 2026-09-21).
+ *
+ *  A duplicate row id is always a bug in the assembly, never a legitimate state,
+ *  so the extras are dropped and returned for the caller to trace. */
+export function dedupeLayerRows<T extends { id: string }>(rows: T[]): { rows: T[]; duplicates: string[] } {
+  const seen = new Set<string>();
+  const out: T[] = [];
+  const duplicates: string[] = [];
+  for (const row of rows) {
+    if (seen.has(row.id)) { duplicates.push(row.id); continue; }
+    seen.add(row.id);
+    out.push(row);
+  }
+  return { rows: out, duplicates };
+}
+
+/** Which nodes an eye-icon click applies to.
+ *
+ *  The eye used to write only the row that was clicked, so hiding four selected
+ *  frames hid one of them (user report 2026-09-21). A click on a row INSIDE a
+ *  multi-selection acts on the whole selection; a click on a row outside it is a
+ *  single-node action, matching every other row control.
+ *
+ *  Ids no longer in the tree are dropped — a selection can outlive a node. */
+export function visibilityToggleTargets(
+  selectedIds: readonly string[],
+  clickedId: string,
+  exists: (id: string) => boolean,
+): string[] {
+  if (selectedIds.length > 1 && selectedIds.includes(clickedId)) {
+    const live = selectedIds.filter(exists);
+    if (live.length > 0) return live;
+  }
+  return [clickedId];
+}
+
+/** The display to write when UNHIDING a node on a non-primary viewport whose
+ *  hide lives in the BASE style.
+ *
+ *  Unhide normally writes `display: ''`, which deletes the override for that
+ *  viewport. That works when the hide IS an override — but when the node is
+ *  `display: none` in its base style, deleting a tablet override that never
+ *  existed changes nothing: the node flashed visible (optimistic flip + DOM
+ *  patch) and the next render hid it again (user report 2026-09-21). Only an
+ *  explicit value can beat a base one.
+ *
+ *  Hiding overwrote whatever display the node had, so the original is gone —
+ *  but the layout properties survive it, exactly as they do for a hidden frame
+ *  (see `authoredLayoutOfParent`), and they say what the node was. */
+export function visibleDisplayForUnhide(styles: Record<string, string> | undefined): string {
+  const has = (k: string) => !!styles?.[k] && styles[k].trim() !== '';
+  if (has('gridTemplateColumns') || has('gridTemplateRows') || has('gridAutoFlow')) return 'grid';
+  if (has('flexDirection') || has('flexWrap')) return 'flex';
+  return 'block';
 }

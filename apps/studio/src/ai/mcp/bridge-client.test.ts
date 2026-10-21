@@ -1,10 +1,21 @@
 import { describe, it, expect, beforeEach, vi } from 'vitest';
 import { getDefaultStore } from 'jotai';
-import { bridgeHandlers } from './bridge-client';
+import { bridgeHandlers, runBridgeRequest } from './bridge-client';
+import { lockBranch, unlockBranch } from '@/code/stores/agent-run-lock-store';
+import { agentRunEnd } from '@/ai/agent/bridge-tools';
 import { backend } from '@/backend';
 import { projectFS, resetProjectFS } from '@/code/project/project-fs';
 import { activeFilePathAtom } from '@/code/project/active-file-store';
 import { resetReadTracker } from './read-tracker';
+
+// Bridge writes await a REAL save and fail when it does not land (2026-10-14:
+// `committed:true` for writes the backend refused). Every test gets a
+// resolved project and a backend that accepts the save; the failure path is
+// pinned explicitly below.
+beforeEach(() => {
+  window.history.pushState({}, '', '/builder/proj123');
+  vi.spyOn(backend, 'saveProject').mockResolvedValue(undefined);
+});
 
 const PAGE_PATH = 'app/page.client.tsx';
 const PAGE = `'use client';
@@ -88,6 +99,27 @@ describe('bridgeHandlers', () => {
     expect(out.committed).toBe(true);
     expect(out.written).toEqual(['components/TestCard.tsx']);
     expect(projectFS.readFile('components/TestCard.tsx')).toContain('withResponsiveProps(TestCard)');
+  });
+
+  it('a run holding the branch does not bounce its OWN bridge writes (the Claude CLI engine submits through here)', async () => {
+    lockBranch('main');
+    try {
+      // A bare handler call is outside any agent window — the human-side
+      // lock (viewer reason `agent`) refuses it…
+      await expect(bridgeHandlers.submitFiles({
+        files: [{ path: 'components/TestCard.tsx', kind: 'component', code: CLEAN_COMPONENT }],
+      })).rejects.toThrow('view-only');
+      // …the bridge's own entry point runs it as agent work, and it lands.
+      const out = await runBridgeRequest('submitFiles', {
+        files: [{ path: 'components/TestCard.tsx', kind: 'component', code: CLEAN_COMPONENT }],
+      }) as any;
+      expect(out.committed).toBe(true);
+      expect(projectFS.readFile('components/TestCard.tsx')).toContain('withResponsiveProps(TestCard)');
+    } finally {
+      unlockBranch('main');
+      // The bridge write opened a run for the agent (attributeBridgeCall) — close it.
+      agentRunEnd({});
+    }
   });
 
   it('submitFiles bounces violations and writes NOTHING', async () => {
@@ -484,7 +516,7 @@ import React from 'react';
 export default function Page() {
   return <div data-id="root" data-name="Page" style={{ position: 'relative', width: '100%', display: 'flex', flexDirection: 'column' }}>
     <h1 data-id="hero-title" data-name="Title" style={{ position: 'relative', fontFamily: 'var(--typo-display-font)', fontSize: 'var(--typo-display-size)', fontWeight: 'var(--typo-display-weight)', color: 'var(--typo-display-color)', lineHeight: 'var(--typo-display-line-height)', margin: '0px' }}>Hello</h1>
-    <style>{\`@media (max-width: 1199px){ [data-id="hero-title"] { font-size: var(--typo-display-size-md); } }\`}</style>
+    <style>{\`@media (max-width: 1199px){ [data-id="hero-title"] { font-size: var(--typo-display-size-md) !important; } }\`}</style>
   </div>;
 }`;
     const { gateTurnFiles } = await import('@/ai/freeform/freeform-client');
@@ -577,5 +609,22 @@ export default withResponsiveProps(TestCard);
   it('rejects when the editor session is signed out', async () => {
     vi.stubGlobal('fetch', vi.fn(async () => ({ ok: false, status: 401, json: async () => ({}) }) as any));
     await expect(bridgeHandlers.publishListing({ path: 'components/TestCard.tsx', name: 'X' })).rejects.toThrow('Not signed in');
+  });
+});
+
+describe('submitFiles — committed means SAVED (2026-10-14)', () => {
+  beforeEach(() => {
+    resetProjectFS(new Map([[PAGE_PATH, PAGE]]));
+    getDefaultStore().set(activeFilePathAtom, PAGE_PATH);
+    resetReadTracker();
+  });
+  afterEach(() => { agentRunEnd({}); vi.restoreAllMocks(); });
+
+  it('a clean commit whose save the backend refuses comes back committed:false, with the reason', async () => {
+    vi.spyOn(backend, 'saveProject').mockRejectedValue(new Error('Save failed: 500 Server has closed the connection'));
+    const out = await bridgeHandlers.submitFiles({ files: [{ path: 'components/TestCard.tsx', kind: 'component', code: CLEAN_COMPONENT }] }) as any;
+    expect(out.committed).toBe(false);
+    expect(out.saved).toBe(false);
+    expect(out.error).toContain('NOT persisted');
   });
 });

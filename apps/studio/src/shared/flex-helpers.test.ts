@@ -94,17 +94,60 @@ describe('wrapHidesGapHandles', () => {
 });
 
 // ─── crossAxisFillPatch — replica flipped-parent re-base pairing ────────────
-import { crossAxisFillPatch } from './flex-helpers';
+import { crossAxisFillPatch, isCrossAxisStretchFill, isCrossAxisFillFor } from './flex-helpers';
 
 describe('crossAxisFillPatch', () => {
+  // HEIGHT is a STRETCH, not 100%: in a row that hugs (`height: min-content`) a
+  // percentage height has nothing definite to resolve against and an empty child
+  // collapsed to 0 (user report 2026-09-29) — Framer writes the same stretch.
+  // WIDTH is 100%: a % width always resolves, and it leaves the column's
+  // align-items in charge — a stretch overrode `alignItems: center`, so a header
+  // capped at maxWidth 1280px sat at the left edge of a wider screen (2026-10-15).
+  it('height: the stretch', () => {
+    expect(crossAxisFillPatch('height', false, '0 0 auto')).toEqual({ height: 'auto', alignSelf: 'stretch' });
+  });
+  it('width: 100%, no align-self', () => {
+    expect(crossAxisFillPatch('width', false, '0 0 auto')).toEqual({ width: '100%' });
+    expect(crossAxisFillPatch('width', false, '0 0 auto', 'center')).toEqual({ width: '100%' });   // an authored alignSelf stays
+  });
+  it('width drops a stretch left by the old spelling — `auto` on a replica so a base stretch is overridden', () => {
+    expect(crossAxisFillPatch('width', false, '0 0 auto', 'stretch')).toEqual({ width: '100%', alignSelf: '' });
+    expect(crossAxisFillPatch('width', true, '0 0 auto', 'stretch')).toEqual({ width: '100%', alignSelf: 'auto' });
+  });
   it('replica + grow flex pairs the re-base', () => {
     expect(crossAxisFillPatch('width', true, '1 0 0px')).toEqual({ width: '100%', flex: '0 0 auto' });
+    expect(crossAxisFillPatch('height', true, '1 0 0px')).toEqual({ height: 'auto', alignSelf: 'stretch', flex: '0 0 auto' });
   });
-  it('replica + non-grow flex writes plain 100%', () => {
+  it('replica + non-grow flex writes the plain fill', () => {
     expect(crossAxisFillPatch('width', true, '0 0 auto')).toEqual({ width: '100%' });
   });
   it('primary never pairs (grow flex is the other-axis Fill)', () => {
-    expect(crossAxisFillPatch('height', false, '1 0 0px')).toEqual({ height: '100%' });
+    expect(crossAxisFillPatch('height', false, '1 0 0px')).toEqual({ height: 'auto', alignSelf: 'stretch' });
+    expect(crossAxisFillPatch('width', false, '1 0 0px')).toEqual({ width: '100%' });
+  });
+});
+
+describe('isCrossAxisFillFor', () => {
+  it('width: 100%, or the stretch spelling written 2026-09-29..10-15', () => {
+    expect(isCrossAxisFillFor('width', undefined, '100%')).toBe(true);
+    expect(isCrossAxisFillFor('width', 'stretch', 'auto')).toBe(true);
+    expect(isCrossAxisFillFor('width', 'stretch', '320px')).toBe(false);
+    expect(isCrossAxisFillFor('width', undefined, '50%')).toBe(false);
+  });
+  it('height: only the stretch — a 100% height reads as the % it is', () => {
+    expect(isCrossAxisFillFor('height', 'stretch', undefined)).toBe(true);
+    expect(isCrossAxisFillFor('height', undefined, '100%')).toBe(false);
+  });
+});
+
+describe('isCrossAxisStretchFill', () => {
+  it('stretch with no own size on the axis is a fill; any real size wins over the stretch', () => {
+    expect(isCrossAxisStretchFill('stretch', undefined)).toBe(true);
+    expect(isCrossAxisStretchFill('stretch', 'auto')).toBe(true);
+    expect(isCrossAxisStretchFill('stretch', '120px')).toBe(false);
+    expect(isCrossAxisStretchFill('stretch', 'min-content')).toBe(false);   // blocks the stretch in CSS
+    expect(isCrossAxisStretchFill('center', 'auto')).toBe(false);
+    expect(isCrossAxisStretchFill(undefined, '100%')).toBe(false);          // legacy % reads as the % it is
   });
 });
 
@@ -154,7 +197,13 @@ describe('planDirectionFlipRebase', () => {
       )).toEqual([]);
     });
 
-    it('turns a cross-axis (height) fill into the new main-axis grow', () => {
+    it('turns a STRETCH cross-axis (height) fill into the new main-axis grow, dropping the stretch', () => {
+      expect(planDirectionFlipRebase(
+        [{ id: 'a', flex: '0 0 auto', height: 'auto', alignSelf: 'stretch' }], 'row', 'column',
+      )).toEqual([{ id: 'a', styles: { flex: '1 0 0px', height: '', alignSelf: '' } }]);
+    });
+
+    it('turns a legacy 100% cross-axis (height) fill into the new main-axis grow', () => {
       expect(planDirectionFlipRebase(
         [{ id: 'a', flex: '0 0 auto', height: '100%' }], 'row', 'column',
       )).toEqual([{ id: 'a', styles: { flex: '1 0 0px', height: '' } }]);
@@ -164,6 +213,12 @@ describe('planDirectionFlipRebase', () => {
       expect(planDirectionFlipRebase(
         [{ id: 'a', flex: '1 0 0px', height: '100%' }], 'row', 'column',
       )).toEqual([{ id: 'a', styles: { width: '100%', flex: '1 0 0px', height: '' } }]);
+    });
+
+    it('a BOTH-axes fill whose height was the stretch drops it — the new width fill is 100%', () => {
+      expect(planDirectionFlipRebase(
+        [{ id: 'a', flex: '1 0 0px', height: 'auto', alignSelf: 'stretch' }], 'row', 'column',
+      )).toEqual([{ id: 'a', styles: { width: '100%', alignSelf: '', flex: '1 0 0px', height: '' } }]);
     });
 
     it('leaves a fixed-size child completely alone', () => {
@@ -187,13 +242,19 @@ describe('planDirectionFlipRebase', () => {
     it('re-bases a column-fill child so its width applies again', () => {
       expect(planDirectionFlipRebase(
         [{ id: 'a', flex: '1 0 0px', width: '200px' }], 'column', 'row',
-      )).toEqual([{ id: 'a', styles: { height: '100%', flex: '0 0 auto' } }]);
+      )).toEqual([{ id: 'a', styles: { height: 'auto', alignSelf: 'stretch', flex: '0 0 auto' } }]);
     });
 
     it('turns a cross-axis (width) fill into grow', () => {
       expect(planDirectionFlipRebase(
         [{ id: 'a', flex: '0 0 auto', width: '100%' }], 'column', 'row',
       )).toEqual([{ id: 'a', styles: { flex: '1 0 0px', width: '' } }]);
+    });
+
+    it('turns a STRETCH width fill (2026-09-29..10-15 spelling) into grow, dropping the stretch', () => {
+      expect(planDirectionFlipRebase(
+        [{ id: 'a', flex: '0 0 auto', width: 'auto', alignSelf: 'stretch' }], 'column', 'row',
+      )).toEqual([{ id: 'a', styles: { flex: '1 0 0px', width: '', alignSelf: '' } }]);
     });
   });
 
@@ -202,9 +263,16 @@ describe('planDirectionFlipRebase', () => {
     expect(there.styles).toEqual({ width: '100%', flex: '0 0 auto' });
     // Feed the result back through the reverse flip.
     const [back] = planDirectionFlipRebase(
-      [{ id: 'a', flex: there.styles.flex, width: there.styles.width }], 'column', 'row',
+      [{ id: 'a', flex: there.styles.flex, width: there.styles.width, alignSelf: there.styles.alignSelf }], 'column', 'row',
     );
     expect(back.styles).toEqual({ flex: '1 0 0px', width: '' });
+    // …and the HEIGHT mirror keeps its stretch spelling both ways.
+    const [down] = planDirectionFlipRebase([{ id: 'b', flex: '1 0 0px' }], 'column', 'row');
+    expect(down.styles).toEqual({ height: 'auto', alignSelf: 'stretch', flex: '0 0 auto' });
+    const [up] = planDirectionFlipRebase(
+      [{ id: 'b', flex: down.styles.flex, height: down.styles.height, alignSelf: down.styles.alignSelf }], 'row', 'column',
+    );
+    expect(up.styles).toEqual({ flex: '1 0 0px', height: '', alignSelf: '' });
   });
 
   it('is a no-op when the AXIS does not change', () => {

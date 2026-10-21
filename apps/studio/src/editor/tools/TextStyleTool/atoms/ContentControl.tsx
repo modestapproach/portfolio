@@ -11,24 +11,25 @@
 
 import { ToolInput, ControlLabel } from '../../../controls';
 import { LegacyVariableBoundPill } from '../../../controls/VariableBoundPill';
-import { CmsBoundPill, CmsMissingPill } from '../../../controls/CmsBoundPill';
+import { CmsBoundPill, CmsMissingPill, cmsOrphanInScope } from '../../../controls/CmsBoundPill';
 import { useControl } from '../../../controls/ControlProvider';
 import { useTextStyles } from '../../../hooks/useTextStyles';
 import { useAtomValue, useAtom } from 'jotai';
-import { mapItemIndexAtom, mapContextAtom } from '@/code/stores/store';
 import { useNodesComputed } from '@/code/stores/node-family';
+import { mapItemIndexAtom } from '@/code/stores/store';
 import { resolveCmsRowValues } from '@/code/generation/cms-row-resolve';
 import { interactingViewportIdAtom, viewportsConfigAtom } from '@/code/stores/viewport-store';
 import { activeLocaleAtom, isDefaultLocaleAtom, localeOverridesAtom, i18nConfigAtom } from '@/code/stores/locale-store';
 import { activeFilePathAtom, isComponentFilePath } from '@/code/project/active-file-store';
+import { activePreviewSlugAtom, cmsPageMetaAtom } from '@/code/stores/cms-page-store';
 import { setNodeOverride } from '@/code/project/locale-ops';
 import { commitTranslationText } from '@/code/project/translation-ops';
 import { resolveTranslatedContent } from './content-translation';
 import { isPrimaryViewport } from '@/canvas/node-ops';
-import { propagateToGhosts } from '@/code/generation/map-ghost-propagate';
 import { queueMutation } from '@/code/mutation/mutation-queue';
 import { getContentRoot } from '@/canvas/node-ops';
 import { trace } from '@/shared/debug-trace';
+import FormattedContentButton from '../../../ui/FormattedContentButton';
 
 export function ContentControl() {
   const text = useTextStyles();
@@ -53,8 +54,6 @@ export function ContentControl() {
     return null;
   }, [node]);
   const textNode = fitTextNode ?? node;
-  const mapItemIndex = useAtomValue(mapItemIndexAtom);
-  const mapContext = useAtomValue(mapContextAtom);
   const interactingVpId = useAtomValue(interactingViewportIdAtom);
   const viewports = useAtomValue(viewportsConfigAtom);
   const activeLocale = useAtomValue(activeLocaleAtom);
@@ -81,10 +80,6 @@ export function ContentControl() {
     translationKey: textNode?.translationKey,
     overrideText: textNode ? localeOverrides.get(textNode.id)?.text : undefined,
   });
-
-  // Determine if this node has a text binding in a map context
-  const textField = node?.binding?.property === 'text' ? node.binding.field : null;
-  const isMapText = textField != null && mapContext != null && mapItemIndex != null;
 
   // Resolve which viewport bucket the user is currently focused on. The
   // `interactingViewportIdAtom` follows whichever viewport last received a
@@ -149,18 +144,24 @@ export function ContentControl() {
   // The row value behind a CMS text binding — see the branch that uses it.
   // Computed through the node map so it re-resolves when the collection data or
   // the previewed row changes.
+  // `useNodesComputed` is a selectAtom memoised on its deps, so it recomputes
+  // only when `nodesAtom` or a dep changes. The resolver reads the previewed
+  // row imperatively (the detail page's item, the list's row index) and
+  // NEITHER is part of nodesAtom — without them here, switching the previewed
+  // slug left this value on the PREVIOUS item, and the × then injected that
+  // item's text. Both deps are primitives, so the selector identity stays
+  // stable between renders (see the rebuild tripwire in node-family.ts).
+  const previewSlug = useAtomValue(activePreviewSlugAtom);
+  const cmsPageMeta = useAtomValue(cmsPageMetaAtom);
+  const mapItemIndex = useAtomValue(mapItemIndexAtom);
   const cmsRowText = useNodesComputed<string>((nodes) => {
     if (textNode?.binding?.property !== 'text') return '';
     return resolveCmsRowValues(textNode, nodes).__text ?? '';
-  }, [textNode]);
+  }, [textNode, previewSlug, mapItemIndex]);
 
   let displayValue: string;
   let isOverride = false;
-  if (isMapText) {
-    // Read from map JSON data for the selected item
-    const itemData = mapContext.mapData[mapItemIndex] || {};
-    displayValue = (itemData[textField] || '').replace(/<[^>]*>/g, '');
-  } else if (isLocaleOverride) {
+  if (isLocaleOverride) {
     // Non-default locale with an override: show the translation from the
     // i18n file (already in the atom), with the orange override indicator.
     displayValue = (localeTextOverride || '').replace(/<[^>]*>/g, '');
@@ -201,7 +202,7 @@ export function ContentControl() {
     isOverride = resolved.isOverride;
   }
 
-  trace.fn('ContentControl:render', { nodeId: node?.id, displayLength: displayValue.length, isEditing: text.isEditing, isMapText });
+  trace.fn('ContentControl:render', { nodeId: node?.id, displayLength: displayValue.length, isEditing: text.isEditing });
 
   // Detached CMS text (design-tool parity): the `{item.field}` text binding was dragged
   // OUT of its `.map()` and stashed as `data-cms-orphan="__text:field"` (the live
@@ -210,12 +211,20 @@ export function ContentControl() {
   // the stash (text reverts to a plain editable placeholder); dragging back into a
   // collection re-binds it.
   const textOrphanField = node?.orphanBindings?.find((o) => o.prop === '__text')?.field ?? null;
+  // On a `[slug]` page the whole file is that item's scope, so a node parked on
+  // the canvas is not "Missing" — its field is right there in the page's own
+  // collection and re-attaches on the way back in.
+  const orphanLabel = cmsOrphanInScope(textOrphanField, cmsBinding, cmsPageMeta?.kind === 'detail');
   if (textOrphanField && node) {
     return (
       <div className="flex items-center justify-between w-full">
         <ControlLabel label="Content" property="textContent" />
         <CmsMissingPill
           field={textOrphanField}
+          label={orphanLabel ?? undefined}
+          title={orphanLabel
+            ? `Bound to CMS field "${orphanLabel}" — this page's item. Dropped back into the page it re-attaches automatically.`
+            : undefined}
           onClear={() => queueMutation({ type: 'clearCmsOrphan', nodeId: node.id, propName: '__text' })}
         />
       </div>
@@ -254,6 +263,36 @@ export function ContentControl() {
           variableRef={textVarSource.ref!}
           currentValue={displayValue}
           removeVariable={removeVariable}
+        />
+      </div>
+    );
+  }
+
+  // FORMATTED text node (its text lives in `dangerouslySetInnerHTML={{ __html: … }}`) that is NOT bound
+  // on this variant: the variant's own formatted text — detached from the variable here, or the
+  // primary's text while only a variant is bound. Edited with the rich editor (never as a raw HTML
+  // string); Reset drops the variant's override so it follows the default again.
+  if (isOnComponentMaster && node?.formattedTextVariable) {
+    const html = node.conditionalText?.[variantKey] ?? node.conditionalText?.['default'] ?? node.textContent ?? '';
+    return (
+      <div className="flex items-center justify-between w-full">
+        <ControlLabel
+          label="Content"
+          property="textContent"
+          overridden={isOverride}
+          onResetOverride={() => {
+            trace.action('content-control:reset-formatted-variant', { nodeId: node.id, variantName: variantKey });
+            queueMutation({ type: 'setFormattedTextBranch', nodeId: node.id, variantName: variantKey, op: { kind: 'clear' } });
+          }}
+        />
+        <FormattedContentButton
+          title="Content"
+          value={html}
+          testId={node.id}
+          onCommit={(h) => {
+            trace.action('content-control:formatted-variant-text', { nodeId: node.id, variantName: variantKey, chars: h.length });
+            queueMutation({ type: 'setFormattedTextBranch', nodeId: node.id, variantName: variantKey, op: { kind: 'literal', html: h } });
+          }}
         />
       </div>
     );
@@ -347,25 +386,6 @@ export function ContentControl() {
         value={displayValue}
         onChange={(v) => {
           if (!node) return;
-          if (isMapText) {
-            // Write to map JSON data
-            const itemData = { ...(mapContext.mapData[mapItemIndex] || {}) };
-            const oldVal = itemData[textField];
-            itemData[textField] = v;
-            queueMutation({ type: 'updateMapItem', varName: mapContext.varName, index: mapItemIndex, item: itemData });
-            if (mapItemIndex === 0) {
-              propagateToGhosts(mapContext.varName, textField, oldVal, v, mapContext.mapData);
-            }
-            // Imperative DOM update on the element
-            const contentEl = getContentRoot();
-            if (contentEl) {
-              const suffix = mapItemIndex > 0 ? `__${mapItemIndex}` : '';
-              const el = contentEl.querySelector(`[data-node-id="${node.id}${suffix}"]`) as HTMLElement;
-              if (el) el.textContent = v;
-            }
-            trace.action('content-control:map-updateText', { nodeId: node.id, mapItemIndex, textField, newText: v });
-            return;
-          }
           // Locale routing: when the user is on a non-default locale, the
           // edit is a translation — write to `i18n/{locale}.json`, not JSX.
           // This keeps the source-of-truth English text intact. The atom

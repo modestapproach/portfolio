@@ -46,11 +46,14 @@ import { linkedComponentModalUrlAtom } from '@/cloud/components/linked-component
 import { ToolSection } from '../controls';
 import ControlLabel from '../controls/ControlLabel';
 import ToolPopup from '../ui/ToolPopup';
+import ComponentPropsTool from './ComponentPropsTool';
 import Button from '@/design-system/Button';
 import { trace } from '@/shared/debug-trace';
+import { expediteStableAtomSync } from '@/canvas/hooks/useStableAtomSync';
+import { readFitDim, vectorSetResnap } from '@/code/icons/vector-set-fit';
 
 export default function IconSetTool() {
-  const { node, nodeId } = useControl();
+  const { node, nodeId, styles, updateMultipleStyles } = useControl();
   const activeFile = useAtomValue(activeFilePathAtom);
   const projectVersion = useAtomValue(stableProjectVersionAtom);
   const setActiveFile = useSetAtom(activeFilePathAtom);
@@ -153,6 +156,7 @@ export default function IconSetTool() {
     // The base default name (`node.attrs.name`, the literal or the ternary's
     // default) is what a replica override clears back to.
     const baseName = (node?.attrs?.name as string | undefined) ?? iconSet.icons[0]?.id ?? '';
+    expediteStableAtomSync();
     modifyProjectFile(activeFile, (code) => {
       if (isReplica) {
         return setResponsiveOverride(code, nodeId, iconSet.exportName, vpWidth, 'name', iconId, baseName);
@@ -171,6 +175,21 @@ export default function IconSetTool() {
     // the icon stays stuck on the old name even though the file is correct.
     renderCodeComponentDirect(nodeId, { name: iconId });
 
+    // A row on Fit (`auto`) follows the VARIANT — and the stored sizes are
+    // frozen px, so swapping to an icon with another aspect left the old icon's
+    // box around the new one. Re-derive for the variant just picked; routed per
+    // viewport / variant by the control provider, like the `name` above.
+    const picked = iconSet.icons.find(i => i.id === iconId);
+    const resnap = vectorSetResnap(
+      readFitDim(node?.attrs),
+      picked ? { width: picked.width, height: picked.height } : null,
+      { width: parseFloat(styles.width ?? ''), height: parseFloat(styles.height ?? '') },
+    );
+    if (resnap) {
+      trace.action('icon-set-tool:fit-resnap', { nodeId, iconId, ...resnap });
+      updateMultipleStyles(resnap);
+    }
+
     // Sync atoms so the panel picks up the new name immediately.
     const fresh = projectFS.readFile(activeFile);
     if (fresh) {
@@ -184,7 +203,7 @@ export default function IconSetTool() {
     // them the callback closes over their initial-render values (interacting
     // viewport 'desktop' → default branch) and every pick overwrites the base
     // name across all variants instead of the active tile.
-  }, [nodeId, iconSet, activeFile, setCode, setVersion, node, isReplica, vpWidth, isComponentVariant, activeComponentVariant]);
+  }, [nodeId, iconSet, activeFile, setCode, setVersion, node, isReplica, vpWidth, isComponentVariant, activeComponentVariant, styles, updateMultipleStyles]);
 
   // ─── Edit — open the icon-set master file ────────────────────────────────
 
@@ -251,6 +270,12 @@ export default function IconSetTool() {
           <span className="flex-1 text-left truncate">{currentEntry?.displayName ?? 'No icons'}</span>
         </button>
       </div>
+
+      {/* The set's own variables — an icon's colour, a toggle — as rows right
+          under the picker, the way Framer shows them. Rendered embedded so
+          they arrive WITHOUT ComponentPropsTool's own name header and Edit
+          button: an icon set has one section, not two competing ones. */}
+      <ComponentPropsTool embedded />
 
       {/* Edit master button */}
       <div className="w-full mt-2">

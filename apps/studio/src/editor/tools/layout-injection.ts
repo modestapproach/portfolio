@@ -49,6 +49,16 @@ const TEXT_LIKE_TAGS = new Set([
   'span', 'a', 'li', 'label', 'blockquote',
 ]);
 
+/** A vector (`<svg>`, `motion.svg` parses to the same tag): its children are
+ *  GEOMETRY (`<path>`, nested group svgs), never layout children, and its
+ *  Fit size comes from its own viewBox ratio. Switching it to auto must not
+ *  inject a flex layout INTO the svg or re-position its paths (Bug #17,
+ *  2026-10-12 — invisible on paint, but it left `display:flex` on the vector
+ *  and `position:relative` on its path in the source). */
+export function isVectorNode(node: CanvasNode | undefined): boolean {
+  return (node?.type ?? '').toLowerCase() === 'svg';
+}
+
 /**
  * Decide whether a frame should be auto-converted to flex when the
  * user switches its W or H to `auto`. Skip when:
@@ -60,6 +70,7 @@ const TEXT_LIKE_TAGS = new Set([
  *   • The frame's tag is text-like (auto on `<p>` is meaningful — its
  *     own intrinsic content sets the size — and adding flex would
  *     break inline text flow).
+ *   • The node is a vector (`<svg>`) — see isVectorNode.
  *
  * The matching `injectFlexLayoutOnFrame` call should follow.
  */
@@ -69,6 +80,7 @@ export function shouldInjectLayoutOnAuto(
 ): boolean {
   if (!node) return false;
   if (node.children.length === 0) return false;
+  if (isVectorNode(node)) return false;
   // Component instances own their layout in the MASTER file. The instance
   // wrapper carries none of the master root's display/flex-direction, so
   // injecting `display:flex; flex-direction:column; align-items/justify:center`
@@ -185,6 +197,7 @@ export function freezeParentRelativeChildrenForAuto(
   const contentEl = getContentRoot();
   const node = nodes.get(nodeId);
   if (!contentEl || !node) return [];
+  if (isVectorNode(node)) return [];
   const patches = planChildAutoFreeze({
     axis,
     frameFlexDirection: node.styles?.flexDirection ?? 'row',
@@ -230,7 +243,19 @@ export function injectFlexLayoutOnFrame(
   // Layout config (standard). The flex props alone are enough;
   // a later unhide auto-restores `display: 'flex'` via
   // `updateNodeStyles`'s auto-display-restore.
-  const isHidden = node.styles?.display === 'none';
+  //
+  // HIDDEN WHERE THE USER IS LOOKING, not hidden in the base style. A node
+  // added on one replica is STORED as an inline `display: 'none'` plus a band
+  // rule that shows it on its own viewport (`data-replica-solo`) — the base
+  // `none` is the storage mechanism, not a hide. Reading it as one meant
+  // adding Layout to such a frame wrote the flex properties and never
+  // `display: flex`, so its band kept the `block` that removing Layout had
+  // left: the frame stayed a block, its flex props were inert, its children
+  // fell back to inline and vanished, and the Position tool — correctly
+  // reading a non-layout parent — greyed out Relative for them (user report
+  // 2026-09-18, mobile overlay inside a template).
+  const displayHere = findNodeComputedStyle(nodeId, vpId, 'display');
+  const isHidden = (displayHere || node.styles?.display) === 'none';
   const layoutStyles: Record<string, string> = {
     flexDirection: 'column',
     alignItems: 'center',
@@ -386,6 +411,7 @@ export function rebaseChildrenForDirectionFlip(opts: {
       width: eff.width,
       height: eff.height,
       position: eff.position,
+      alignSelf: eff.alignSelf,
     });
   }
 

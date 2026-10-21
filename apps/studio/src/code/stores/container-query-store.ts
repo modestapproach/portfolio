@@ -49,7 +49,12 @@ export function parseContainerRules(css: string): Map<number, Map<string, Map<st
     }
 
     const blockContent = css.slice(blockStart, blockEnd - 1);
-    const selectors = new Map<string, Map<string, string>>();
+    // A file can carry SEVERAL blocks for the same breakpoint (two `(max-width: 768px) … {` blocks —
+    // hand-written, AI-written, or merged in by Detach). Merge them the way the cascade does (a later
+    // block's value wins per property). `rules.set(width, fresh)` REPLACED the earlier block, so the
+    // next rewrite (a breakpoint resize, the band clean-up) silently deleted its rules — 27 of 138
+    // page files in the 2026-07-31 backup lost overrides that way.
+    const selectors = rules.get(width) ?? new Map<string, Map<string, string>>();
 
     // Parse individual selectors: [data-id="x"] { prop: val !important; }
     const selectorRegex = /\[data-id="([^"]+)"\]\s*\{([^}]*)\}/g;
@@ -161,6 +166,16 @@ const SHORTHAND_OVERRIDE_ALIASES: Record<string, string[]> = {
   padding: ['padding', 'paddingTop', 'paddingRight', 'paddingBottom', 'paddingLeft'],
   margin: ['margin', 'marginTop', 'marginRight', 'marginBottom', 'marginLeft'],
   borderRadius: ['borderRadius', 'borderTopLeftRadius', 'borderTopRightRadius', 'borderBottomRightRadius', 'borderBottomLeftRadius'],
+  // Border row: a per-variant border lands as inline longhands (inline mode)
+  // or as the OVERLAY border's motion-animated custom properties (`--rvb-*`,
+  // see editor/ui/border-overlay-vars.ts) — never as `border` itself, so the
+  // label stayed unlit and Reset Override unreachable on a variant whose
+  // border plainly differed from the primary's (user report 2026-09-06).
+  border: ['border', 'borderWidth', 'borderStyle', 'borderColor',
+    'borderTopWidth', 'borderRightWidth', 'borderBottomWidth', 'borderLeftWidth',
+    'borderTopStyle', 'borderRightStyle', 'borderBottomStyle', 'borderLeftStyle',
+    'borderTopColor', 'borderRightColor', 'borderBottomColor', 'borderLeftColor',
+    '--rvb-bw', '--rvb-bs', '--rvb-bc'],
 };
 
 /** Keys that count as overriding a given control property (camelCase, the

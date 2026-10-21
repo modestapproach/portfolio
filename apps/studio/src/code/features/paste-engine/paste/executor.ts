@@ -14,8 +14,12 @@
 
 import { trace } from '@/shared/debug-trace';
 import { queueMutation } from '@/code/mutation/mutation-queue';
-import { isPrimaryViewport } from '@/canvas/node-ops';
+import { isPrimaryViewport, getContentRoot } from '@/canvas/node-ops';
+import { commitOrderAssignments } from '@/canvas/drag/strategies/order-commit';
+import { queuePendingUpdates } from '@/canvas/arrow-nudge';
 import { getReplicaContext } from '@/canvas/drag/replica-context';
+import { queueReplicaCreationUnhide } from '@/canvas/creators/creator-utils';
+import { isInstanceLike, instanceReplicaUnhideDisplay } from '@/canvas/drag/instance-replica-visibility';
 import {
   calculatePosition,
   findRootNodes,
@@ -23,7 +27,9 @@ import {
 import { createNode } from '../core/node-creator';
 import { resolveTargets } from '../core/target-resolver';
 import { reinjectMotionProps } from './motion-reinject';
-import { reinjectBorderOverlays, reinjectPlaceholderStyles } from './border-reinject';
+import { reinjectTextVariables } from './text-variable-reinject';
+import { computePasteOrderAssignments } from './order-renumber';
+import { reinjectResponsiveBands, reinjectBorderOverlays, reinjectPlaceholderStyles } from './border-reinject';
 import type {
   ClipboardNode,
   PasteConfig,
@@ -76,6 +82,31 @@ function applyReplicaCascade(
   });
 
   for (const newId of createdRootIds) {
+    if (!rctx.isComponent) {
+      // PAGE replica — the drag path's documented trio, parts (1) and (3),
+      // which this cascade was missing (only part 2 ran): the duplicate
+      // stayed visible on the PRIMARY, because no @container band can hide
+      // the primary — only an inline `display: none` can, with the entered
+      // band un-hiding it back (live find 2026-09-05: duplicate on tablet
+      // hid on mobile but leaked onto desktop).
+      //
+      // The un-hide restores the node's REAL display (flex/grid from the
+      // baked clipboard styles), not a blind `unset` — same contract the
+      // creators use, so a duplicated flex card keeps its layout on the
+      // tile it was duplicated on.
+      const cn = ctx.clipboardNodes.find((n) => idMapper.getNewIdsForClipboard(n.id).includes(newId));
+      const enteredWidth = ctx.viewportWidths![vpId];
+      queueMutation({ type: 'updateStyles', nodeId: newId, styles: { display: 'none' } });
+      if (typeof enteredWidth === 'number') {
+        // A pasted INSTANCE re-shows with the master ROOT's display — its own
+        // styles carry none, and `unset` collapses the canvas wrapper to
+        // inline (0×0). See instance-replica-visibility.ts.
+        const unhideDisplay = cn && isInstanceLike(cn)
+          ? instanceReplicaUnhideDisplay(cn)
+          : cn?.styles?.display;
+        queueReplicaCreationUnhide(newId, vpId, enteredWidth, unhideDisplay);
+      }
+    }
     if (rctx.isComponent) {
       // Component: hide as base inline + show only in target variant.
       // Use `display: 'unset'` for the per-variant un-hide override —
@@ -201,6 +232,27 @@ export function executePaste(
   for (const target of targets) {
     const ids = executeForTarget(rootNodes, ctx.clipboardNodes, target, ctx, config, idMapper);
     createdIds.push(...ids);
+    // SIBLING paste into a flex/grid parent (Cmd+D, paste-after-selected):
+    // the clone copied its source's `order`, so two siblings share a number.
+    // Renumber the parent's flow once, clones right after their sources.
+    // Queued AFTER the addNode mutations so the same flush applies them.
+    // Primary tile only — a replica/variant duplicate's per-tile order lives
+    // in its band/entry and the base numbering there is already unique.
+    if (config.targetMode === 'sibling' && target.parentId && target.isPrimary
+      && (!ctx.interactingVpId || isPrimaryViewport(ctx.interactingVpId))) {
+      const parent = ctx.nodes.get(target.parentId);
+      const pairs = rootNodes.map((root, i) => ({ sourceId: root.id, newId: ids[i] })).filter(p => !!p.newId);
+      const assignments = computePasteOrderAssignments(parent, ctx.nodes, pairs);
+      if (assignments.length) {
+        // `order` is viewport-routed (inline / @container band / variant
+        // ternary) — every write goes through commitOrderAssignments, the one
+        // router (see order-commit.test's routing invariant).
+        const contentEl = getContentRoot();
+        const vpId = ctx.interactingVpId ?? 'desktop';
+        if (contentEl) queuePendingUpdates(commitOrderAssignments(assignments, contentEl, vpId));
+        trace.action('paste:sibling-order-renumber', { parentId: target.parentId, vpId, assignments, routed: !!contentEl });
+      }
+    }
   }
 
   // Post-paste pass — replica visibility cascade. Overlay reattach (rebuilding
@@ -213,6 +265,8 @@ export function executePaste(
   // declarative Loop) for every pasted copy, descendants included. Queued
   // after the addNode mutations, so the same flush applies them in order.
   reinjectMotionProps(ctx.clipboardNodes, idMapper);
+  // Same-master paste: the clone keeps its Content variable binding.
+  reinjectTextVariables(ctx.clipboardNodes, idMapper, ctx);
 
   // Post-paste pass — re-inject ::after border-overlay rules under the new
   // ids (the border lives in the <style> block, not on the node — it would
@@ -222,6 +276,11 @@ export function executePaste(
   // Post-paste pass — re-inject ::placeholder rules (Input tool Placeholder
   // Color) under the new ids; same style-block failure mode as the border.
   reinjectPlaceholderStyles(ctx.clipboardNodes, idMapper);
+
+  // Post-paste pass — rebuild per-breakpoint @media overrides under the new
+  // ids (same style-block failure mode as the border: the duplicate showed
+  // base styles on every replica tile, descendants included).
+  reinjectResponsiveBands(ctx.clipboardNodes, idMapper);
 
   return createdIds;
 }

@@ -10,11 +10,14 @@ import { sanitizeDataName } from '@/shared/id-utils';
 import { parseJSX, findFirstElementByDataId, findAttribute, traverse } from '../parsing/ast-utils';
 import { toKebab, htmlToJSX, splitStyleProps } from '@/shared/css-utils';
 import { cssTransformToMotionProps } from '@/shared/motion-transform';
+import { removeAxisTranslate } from '@/shared/position-utils';
 import { trace } from '@/shared/debug-trace';
+import { flattenPastedRichHtml } from '@/shared/rich-message';
+import { findVariantRootId } from '@/shared/variant-root';
 import { sweepEmptyGlideWrappers } from './glide-gen';
 import { generate, findTagClose, findJSXDataIdIndex, quoteStyleValue, serializeJSXAttr, findMatchingCloseTagIndex, findStyleObjectEnd } from './generator-utils';
 import { moveNodeIntoParentFast } from './move-fast';
-import { clearContainerStylesForNode, removeHoverStyleInCode, removeBorderOverlayStyle, removePseudoStyleInCode, removeSelectCaretRuleInCode, findBandedOrderWidths, stripBandedOrderForNode } from './generator-styles';
+import { clearContainerStylesForNode, removeHoverStyleInCode, removeBorderOverlayStyle, removePseudoStyleInCode, removeSelectCaretRuleInCode, removeScopedChildRulesInCode, findBandedOrderWidths, stripBandedOrderForNode } from './generator-styles';
 import { clearNodeScrollFx, ensureTransformTemplateInCode } from './generator-motion';
 import { stripScrollTextHooks } from './text-anim-gen';
 import { parseVariantConfig } from '../variants/variant-config';
@@ -37,12 +40,39 @@ function isMotionElementAt(code: string, nodeId: string): boolean {
   return /^<motion\./.test(code.slice(tagStart, tagStart + 12));
 }
 
+
+/** Style-object key as source text: CSS custom properties (`--x`) are not
+ *  valid identifiers and must be quoted (`'--x'`); the fast writer used to
+ *  emit them bare — an unparseable file (live find 2026-09-06 while routing
+ *  the overlay border through motion-animated variables). */
+function styleKeyLiteral(key: string): string {
+  return key.startsWith('--') ? `'${key}'` : key;
+}
+
 export function updateNodeInCode(
   code: string,
   nodeId: string,
   styleChanges: Record<string, string>
 ): string {
   trace.fn('generator.updateNodeInCode', { nodeId, styles: styleChanges });
+
+  // A component master's variant ROOT keeps its canvas position in
+  // variantConfig x/y — never as inline insets (an instance spreads
+  // `position: relative` + size over the root but cannot clear insets, so a
+  // baked `left`/`top` shifts every live instance by the tile offset; live
+  // find 2026-09-06). Strip insets for the root here, whatever the caller.
+  if (code.includes('variantConfig') && findVariantRootId(code) === nodeId) {
+    const stripped: Record<string, string> = {};
+    for (const [k, v] of Object.entries(styleChanges)) {
+      if (k === 'left' || k === 'top' || k === 'right' || k === 'bottom') continue;
+      stripped[k] = v;
+    }
+    if (Object.keys(stripped).length !== Object.keys(styleChanges).length) {
+      trace.action('generator:updateNodeInCode:variant-root-insets-stripped', { nodeId });
+      if (Object.keys(stripped).length === 0) return code;
+      styleChanges = stripped;
+    }
+  }
 
   // On a motion.* element (component), a CSS `transform: rotate()/scale()` in
   // the INLINE style fights motion's layout FLIP projection (both write the
@@ -76,6 +106,25 @@ export function updateNodeInCode(
       }
     }
   }
+  // ONE CHANNEL PER AXIS. Writing motion `x`/`y` (a shorthand centring pin)
+  // must EVICT that axis's translate from a CSS `transform` string already on
+  // the element — the Renderer folds string + shorthands, so both together
+  // shift the element twice (live find 2026-09-05: align on a shorthand-centred
+  // svg). Runs AFTER the motion block above, so the resulting `transform: ''`
+  // is a plain delete — never the rotation-reset seed. Also heals files that
+  // already carry both forms the next time `x`/`y` is written.
+  if (!('transform' in styleChanges) && ('x' in styleChanges || 'y' in styleChanges) && isMotionElementAt(code, nodeId)) {
+    const existing = readInlineStyleValue(code, nodeId, 'transform');
+    if (existing) {
+      let next = existing;
+      if ('x' in styleChanges) next = removeAxisTranslate(next, 'x');
+      if ('y' in styleChanges) next = removeAxisTranslate(next, 'y');
+      if (next !== existing) {
+        trace.action('generator:evict-string-translate-for-shorthand', { nodeId, from: existing, to: next });
+        styleChanges = { ...styleChanges, transform: next };
+      }
+    }
+  }
   // A `transform` style write must also refresh the element's paired
   // `transformTemplate` (the composer that keeps a static translate alive
   // while motion animates y — see generator-motion-props). The template is
@@ -97,23 +146,58 @@ export function updateNodeInCode(
   return syncTemplate(astResult);
 }
 
-/** Index of a TOP-LEVEL `key:` property in a style-object body, or -1.
+/** Index of a TOP-LEVEL `key:` property in a style-object body, or -1 — the
+ *  start of the key TOKEN, its opening quote included for a quoted key.
  *  A plain indexOf matches inside a LONGER property name — `order:` sits at
  *  the tail of `border:` — which made every `order` write on an element with
  *  a bare `border` prop clobber the border's VALUE and never write the order
  *  at all (the Figma-import section-reorder bug: Footer kept snapping back
  *  to the top). A real key starts the body or follows `{`, `,` or
- *  whitespace. */
+ *  whitespace.
+ *  QUOTED keys count too: a CSS custom property is only ever written quoted
+ *  (`'--rvb-bw': '1px'`, styleKeyLiteral). Matching the bare spelling alone
+ *  made a delete of one a silent no-op and an update APPEND a second copy —
+ *  the X on a component's overlay border left its variables behind
+ *  (2026-10-15). Callers find the colon by searching forward from the index. */
 function findStyleKeyIndex(content: string, key: string): number {
-  const needle = `${key}:`;
-  let from = 0;
-  for (;;) {
-    const idx = content.indexOf(needle, from);
-    if (idx === -1) return -1;
-    const prev = idx === 0 ? '' : content[idx - 1];
-    if (prev === '' || prev === ',' || prev === '{' || /\s/.test(prev)) return idx;
-    from = idx + 1;
+  let best = -1;
+  for (const needle of [`${key}:`, `'${key}':`, `"${key}":`]) {
+    let from = 0;
+    for (;;) {
+      const idx = content.indexOf(needle, from);
+      if (idx === -1) break;
+      const prev = idx === 0 ? '' : content[idx - 1];
+      if (prev === '' || prev === ',' || prev === '{' || /\s/.test(prev)) {
+        if (best === -1 || idx < best) best = idx;
+        break;
+      }
+      from = idx + 1;
+    }
   }
+  return best;
+}
+
+/** Read ONE top-level string value out of a node's inline `style={{…}}`
+ *  (tag-bound, quote-aware). null when the node/style/key is absent. */
+function readInlineStyleValue(code: string, nodeId: string, key: string): string | null {
+  const idIndex = findJSXDataIdIndex(code, nodeId);
+  if (idIndex === -1) return null;
+  let d = 0, i = idIndex, tagCloseIdx = code.length;
+  while (i < code.length) {
+    if (code[i] === '{') d++;
+    else if (code[i] === '}') d--;
+    else if (code[i] === '>' && d === 0) { tagCloseIdx = i; break; }
+    i++;
+  }
+  const styleStart = code.indexOf('style={{', idIndex);
+  if (styleStart === -1 || styleStart > tagCloseIdx) return null;
+  const objStart = styleStart + 'style={{'.length;
+  const objEnd = findStyleObjectEnd(code, objStart);
+  const body = code.substring(objStart, objEnd === -1 ? code.length - 1 : objEnd);
+  const k = findStyleKeyIndex(body, key);
+  if (k === -1) return null;
+  const m = body.slice(body.indexOf(':', k + key.length)).match(/^:\s*(?:'([^']*)'|"([^"]*)")/);
+  return m ? (m[1] ?? m[2] ?? '') : null;
 }
 
 /**
@@ -216,7 +300,7 @@ function updateNodeInCodeFast(
       const spreadIdx = newStyleContent.search(/\.\.\.[A-Za-z_$]/);
       if (spreadIdx !== -1) {
         newStyleContent = newStyleContent.slice(0, spreadIdx)
-          + `${key}: ${quotedNew}, `
+          + `${styleKeyLiteral(key)}: ${quotedNew}, `
           + newStyleContent.slice(spreadIdx);
       } else {
         let end = newStyleContent.length;
@@ -224,8 +308,8 @@ function updateNodeInCodeFast(
         const body = newStyleContent.slice(0, end);
         const tail = newStyleContent.slice(end);
         newStyleContent = body.trim().length === 0
-          ? `${key}: ${quotedNew}`
-          : body + (body.endsWith(',') ? ' ' : ', ') + `${key}: ${quotedNew}` + tail;
+          ? `${styleKeyLiteral(key)}: ${quotedNew}`
+          : body + (body.endsWith(',') ? ' ' : ', ') + `${styleKeyLiteral(key)}: ${quotedNew}` + tail;
       }
       continue;
     }
@@ -303,7 +387,8 @@ function updateNodeInCodeAST(
       } else {
         // Insert BEFORE any SpreadElement (e.g. ...style) so spreads stay last
         const spreadIdx = expr.properties.findIndex(p => p.type === 'SpreadElement');
-        const newProp = t.objectProperty(t.identifier(key), t.stringLiteral(value));
+        // A CSS custom property (`--x`) is not a valid identifier — quote it.
+        const newProp = t.objectProperty(key.startsWith('--') ? t.stringLiteral(key) : t.identifier(key), t.stringLiteral(value));
         if (spreadIdx !== -1) {
           expr.properties.splice(spreadIdx, 0, newProp);
         } else {
@@ -405,6 +490,103 @@ function collectDeepJsxText(children: t.Node[]): string {
  * Mirrors how `conditionalStyles` encodes per-variant style; the read side is
  * `node.conditionalText` (parser) + the Renderer's per-variant resolution.
  */
+/** Rich-run sniff for per-variant text — mirrors useResponsiveText's own
+ *  isHtml test so the two rich channels agree on what counts as markup. */
+const VARIANT_RICH_RE = /<[a-z][^>]*>/i;
+
+/**
+ * Build ONE ternary branch for per-variant text.
+ *
+ * Plain words stay a StringLiteral — the historical dialect, byte-compatible
+ * with every existing file. Marked text (TipTap HTML from the committer, or a
+ * JSX slice read back from an existing branch) becomes a JSXFragment of real
+ * inline runs, routed through htmlToJSX so string styles become object
+ * styles. This is what makes per-variant formatting real instead of the old
+ * contract ("per-variant text is plain-text only — flatten"), which silently
+ * threw the user's marks away (canvas showed bold, file never changed,
+ * live find 2026-09-05).
+ *
+ * Parse failure falls back to tag-stripped plain text: a mark may be lost,
+ * the words never are, and raw markup NEVER lands in a string literal.
+ */
+export function variantTextBranch(text: string): t.Expression {
+  if (!VARIANT_RICH_RE.test(text)) return t.stringLiteral(text);
+  try {
+    const wrapperAst = parseJSX(`<_>${htmlToJSX(text)}</_>`);
+    let children: t.JSXElement['children'] | null = null;
+    if (wrapperAst) {
+      traverse(wrapperAst, {
+        JSXElement(fp) {
+          if (fp.parentPath?.parentPath?.isProgram()) {
+            children = [...fp.node.children];
+            fp.stop();
+          }
+        },
+      });
+    }
+    if (children && (children as t.JSXElement['children']).length > 0) {
+      return t.jsxFragment(t.jsxOpeningFragment(), t.jsxClosingFragment(), children);
+    }
+  } catch (err) {
+    trace.error('generator:variantTextBranch-parse-failed', { error: err instanceof Error ? err.message : String(err) });
+  }
+  return t.stringLiteral(text.replace(/<[^>]+>/g, ''));
+}
+
+/**
+ * Canonical form of a per-variant text value, for NO-OP detection only.
+ *
+ * A click-away commit must leave the file byte-identical, but the two sides
+ * of the compare speak different dialects: the committer sends TipTap HTML
+ * (`<span style="color: rgb(21, 21, 21);">`), the file stores JSX — and in
+ * component masters the stored runs are `motion.span layout={true}` (FLIP
+ * members buildNodeJSX emits), which TipTap can only ever echo back as bare
+ * `span`. Both sides are pushed through the same branch builder, generated,
+ * and then scrubbed of the motion wrapper + layout prop — so "the user
+ * changed nothing" compares equal regardless of dialect, while a real mark
+ * change (bold added, color moved) still differs and writes.
+ */
+function canonicalVariantText(text: string): string {
+  try {
+    const branch = variantTextBranch(text);
+    const rendered = t.isStringLiteral(branch)
+      ? JSON.stringify(branch.value)
+      : generate(branch, { retainLines: false, concise: true }).code;
+    return rendered
+      .replace(/<motion\.(\w+)/g, '<$1')
+      .replace(/<\/motion\.(\w+)>/g, '</$1>')
+      .replace(/\s+layout=\{true\}/g, '')
+      .replace(/\s+/g, ' ')
+      .trim();
+  } catch {
+    return text;
+  }
+}
+
+/**
+ * Read ONE existing branch back to its text value. Strings verbatim; rich
+ * branches (fragment/element) as their SOURCE SLICE — the same JSX-flavored
+ * markup dialect `node.textContent` uses for mixed nodes, so tiles, panels
+ * and re-writes all speak one language. Identifiers (variable bindings)
+ * return null — the callers route those into their `vars` map.
+ */
+function variantBranchText(node: t.Node | null | undefined, code: string): string | null {
+  if (!node) return null;
+  if (node.type === 'StringLiteral') return (node as t.StringLiteral).value;
+  if (node.type === 'JSXFragment') {
+    const kids = (node as t.JSXFragment).children;
+    if (kids.length === 0) return '';
+    const first = kids[0] as t.Node, last = kids[kids.length - 1] as t.Node;
+    if (typeof first.start === 'number' && typeof last.end === 'number') {
+      return code.slice(first.start!, last.end!).trim();
+    }
+  }
+  if (node.type === 'JSXElement' && typeof node.start === 'number' && typeof node.end === 'number') {
+    return code.slice(node.start!, node.end!).trim();
+  }
+  return null;
+}
+
 export function updateVariantTextInCode(
   code: string,
   nodeId: string,
@@ -457,16 +639,32 @@ export function updateVariantTextInCode(
         // dead code (initialVariant is 'default'/'variant-1'/… , never 'desktop'). Drop it so the bad
         // state self-heals on the next edit.
         if (k === 'desktop') { cursor = cursor.alternate; continue; }
-        if (cursor.consequent?.type === 'StringLiteral') literals[k] = cursor.consequent.value;
-        else if (cursor.consequent?.type === 'Identifier') vars[k] = cursor.consequent.name;
+        if (cursor.consequent?.type === 'Identifier') vars[k] = cursor.consequent.name;
+        else {
+          // String OR rich (fragment/element) branch — variantBranchText
+          // reads both; rich comes back as its JSX source slice.
+          const bt = variantBranchText(cursor.consequent, code);
+          if (bt != null) literals[k] = bt;
+        }
         cursor = cursor.alternate;
       }
-      if (cursor?.type === 'StringLiteral') literals['default'] = cursor.value;
-      else if (cursor?.type === 'Identifier') vars['default'] = cursor.name;
+      if (cursor?.type === 'Identifier') vars['default'] = cursor.name;
+      else {
+        const bt = variantBranchText(cursor, code);
+        if (bt != null) literals['default'] = bt;
+      }
     } else {
       // DEEP read — see collectDeepJsxText: span-wrapped text must not read
-      // as '' or every non-edited variant's text is written empty.
-      literals['default'] = collectDeepJsxText(path.node.children as t.Node[]);
+      // as '' or every non-edited variant's text is written empty. When the
+      // children carry RICH runs, capture their SOURCE instead of the flat
+      // text: creating the first variant branch used to tag-strip the
+      // primary's marks into the fallback literal (silent formatting loss).
+      const sig = significant as t.Node[];
+      const first = sig[0], last = sig[sig.length - 1];
+      const hasRuns = sig.some((c) => c.type === 'JSXElement');
+      literals['default'] = (hasRuns && typeof first?.start === 'number' && typeof last?.end === 'number')
+        ? code.slice(first.start!, last.end!).trim()
+        : collectDeepJsxText(path.node.children as t.Node[]);
     }
 
     // Apply the edit to the TARGET variant only (primary = the `default` fallback). Callers may pass the
@@ -481,7 +679,9 @@ export function updateVariantTextInCode(
     const existingForKey = vars[key] !== undefined
       ? null
       : literals[key] ?? (key !== 'default' && vars['default'] !== undefined ? null : literals['default']);
-    if (existingForKey != null && existingForKey === newText) {
+    if (existingForKey != null
+      && (existingForKey === newText
+        || canonicalVariantText(existingForKey) === canonicalVariantText(newText))) {
       trace.action('generator:updateVariantTextInCode-noop', { nodeId, variantName });
       textUnchanged = true;
       path.stop();
@@ -500,18 +700,24 @@ export function updateVariantTextInCode(
 
     const keys = [...new Set([...Object.keys(literals), ...Object.keys(vars)])].filter(k => k !== 'default');
     if (keys.length === 0 && Object.keys(vars).length === 0) {
-      // Pure literal, no branches → plain text.
-      path.node.children = [t.jsxText(`\n      ${literals['default'] ?? ''}\n    `)];
+      // Pure value, no branches. Plain → inline text (unchanged dialect).
+      // Rich → REAL children runs: collapsing every variant back to one text
+      // converges on the ordinary mixed-content node shape, not a ternary.
+      const def = literals['default'] ?? '';
+      const branch = variantTextBranch(def);
+      path.node.children = t.isJSXFragment(branch)
+        ? [t.jsxText('\n      '), ...branch.children, t.jsxText('\n    ')]
+        : [t.jsxText(`\n      ${def}\n    `)];
     } else {
       // Use the captured identifier; for from-plain-text edits detect a `variant` useState, else the
       // always-defined `initialVariant` prop (so we never emit an undefined `variant` reference).
       const idName = variantId ?? (/\bconst\s*\[\s*variant\b/.test(code) ? 'variant' : 'initialVariant');
       let expr: t.Expression = vars['default']
         ? t.identifier(vars['default'])
-        : t.stringLiteral(literals['default'] ?? '');
+        : variantTextBranch(literals['default'] ?? '');
       for (let i = keys.length - 1; i >= 0; i--) {
         const k = keys[i];
-        const branch = vars[k] ? t.identifier(vars[k]) : t.stringLiteral(literals[k] ?? '');
+        const branch = vars[k] ? t.identifier(vars[k]) : variantTextBranch(literals[k] ?? '');
         expr = t.conditionalExpression(
           t.binaryExpression('===', t.identifier(idName), t.stringLiteral(k)),
           branch, expr,
@@ -784,12 +990,20 @@ export function detachTextVariableForVariantInCode(
         && cursor.test.right?.type === 'StringLiteral') {
         variantId = cursor.test.left.name;
         const k = cursor.test.right.value;
-        if (cursor.consequent?.type === 'StringLiteral') literals[k] = cursor.consequent.value;
-        else if (cursor.consequent?.type === 'Identifier') vars[k] = cursor.consequent.name;
+        if (cursor.consequent?.type === 'Identifier') vars[k] = cursor.consequent.name;
+        else {
+          // String OR rich (fragment/element) branch — preserve rich runs
+          // through the detach instead of dropping the branch.
+          const bt = variantBranchText(cursor.consequent, code);
+          if (bt != null) literals[k] = bt;
+        }
         cursor = cursor.alternate;
       }
-      if (cursor?.type === 'StringLiteral') literals['default'] = cursor.value;
-      else if (cursor?.type === 'Identifier') vars['default'] = cursor.name;
+      if (cursor?.type === 'Identifier') vars['default'] = cursor.name;
+      else {
+        const bt = variantBranchText(cursor, code);
+        if (bt != null) literals['default'] = bt;
+      }
     } else if (only && only.type === 'JSXExpressionContainer' && (only as t.JSXExpressionContainer).expression.type === 'Identifier') {
       vars['default'] = ((only as t.JSXExpressionContainer).expression as t.Identifier).name;
     }
@@ -803,17 +1017,21 @@ export function detachTextVariableForVariantInCode(
     const keys = [...new Set([...Object.keys(literals), ...Object.keys(vars)])].filter(k => k !== 'default');
     const noVarsLeft = Object.keys(vars).length === 0;
     if (noVarsLeft && keys.every(k => literals[k] === (literals['default'] ?? literal))) {
-      path.node.children = [t.jsxText(`\n      ${literals['default'] ?? literal}\n    `)];
+      const def = literals['default'] ?? literal;
+      const collapsed = variantTextBranch(def);
+      path.node.children = t.isJSXFragment(collapsed)
+        ? [t.jsxText('\n      '), ...collapsed.children, t.jsxText('\n    ')]
+        : [t.jsxText(`\n      ${def}\n    `)];
       path.stop();
       return;
     }
     const idName = variantId ?? (/\bconst\s*\[\s*variant\b/.test(code) ? 'variant' : 'initialVariant');
     let expr: t.Expression = vars['default']
       ? t.identifier(vars['default'])
-      : t.stringLiteral(literals['default'] ?? literal);
+      : variantTextBranch(literals['default'] ?? literal);
     for (let i = keys.length - 1; i >= 0; i--) {
       const k = keys[i];
-      const branch = vars[k] ? t.identifier(vars[k]) : t.stringLiteral(literals[k] ?? '');
+      const branch = vars[k] ? t.identifier(vars[k]) : variantTextBranch(literals[k] ?? '');
       expr = t.conditionalExpression(
         t.binaryExpression('===', t.identifier(idName), t.stringLiteral(k)),
         branch, expr,
@@ -894,6 +1112,13 @@ export function replaceNodeTextContent(code: string, nodeId: string, text: strin
  */
 export function updateNodeChildrenFromHTML(code: string, nodeId: string, html: string): string {
   trace.fn('generator.updateNodeChildrenFromHTML', { nodeId });
+  // Commit-side net for the paste flatten (the editor flattens on paste; any
+  // other producer of block HTML lands here): block elements inside a text
+  // node are invalid nesting and override its typography.
+  if (/<(h[1-6]|div|ul|ol|li|blockquote|pre|table|section|article)\b/i.test(html)) {
+    const flat = flattenPastedRichHtml(html);
+    if (flat !== html) { trace.action('generator:children-html-flattened', { nodeId }); html = flat; }
+  }
 
   const ast = parseJSX(code);
   if (!ast) return code;
@@ -1383,6 +1608,145 @@ export function getInlineSpanPropertyState(
 /**
  * Reorder a node within its parent (or move to a new parent) at a specific index.
  */
+/**
+ * The thing that occupies this node's SLOT in its parent's child list.
+ *
+ * A node hidden on some variants is not a direct child of its parent — the
+ * variant-visibility system wraps it:
+ *
+ *   <AnimatePresence mode="popLayout">{initialVariant === 'x' && <el …/>}</AnimatePresence>
+ *
+ * The wrapper is the node's slot. It is what the parent actually lists, so it
+ * is what a reorder has to splice, and — unlike a MOVE, where the element
+ * leaves and the wrapper has no further purpose — the wrapper must travel WITH
+ * the node or its visibility condition is lost and a per-variant element
+ * becomes permanently visible.
+ *
+ * Deliberately narrow: it matches only `{cond && el}` / `{cond ? el : …}`
+ * (optionally inside an `AnimatePresence`) and returns the node's own path for
+ * anything else. A generic "walk up to the nearest element child" would also
+ * swallow a `.map()` collection template, where the slot is the whole list.
+ */
+function variantVisibilitySlotPath(path: any): any {
+  const cond = path.parentPath;
+  if (!cond || !(cond.isLogicalExpression?.() || cond.isConditionalExpression?.())) return path;
+  const container = cond.parentPath;
+  if (!container?.isJSXExpressionContainer?.()) return path;
+  const outer = container.parentPath;
+  if (outer?.isJSXElement?.()) {
+    const opening = outer.node.openingElement;
+    if (opening.name.type === 'JSXIdentifier' && opening.name.name === 'AnimatePresence') return outer;
+  }
+  return container;
+}
+
+/**
+ * Swap the `nodeId` element inside a cloned visibility wrapper for `replacement`.
+ *
+ * The wrapper is cloned at removal time, so its inner element is a stale copy —
+ * it predates the attribute edits a move applies (stripping `data-canvas-node`,
+ * style changes). Re-inserting that stale copy would silently revert them, so
+ * the live element is swapped in before the wrapper is spliced.
+ *
+ * Returns false when the element is not found, leaving the caller to insert the
+ * bare node rather than a wrapper around the wrong thing.
+ */
+function replaceWrappedElement(
+  /** The gating wrapper: an `AnimatePresence` element, or the bare
+   *  `{cond && …}` / `{cond ? … : …}` expression container. */
+  wrapper: t.JSXElement | t.JSXExpressionContainer,
+  nodeId: string,
+  replacement: t.JSXElement,
+): boolean {
+  let done = false;
+  const visit = (n: any, set: (v: any) => void): void => {
+    if (done || !n || typeof n !== 'object') return;
+    if (n.type === 'JSXElement') {
+      const hit = n.openingElement.attributes.some(
+        (a: any) => t.isJSXAttribute(a) && a.name.name === 'data-id'
+          && t.isStringLiteral(a.value) && a.value.value === nodeId,
+      );
+      if (hit) { set(replacement); done = true; return; }
+    }
+    for (const e of astChildEntries(n)) visit(e.get(), e.set);
+  };
+  visit(wrapper, () => {});
+  return done;
+}
+
+/** Every AST-node-valued property of `n`, with a setter for each.
+ *  Deliberately generic rather than a fixed key list: a slot can hold its
+ *  element under `expression`/`left`/`right` (a conditional), `arguments` +
+ *  `body` (a `.map()` template), or `children` — and a missed key reads as
+ *  "this slot doesn't hold the node", which is the silent-duplicate failure. */
+function astChildEntries(n: any): { get: () => any; set: (v: any) => void }[] {
+  const out: { get: () => any; set: (v: any) => void }[] = [];
+  for (const key of Object.keys(n)) {
+    if (key === 'loc' || key === 'type') continue;
+    const v = n[key];
+    if (Array.isArray(v)) {
+      v.forEach((item, i) => {
+        if (item && typeof item === 'object' && typeof item.type === 'string') {
+          out.push({ get: () => v[i], set: (nv) => { v[i] = nv; } });
+        }
+      });
+    } else if (v && typeof v === 'object' && typeof v.type === 'string') {
+      out.push({ get: () => n[key], set: (nv) => { n[key] = nv; } });
+    }
+  }
+  return out;
+}
+
+/** Does this child slot hold `nodeId` — as itself, or anywhere inside the
+ *  wrapper (a conditional, or a `.map()` template body)? */
+function slotHoldsNodeId(child: t.JSXElement['children'][number], nodeId: string): boolean {
+  let found = false;
+  const visit = (n: any): void => {
+    if (found || !n || typeof n !== 'object') return;
+    if (n.type === 'JSXElement') {
+      const hit = n.openingElement.attributes.some(
+        (a: any) => t.isJSXAttribute(a) && a.name.name === 'data-id'
+          && t.isStringLiteral(a.value) && a.value.value === nodeId,
+      );
+      if (hit) { found = true; return; }
+    }
+    for (const e of astChildEntries(n)) visit(e.get());
+  };
+  visit(child);
+  return found;
+}
+
+/**
+ * The `{coll.map(…)}` container a node's element sits inside, when that node is
+ * a collection-list ROW TEMPLATE.
+ *
+ * The template is not a child of the list's parent — the map CALL is. So a
+ * same-parent reorder has to move the whole container: that is the one slot the
+ * parent actually lists, and the list travels as a unit, which is what dragging
+ * the template's row in the tree means.
+ *
+ * Deliberately separate from `variantVisibilitySlotPath` because MOVE must not
+ * share it: dragging a row template OUT of its list empties the list
+ * (`replaceMapTemplateBodyWithNull`) rather than relocating the whole list.
+ * Returns null when the node is not a map body.
+ */
+function mapContainerSlotPath(path: any): any | null {
+  let walker = path.parentPath;
+  let sawArrow = false;
+  while (walker) {
+    if (walker.isArrowFunctionExpression?.() || walker.isFunctionExpression?.()) sawArrow = true;
+    else if (walker.isJSXExpressionContainer?.()) {
+      if (!sawArrow) return null;
+      const parent = walker.parentPath;
+      return (parent?.isJSXElement?.() || parent?.isJSXFragment?.()) ? walker : null;
+    } else if (walker.isJSXElement?.() || walker.isJSXFragment?.()) {
+      return null;   // hit a real element first — not a map body
+    }
+    walker = walker.parentPath;
+  }
+  return null;
+}
+
 export function reorderNodeInCode(
   code: string,
   nodeId: string,
@@ -1394,14 +1758,30 @@ export function reorderNodeInCode(
   if (!ast) return code;
 
   // Step 1: Find and remove the node
-  let removedNode: t.JSXElement | null = null;
+  // Widened: the thing spliced is the node's SLOT — for a gated node the
+  // conditional container, for a collection row template the `{…map()}`
+  // container. Neither is a JSXElement.
+  let removedNode: t.JSXElement | t.JSXExpressionContainer | null = null;
 
   findFirstElementByDataId(ast, nodeId, (path) => {
-    removedNode = t.cloneNode(path.node, true);
+    // Splice the SLOT, not the element. When the node is variant-wrapped its
+    // `parentPath` is a LogicalExpression, so the old `isJSXElement()` test
+    // failed, nothing was removed — and Step 2 then inserted the clone anyway.
+    // The node ended up in the file TWICE: once inside its wrapper, once bare
+    // at the new index, which the layers tree faithfully showed as two rows.
+    // A collection-list ROW TEMPLATE lives inside `{coll.map(… => <el/>)}` —
+    // its parent is the arrow function, so the plain splice below matched
+    // nothing and the clone was inserted anyway, duplicating the template (the
+    // "sdf" row duplicated by a drag, user report 2026-09-19). The container is
+    // the slot the parent actually lists, so the list moves as a unit.
+    const slot = variantVisibilitySlotPath(path) !== path
+      ? variantVisibilitySlotPath(path)
+      : (mapContainerSlotPath(path) ?? path);
+    removedNode = t.cloneNode(slot.node, true);
 
-    const parent = path.parentPath;
-    if (parent?.isJSXElement()) {
-      const idx = parent.node.children.indexOf(path.node);
+    const parent = slot.parentPath;
+    if (parent?.isJSXElement() || parent?.isJSXFragment()) {
+      const idx = parent.node.children.indexOf(slot.node);
       if (idx !== -1) {
         parent.node.children.splice(idx, 1);
         if (idx > 0 && idx <= parent.node.children.length) {
@@ -1435,19 +1815,24 @@ export function reorderNodeInCode(
         const hasDataId = child.openingElement.attributes.some(
           (a: any) => t.isJSXAttribute(a) && a.name.name === 'data-id'
         );
-        if (hasDataId) content.push(child);
+        // An `AnimatePresence` carries no data-id of its own but WRAPS a node
+        // that has one, so it occupies that node's slot. Classified as an
+        // anchor it would be pinned at a fixed content offset — the node it
+        // holds could never be reordered, and every sibling index past it would
+        // shift.
+        const isVisibilityWrapper = child.openingElement.name.type === 'JSXIdentifier'
+          && child.openingElement.name.name === 'AnimatePresence';
+        if (hasDataId || isVisibilityWrapper) content.push(child);
         else anchors.push({ node: child, after: content.length });
       } else if (child.type === 'JSXExpressionContainer') {
         content.push(child);
       }
     }
 
-    // Remove the moved node from the content slots (matched by data-id; it may
-    // already be gone if Step 1 removed it from this same parent).
-    const removeIdx = content.findIndex(n => t.isJSXElement(n) && n.openingElement.attributes.some(
-      (a: any) => t.isJSXAttribute(a) && a.name.name === 'data-id' &&
-        t.isStringLiteral(a.value) && a.value.value === nodeId
-    ));
+    // Remove the moved node from the content slots (it may already be gone if
+    // Step 1 removed it from this same parent). Matched through wrappers: the
+    // slot holding a variant-hidden node is the wrapper, not the node.
+    const removeIdx = content.findIndex(n => slotHoldsNodeId(n, nodeId));
     if (removeIdx >= 0) content.splice(removeIdx, 1);
 
     // Insert at the target CONTENT slot index.
@@ -1770,6 +2155,121 @@ export function flattenVariantConditionalStylesInCode(code: string, nodeId: stri
   const rebuilt = out.join(', ');
   trace.action('generator:flattenVariantConditionalStyles', { nodeId });
   return code.slice(0, objStart) + (rebuilt ? ` ${rebuilt} ` : '') + code.slice(pos);
+}
+
+/** One rotation channel per canvas node.
+ *
+ *  The canvas applies BOTH the CSS `transform` string and the `rotate` property, so an element
+ *  carrying `rotate: "-190.3"` alongside `transform: 'rotate(-190.3deg) …'` is rotated TWICE —
+ *  -380.6°, which is 180° from where it belongs. A flex column's children then look reordered,
+ *  which is how it was reported (user 2026-09-20: "the moment i drag it out they SWITCH order").
+ *
+ *  Two healers each write one channel and neither can see the other, because they run in DIFFERENT
+ *  mutations of the same flush: `moveNodeInCode` folds `variants.default.rotate` into the `rotate`
+ *  property while no transform exists yet, and the drag's own `updateStyles` adds the folded
+ *  `transform` afterwards. So this has to be a sweep over the finished batch rather than a guard
+ *  inside either one. The `transform` string wins — it is what a plain (non-motion) canvas element
+ *  renders from. */
+export function enforceSingleRotationChannelInCode(code: string): string {
+  if (!code.includes('canvasNodes')) return code;
+  const ast = parseJSX(code);
+  if (!ast) return code;
+  let changed = false;
+  traverse(ast, {
+    VariableDeclarator(path) {
+      if (path.node.id.type !== 'Identifier' || path.node.id.name !== 'canvasNodes' || !path.node.init) return;
+      path.traverse({
+        JSXAttribute(p) {
+          if (p.node.name.type !== 'JSXIdentifier' || p.node.name.name !== 'style') return;
+          const v = p.node.value;
+          if (v?.type !== 'JSXExpressionContainer' || v.expression.type !== 'ObjectExpression') return;
+          const keyOf = (prop: any): string =>
+            prop.type !== 'ObjectProperty' ? ''
+            : prop.key.type === 'Identifier' ? prop.key.name
+            : prop.key.type === 'StringLiteral' ? prop.key.value : '';
+          const transform = v.expression.properties.find((prop: any) => keyOf(prop) === 'transform') as any;
+          const hasRotateInTransform = !!transform
+            && transform.value?.type === 'StringLiteral'
+            && /\brotate\s*\(/.test(transform.value.value);
+          if (!hasRotateInTransform) return;
+          const before = v.expression.properties.length;
+          v.expression.properties = v.expression.properties.filter((prop: any) => keyOf(prop) !== 'rotate');
+          if (v.expression.properties.length !== before) changed = true;
+        },
+      });
+      path.stop();
+    },
+  });
+  if (!changed) return code;
+  try {
+    const out = generate(ast).code;
+    trace.action('generator:enforce-single-rotation-channel', {});
+    return out;
+  } catch {
+    return code;
+  }
+}
+
+/** Flatten `variant`/`initialVariant` conditional styles on EVERY node inside module-scope
+ *  `canvasNodes`, not just the one that was dragged.
+ *
+ *  `flattenVariantConditionalStylesInCode` takes a nodeId, so it healed the dragged node and left its
+ *  DESCENDANTS alone — and a dragged subtree carries them out too. A frame whose child held
+ *  `order: variant === 'variant-1' ? 1 : 1` therefore still referenced `variant` at module scope and the
+ *  validator blocked the whole drag ("References undefined identifier: variant", user report 2026-09-20).
+ *  Same scope as `stripCanvasNodeMotionRefsInCode`, which already sweeps every node for the ATTR half of
+ *  the same problem; this is the STYLE half. Resolving to the default branch matches the single-node
+ *  version — on the canvas there is no variant context. */
+export function flattenCanvasNodeVariantStylesInCode(code: string): string {
+  if (!code.includes('canvasNodes')) return code;
+  const ast = parseJSX(code);
+  if (!ast) return code;
+  let changed = false;
+  /** The final `alternate` of a `variant === 'x' ? … : …` chain, or null if it isn't one. */
+  const defaultBranch = (expr: any): any | null => {
+    let cursor = expr;
+    let sawVariantTest = false;
+    while (cursor?.type === 'ConditionalExpression') {
+      const t = cursor.test;
+      const isVariantTest = t?.type === 'BinaryExpression' && t.operator === '===' &&
+        t.left?.type === 'Identifier' && (t.left.name === 'variant' || t.left.name === 'initialVariant');
+      if (!isVariantTest) return null;      // some other ternary — leave it alone
+      sawVariantTest = true;
+      cursor = cursor.alternate;
+    }
+    return sawVariantTest ? cursor : null;
+  };
+  traverse(ast, {
+    VariableDeclarator(path) {
+      if (path.node.id.type !== 'Identifier' || path.node.id.name !== 'canvasNodes' || !path.node.init) return;
+      path.traverse({
+        JSXAttribute(p) {
+          if (p.node.name.type !== 'JSXIdentifier' || p.node.name.name !== 'style') return;
+          const v = p.node.value;
+          if (v?.type !== 'JSXExpressionContainer' || v.expression.type !== 'ObjectExpression') return;
+          v.expression.properties = v.expression.properties.filter((prop: any) => {
+            if (prop.type !== 'ObjectProperty') return true;
+            const def = defaultBranch(prop.value);
+            if (def === null) return true;
+            changed = true;
+            // An empty default means the property is absent on the primary — drop it.
+            if (def.type === 'StringLiteral' && def.value === '') return false;
+            prop.value = def;
+            return true;
+          });
+        },
+      });
+      path.stop();
+    },
+  });
+  if (!changed) return code;
+  try {
+    const out = generate(ast).code;
+    trace.action('generator:flatten-canvas-node-variant-styles', {});
+    return out;
+  } catch {
+    return code;
+  }
 }
 
 /** Resolve every per-viewport `__mqN ? … : …` gate ternary in a node's subtree to its BASE (else) branch.
@@ -2171,13 +2671,42 @@ export function moveNodeInCode(
   };
 
   // Step 1: Find and remove the node
-  let removedNode: t.JSXElement | null = null;
+  // Widened beyond JSXElement: when the node is gated by a bare `{cond && …}`
+  // the thing spliced into the new parent is the EXPRESSION CONTAINER, not the
+  // element. Every consumer that needs the element casts (and runs before the
+  // re-wrap), so the wider type costs nothing.
+  let removedNode: t.JSXElement | t.JSXExpressionContainer | null = null;
+  /** The visibility wrapper the node was gated by, if any — an `AnimatePresence`
+   *  or the bare `{cond && …}` container. Re-applied around the node when it
+   *  lands in a new parent so its condition survives the move. */
+  let removedWrapper: t.JSXElement | t.JSXExpressionContainer | null = null;
 
   findFirstElementByDataId(ast, nodeId, (path) => {
     removedNode = t.cloneNode(path.node, true);
 
-    const parent = path.parentPath;
-    if (parent?.isJSXElement() || parent?.isJSXFragment()) {
+    // A gated node is not a direct child — its slot is the wrapper. Check this
+    // FIRST: the plain-child branch below tests `path.parentPath`, which for
+    // `{cond && <el/>}` is a LogicalExpression, so it fell through to the
+    // AnimatePresence-only walker, matched nothing, removed nothing — and the
+    // clone was inserted anyway, duplicating the node in the file. That is the
+    // CMS "Load More" / overlay duplication (user report 2026-09-19).
+    const slot = variantVisibilitySlotPath(path);
+    const parent = slot !== path ? slot.parentPath : path.parentPath;
+    if (slot !== path && (parent?.isJSXElement() || parent?.isJSXFragment())) {
+      removedWrapper = t.cloneNode(slot.node, true);
+      const children = parent.node.children;
+      const idx = children.indexOf(slot.node);
+      if (idx !== -1) {
+        children.splice(idx, 1);
+        if (idx > 0 && children[idx - 1]?.type === 'JSXText' &&
+            (children[idx - 1] as t.JSXText).value.trim() === '') {
+          children.splice(idx - 1, 1);
+        }
+      }
+      trace.action('generator:moveNodeInCode-removed-gated-slot', {
+        nodeId, slotType: slot.node.type,
+      });
+    } else if (parent?.isJSXElement() || parent?.isJSXFragment()) {
       // Plain child of a JSXElement / JSXFragment — splice from parent.children.
       const children = parent.node.children;
       const idx = children.indexOf(path.node);
@@ -2197,12 +2726,20 @@ export function moveNodeInCode(
       // Element is wrapped — most commonly inside the AnimatePresence
       // visibility pattern: `<AnimatePresence>{cond && <element/>}</AnimatePresence>`.
       // Walk up to find the AnimatePresence wrapper and REMOVE the
-      // whole wrapper (the wrapper exists only to gate this element's
-      // visibility; with the element gone the wrapper has no purpose).
+      // whole wrapper from its old location.
       // Without this branch the element stays in the source while ALSO
       // being added to its new location — visible as a duplicate
       // data-id (one in the wrapper, one in canvasNodes), unable to
       // resize, layers panel shows it twice.
+      //
+      // The wrapper is KEPT (see `removedWrapper`) and re-applied when the node
+      // lands in a new parent. It is the node's visibility condition, so
+      // dropping it on a reparent silently UNHID a variant-hidden node: the
+      // layers row still showed the eye-slash while the canvas rendered it on
+      // every variant (user report 2026-09-19, hamburger dragged into "Menu
+      // links"). Exit-to-canvas is the exception and keeps unwrapping —
+      // canvasNodes live outside the variant system, so the condition has
+      // nothing to read there.
       let walker: any = path.parentPath;
       while (walker) {
         if (walker.isJSXElement()) {
@@ -2210,6 +2747,7 @@ export function moveNodeInCode(
           const isAnimPresence = opening.name.type === 'JSXIdentifier'
             && opening.name.name === 'AnimatePresence';
           if (isAnimPresence) {
+            removedWrapper = t.cloneNode(walker.node, true);
             const ancestor = walker.parentPath;
             if (ancestor?.isJSXElement() || ancestor?.isJSXFragment()) {
               const ancestorChildren = ancestor.node.children;
@@ -2366,6 +2904,17 @@ export function moveNodeInCode(
         openingEl.attributes.push(styleAttr);
       }
       const obj = (styleAttr.value as t.JSXExpressionContainer).expression as t.ObjectExpression;
+      // ONE CHANNEL ONLY. The drag commit may ALREADY have folded this element's
+      // motion props into a CSS `transform` string (foldEffectiveTransform), and
+      // the canvas renders BOTH channels — so adding `rotate` on top applied the
+      // angle twice: -190.3° became -380.6° (≈ -20.6°), a ~180° flip that made a
+      // flex column's children look reordered on drag-out (user report
+      // 2026-09-20). If a rotation is already represented in `transform`, this
+      // fold has nothing to add.
+      const transformProp = obj.properties.find(
+        (p) => t.isObjectProperty(p) && ((t.isIdentifier(p.key) && p.key.name === 'transform') || (t.isStringLiteral(p.key) && p.key.value === 'transform')),
+      ) as t.ObjectProperty | undefined;
+      if (transformProp && t.isStringLiteral(transformProp.value) && /\brotate\s*\(/.test(transformProp.value.value)) return;
       const existing = obj.properties.find(
         (p) => t.isObjectProperty(p) && ((t.isIdentifier(p.key) && p.key.name === 'rotate') || (t.isStringLiteral(p.key) && p.key.value === 'rotate')),
       ) as t.ObjectProperty | undefined;
@@ -2743,6 +3292,20 @@ export function moveNodeInCode(
         path.stop();
         return;
       }
+      // RE-WRAP: put the node back inside its visibility condition before it is
+      // inserted. Deliberately here — AFTER the attribute edits above (which
+      // target the ELEMENT) and AFTER the map-refill branch (which needs a bare
+      // element, and would crash reading `openingElement` off a container) — so
+      // the wrapper is only ever the thing actually spliced into the parent.
+      if (removedWrapper && removedNode) {
+        const wrapper = removedWrapper;
+        if (replaceWrappedElement(wrapper, nodeId, removedNode as t.JSXElement)) {
+          removedNode = wrapper;
+          trace.action('generator:moveNodeInCode-rewrapped-visibility', {
+            nodeId, newParentId, wrapperType: wrapper.type,
+          });
+        }
+      }
       // ANCHOR-FIRST: splice before the named sibling. Immune to every
       // index-space divergence (CSS `order` reorders, `<style>` children,
       // siblings the rect walk missed). Falls through to the index logic
@@ -2861,7 +3424,7 @@ export type AddNodeDef = { id: string; type: string; styles: Record<string, stri
 export function buildNodeJSX(node: AddNodeDef, isComponentFile: boolean, indent: string = '      '): string {
   const styleEntries = Object.entries(node.styles)
     .filter(([, v]) => v !== '')
-    .map(([k, v]) => `${k}: ${quoteStyleValue(v)}`)
+    .map(([k, v]) => `${styleKeyLiteral(k)}: ${quoteStyleValue(v)}`)
     .join(', ');
   const nameAttr = node.name ? ` data-name="${sanitizeDataName(node.name)}"` : '';
   // Build HTML attributes (src, alt, controls, ref, etc.). `ref` (and
@@ -2888,7 +3451,19 @@ export function buildNodeJSX(node: AddNodeDef, isComponentFile: boolean, indent:
     tag = `motion.${tag}`;
     layoutAttr = ' layout={true}';
   }
-  const textContent = node.textContent || '';
+  // NEVER interpolate textContent raw. A node copied from a responsive-text
+  // (`useResponsiveText`) tile carries the hook's stored payload — TipTap
+  // HTML with STRING style attributes (`<span style="font-weight: 700;">`)
+  // and unclosed `<br>` tags. Interpolated verbatim, the string spans are
+  // VALID JSX (a string attr parses fine), so they ride through both insert
+  // paths into the file, the canvas tolerates them, and preview/publish
+  // white-screen on React's "style prop expects a mapping" (the NoShit
+  // Academy outage, reproduced deterministically via copy→paste 2026-09-05).
+  // `htmlToJSX` converts `style="…"` → `style={{…}}` and `<br>` → `<br />`,
+  // and is a no-op on already-JSX content (its regex only matches the
+  // string-attr shape) — so plain text and object-styled spans pass through
+  // byte-identical.
+  const textContent = node.textContent ? htmlToJSX(node.textContent) : '';
 
   // Has children — build nested JSX
   if (node.children && node.children.length > 0) {
@@ -3071,7 +3646,7 @@ export function addCanvasNodeInCode(
 
   // Build JSX string for the canvas node — inject data-canvas-node manually
   const styleEntries = Object.entries(node.styles)
-    .map(([k, v]) => `${k}: ${quoteStyleValue(v)}`)
+    .map(([k, v]) => `${styleKeyLiteral(k)}: ${quoteStyleValue(v)}`)
     .join(', ');
   const nameAttr = node.name ? ` data-name="${sanitizeDataName(node.name)}"` : '';
   const attrsStr = node.attrs
@@ -3445,12 +4020,13 @@ export function removeNodeInCode(code: string, nodeId: string): string {
       if (handled) {
         try {
           let result = generate(ast, { retainLines: false, concise: false }, code).code;
-          result = clearContainerStylesForNode(result, nodeId);
+          result = clearContainerStylesForNode(result, nodeId, true);
           result = removeHoverStyleInCode(result, nodeId);
           result = removeBorderOverlayStyle(result, nodeId);
           result = removePseudoStyleInCode(result, nodeId, 'placeholder');
           result = removePseudoStyleInCode(result, nodeId, 'before');
           result = removeSelectCaretRuleInCode(result, nodeId);
+          result = removeScopedChildRulesInCode(result, nodeId);
           trace.action('generator:removeNode-empty-map-template', { nodeId });
           return sweepEmptyGlideWrappers(removeOrphanedVariantConsts(result));
         } catch (err) {
@@ -3511,12 +4087,13 @@ export function removeNodeInCode(code: string, nodeId: string): string {
     let endIdx = rmEnd;
     while (endIdx < code.length && (code[endIdx] === '\n' || code[endIdx] === '\r')) endIdx++;
     let selfClosed = code.slice(0, rmStart) + code.slice(endIdx);
-    selfClosed = clearContainerStylesForNode(selfClosed, nodeId);
+    selfClosed = clearContainerStylesForNode(selfClosed, nodeId, true);
     selfClosed = removeHoverStyleInCode(selfClosed, nodeId);
     selfClosed = removeBorderOverlayStyle(selfClosed, nodeId);
     selfClosed = removePseudoStyleInCode(selfClosed, nodeId, 'placeholder');
     selfClosed = removePseudoStyleInCode(selfClosed, nodeId, 'before');
     selfClosed = removeSelectCaretRuleInCode(selfClosed, nodeId);
+    selfClosed = removeScopedChildRulesInCode(selfClosed, nodeId);
     return sweepEmptyGlideWrappers(removeOrphanedVariantConsts(selfClosed));
   }
 
@@ -3536,12 +4113,13 @@ export function removeNodeInCode(code: string, nodeId: string): string {
     while (trimEnd < code.length && (code[trimEnd] === '\n' || code[trimEnd] === '\r')) trimEnd++;
     let result = code.slice(0, rmStart) + code.slice(trimEnd);
     // Also clean up any @media CSS rules referencing this node
-    result = clearContainerStylesForNode(result, nodeId);
+    result = clearContainerStylesForNode(result, nodeId, true);
     result = removeHoverStyleInCode(result, nodeId);
     result = removeBorderOverlayStyle(result, nodeId);
     result = removePseudoStyleInCode(result, nodeId, 'placeholder');
     result = removePseudoStyleInCode(result, nodeId, 'before');
     result = removeSelectCaretRuleInCode(result, nodeId);
+    result = removeScopedChildRulesInCode(result, nodeId);
     // Garbage-collect the deleted element's now-orphaned variant object(s).
     result = sweepEmptyGlideWrappers(removeOrphanedVariantConsts(result));
     return result;

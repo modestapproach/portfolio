@@ -27,7 +27,8 @@ import {
 } from './image-paste';
 import { handleClipboardTextPaste } from './text-paste';
 import { readFigmaClipboard, handleFigmaPaste } from './figma-paste';
-import { hasClipboard as hasInternalClipboard } from '../code/features/paste-engine';
+import { readReshadersClipboard } from './reshaders-clipboard';
+import { hasClipboard as hasInternalClipboard, setExternalClipboardData } from '../code/features/paste-engine';
 import { parsePluginUrl } from '@/editor/command-palette/marketplace-client';
 import { paletteOpenAtom, paletteQueryAtom } from '@/code/stores/palette-store';
 import { getDefaultStore as getJotaiStore } from 'jotai';
@@ -35,11 +36,13 @@ import { trace } from '../shared/debug-trace';
 import type { CanvasNode } from '../code/parsing/parser';
 import { getDefaultStore } from 'jotai';
 import { shapeEditingIdAtom, selectedPointAtom, groupEditingIdAtom, activeContainerIdAtom } from '../code/stores/shape-edit-store';
-import { flushNow } from '../code/mutation/mutation-queue';
+import { flushNow, syncQueueCode, setForceRender } from '../code/mutation/mutation-queue';
 import { groupSvgs, ungroupSvgs } from '../code/svg/group-svgs';
 import { buildGroupSvgsOpts } from './svg-group-helper';
-import { activeFilePathAtom, isIconSetFilePath } from '../code/project/active-file-store';
-import { renamingNodeIdAtom } from '../code/stores/context-menu-store';
+import { activeFilePathAtom, activeCodeAtom, isIconSetFilePath, isDesignComponentFile } from '../code/project/active-file-store';
+import { detachInstance } from '../code/components/component-ops';
+import { isReplicaViewportAtom, isComponentVariantViewportAtom } from '../code/stores/viewport-store';
+import { renamingNodeIdAtom, makeComponentRequestAtom } from '../code/stores/context-menu-store';
 import { createAndOpenProject } from '../editor/header/menu-builders';
 import { nudgeSelection, flushPendingNudge, type NudgeDirection } from './arrow-nudge';
 import { selectAllPageNodeIds } from './selection/select-all';
@@ -219,7 +222,7 @@ export function registerShortcuts(refs: ShortcutRefs): () => void {
   // mutations land afterward, desyncing the visible DOM from the source.
   //
   // SHAPE-EDIT session: while shapeEditingIdAtom is set, Cmd+Z/Shift+Z route
-  // to the sandbox's IN-SESSION stack (per-gesture vertex undo, Framer-style)
+  // to the sandbox's IN-SESSION stack (per-gesture vertex undo, reference-style)
   // instead of the global history. The session's edits are live-DOM only —
   // the source still holds the PRE-session state, so a global undo here
   // would rip the page out from under the live editor. Never fall through,
@@ -409,6 +412,62 @@ export function registerShortcuts(refs: ShortcutRefs): () => void {
     if (sel) getDefaultStore().set(renamingNodeIdAtom, sel);
   }}));
 
+  // ─── Detach Instance (Ctrl+Alt+B) ────────────────────────────────
+  // Matches the context menu's "Detach Instance · Ctrl+Alt+B". The menu has
+  // advertised that shortcut for a while, but nothing ever registered it, so
+  // pressing it did nothing (user report 2026-09-20).
+  //
+  // Same gates as the menu item, so the two cannot diverge: a DESIGN component
+  // instance only (a code component has no inlineable node tree), and never on a
+  // replica viewport / non-default variant artboard — detach rewrites the one
+  // shared instance and replays the other viewports as @media rules, so running
+  // it from a replica would bake THAT tile's variant as everyone's base.
+  cleanups.push(keyboard.register({ key: 'b', ctrl: true, alt: true, label: 'Detach Instance', category: 'structure', handler: () => {
+    const sel = selectedIdRef.current;
+    if (!sel) return;
+    const store = getDefaultStore();
+    if (store.get(isReplicaViewportAtom) || store.get(isComponentVariantViewportAtom)) {
+      trace.action('shortcut:detach-instance-skipped-non-primary', { nodeId: sel });
+      return;
+    }
+    const inst = nodesRef.current.get(sel);
+    const compFile = inst?.componentFile;
+    if (!compFile || !isDesignComponentFile(compFile)) return;
+    const filePath = store.get(activeFilePathAtom);
+    const resolvedVariant = inst?.attrs?.initialVariant || 'default';
+    syncQueueCode(store.get(activeCodeAtom));
+    flushNow();
+    const out: { rootId?: string } = {};
+    const newCode = detachInstance(filePath, sel, compFile, resolvedVariant, out);
+    trace.action('shortcut:detach-instance', { nodeId: sel, componentFile: compFile, resolvedVariant, newRootId: out.rootId });
+    if (!newCode) return;
+    setForceRender();
+    store.set(activeCodeAtom, newCode);
+    syncQueueCode(newCode);
+    setSelectedIds(out.rootId ? [out.rootId] : []);
+  }}));
+
+  // ─── Make Component (Ctrl+Alt+K) ─────────────────────────────────
+  // Matches the context menu's "Make Component · Ctrl+Alt+K" — advertised, but
+  // nothing ever registered it (user report 2026-10-19), same as Detach above.
+  // Opens the menu's own name modal via makeComponentRequestAtom (ContextMenu
+  // owns the modal and the confirm flow) behind the menu item's gates: ONE
+  // node, not an instance or an svg, and a primary artboard only — a replica
+  // viewport / non-default variant can't host a brand-new component.
+  cleanups.push(keyboard.register({ key: 'k', ctrl: true, alt: true, label: 'Make Component', category: 'structure', handler: () => {
+    const sel = selectedIdRef.current;
+    if (!sel || selectedIdsRef.current.length > 1) return;
+    const store = getDefaultStore();
+    if (store.get(isReplicaViewportAtom) || store.get(isComponentVariantViewportAtom)) {
+      trace.action('shortcut:make-component-skipped-non-primary', { nodeId: sel });
+      return;
+    }
+    const node = nodesRef.current.get(sel);
+    if (!node || node.componentFile || node.type === 'svg') return;
+    trace.action('shortcut:make-component', { nodeId: sel });
+    store.set(makeComponentRequestAtom, sel);
+  }}));
+
   // ─── Copy/Paste/Cut/Duplicate ────────────────────────────────────
   // Select All — everything selectable at PAGE level: the primary viewport's
   // sections + top-level canvas nodes (template chrome / ghosts / overlays
@@ -442,6 +501,30 @@ export function registerShortcuts(refs: ShortcutRefs): () => void {
         trace.action('image-paste:handled-from-ctrl-v', { url: imageUrl });
         return;
       }
+      // reshaders "Copy code component" — like the Figma plugin, a hidden
+      // text/html flavor (text/plain is a single space, so the component
+      // source never pastes into a text editor). Same envelope as the
+      // older text form handled in doTextPaste (2.5).
+      readReshadersClipboard().then((envelope) => {
+        if (envelope && setExternalClipboardData(envelope.data)) {
+          trace.action('reshaders-paste:detected-from-html-flavor', {
+            nodes: envelope.data.nodes.length,
+            components: envelope.data.components?.length ?? 0,
+          });
+          executePaste(nodesRef.current, contentRef.current, selectedIdRef.current, (id) => setSelectedIds(id ? [id] : []), handleNodeMouseDown);
+          return;
+        }
+        tryFigmaThenText();
+      }).catch((err) => {
+        trace.error('reshaders-paste:ctrl-v-failed', err);
+        tryFigmaThenText();
+      });
+    }).catch((err) => {
+      trace.error('image-paste:ctrl-v-failed', err);
+      doTextPaste();
+    });
+
+    function tryFigmaThenText() {
       // Figma "Import to Revyme" clipboard — the plugin copies a hidden
       // text/html flavor carrying the design payload. Must be checked from
       // the HTML flavor (the text/plain flavor is a single space).
@@ -456,10 +539,7 @@ export function registerShortcuts(refs: ShortcutRefs): () => void {
         trace.error('figma-paste:ctrl-v-failed', err);
         doTextPaste();
       });
-    }).catch((err) => {
-      trace.error('image-paste:ctrl-v-failed', err);
-      doTextPaste();
-    });
+    }
 
     function doTextPaste() {
     navigator.clipboard.readText().then(text => {
@@ -490,6 +570,63 @@ export function registerShortcuts(refs: ShortcutRefs): () => void {
           trace.action('component-paste:import-result', { ok });
         });
         return;
+      }
+      // 2.5 reshaders "Copy for Revyme" — a FULL ClipboardData payload as
+      //     JSON text (marker key `revymeClipboard: 1`). reshaders runs on
+      //     a different origin, so the usual localStorage clipboard can't
+      //     carry it; the payload rides the OS clipboard instead. Store it
+      //     as the internal clipboard and run the standard paste — the
+      //     component master materializes via ensureLocalComponentImports
+      //     (no sourceProjectId → same-project path).
+      if (trimmed.startsWith('{') && trimmed.includes('"revymeClipboard"')) {
+        try {
+          const payload = JSON.parse(trimmed);
+          if (payload && payload.revymeClipboard === 1 && setExternalClipboardData(payload.data)) {
+            trace.action('reshaders-paste:detected-from-ctrl-v', {
+              nodes: payload.data?.nodes?.length,
+              components: payload.data?.components?.length,
+            });
+            executePaste(nodesRef.current, contentRef.current, selectedIdRef.current, (id) => setSelectedIds(id ? [id] : []), handleNodeMouseDown);
+            return;
+          }
+        } catch { /* not a reshaders payload — fall through */ }
+      }
+      // 2.6 reshaders component CODE ("Copy code" instead of "Copy for
+      //     Revyme") — the raw TSX carries @shaderDoc + a default export.
+      //     Synthesize the same ClipboardData so either button installs.
+      if (trimmed.startsWith("'use client'") && trimmed.includes('@shaderDoc')) {
+        const nameMatch = trimmed.match(/export default withResponsiveProps\((\w+)\)/) ||
+          trimmed.match(/export default function (\w+)/);
+        if (nameMatch) {
+          const tag = nameMatch[1];
+          const hMatch = trimmed.match(/@defaultHeight (\d+)/);
+          const h = hMatch ? parseInt(hMatch[1], 10) : 400;
+          const ok = setExternalClipboardData({
+            version: 1,
+            timestamp: Date.now(),
+            nodes: [{
+              id: `rs${Date.now().toString(36)}`,
+              type: tag,
+              parentId: null,
+              children: [],
+              order: 0,
+              styles: { position: 'relative', width: '600px', height: `${h}px`, flex: '0 0 auto' },
+              name: tag,
+              componentFile: `components/${tag}.tsx`,
+            }],
+            components: [{
+              tagName: tag,
+              masterPath: `components/${tag}.tsx`,
+              kind: 'code',
+              files: [{ path: `components/${tag}.tsx`, content: trimmed }],
+            }],
+          } as never);
+          if (ok) {
+            trace.action('reshaders-paste:tsx-from-ctrl-v', { tag });
+            executePaste(nodesRef.current, contentRef.current, selectedIdRef.current, (id) => setSelectedIds(id ? [id] : []), handleNodeMouseDown);
+            return;
+          }
+        }
       }
       // 3. Internal node paste from localStorage `canvas_clipboard`.
       //    Only run when there's actually something in the internal

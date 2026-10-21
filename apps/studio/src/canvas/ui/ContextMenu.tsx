@@ -5,7 +5,7 @@ import { useEffect, useRef, useCallback, useState } from 'react';
 import { CDN_HOST_BARE } from '@/shared/hosts';
 import { useAtom, useAtomValue, useSetAtom, useStore } from 'jotai';
 import { createPortal } from 'react-dom';
-import { contextMenuAtom, renamingNodeIdAtom } from '@/code/stores/context-menu-store';
+import { contextMenuAtom, renamingNodeIdAtom, makeComponentRequestAtom } from '@/code/stores/context-menu-store';
 import { codeAtom, nodesAtom, selectedNodeAtom, selectedIdsAtom, updatingFromCanvasAtom, getNodesSnapshot } from '@/code/stores/store';
 import { useNode, useNodesComputed } from '@/code/stores/node-family';
 import type { CanvasNode } from '@/code/parsing/parser';
@@ -165,6 +165,19 @@ export default function ContextMenu() {
   const [makeIconSetModal, setMakeIconSetModal] = useState<{ nodeIds: string[] } | null>(null);
   const [makeIconSetName, setMakeIconSetName] = useState('');
 
+  // Ctrl+Alt+K (shortcuts.ts) asks for the same modal the menu item opens. The
+  // shortcut already applied the item's gates; this only seeds the name and opens.
+  const [makeCompRequest, setMakeCompRequest] = useAtom(makeComponentRequestAtom);
+  useEffect(() => {
+    if (!makeCompRequest) return;
+    setMakeCompRequest(null);
+    const target = getNodesSnapshot().get(makeCompRequest);
+    if (!target) return;
+    trace.action('context-menu:make-component-from-shortcut', { nodeId: makeCompRequest });
+    setMakeCompName(target.name || target.type || '');
+    setMakeCompModal({ nodeId: makeCompRequest });
+  }, [makeCompRequest, setMakeCompRequest]);
+
   // Adjust position to stay on screen
   useEffect(() => {
     if (!menu.show || !menuRef.current) return;
@@ -208,8 +221,14 @@ export default function ContextMenu() {
   const isNonPrimaryVariantVp = useAtomValue(isComponentVariantViewportAtom);
   const isNonPrimaryArtboard = isReplicaVp || isNonPrimaryVariantVp;
 
-  const handleMakeComponentConfirm = () => {
-    if (!makeCompModal || !makeCompName.trim()) return;
+  // The typed name is passed DIRECTLY (like the Vector Set flow), never read
+  // back from state: the old `setMakeCompName(name); setTimeout(confirm, 0)`
+  // ran a stale closure — the modal's onClose reset the name in the same
+  // batch — so the component was created under the fallback `node.name`
+  // ("Frame") no matter what was typed (2026-09-08).
+  const handleMakeComponentConfirm = (typedName: string) => {
+    const displayName = typedName.trim();
+    if (!makeCompModal || !displayName) return;
     const nodes = getNodesSnapshot();
     const targetNodeId = makeCompModal.nodeId;
 
@@ -294,7 +313,10 @@ export default function ContextMenu() {
     let cmsItemVar: string | undefined;
     let cmsSource: string | undefined;
     {
-      let cursor: typeof targetNode | null = targetNode ?? null;
+      // Start at the PARENT: a node that IS the collection container (Make
+      // Component on the whole list) is not inside its own `.map()` — hoisting
+      // its row bindings rewrote every row to the first item (2026-09-08).
+      let cursor: typeof targetNode | null = targetNode?.parentId ? nodes.get(targetNode.parentId) ?? null : null;
       for (let i = 0; i < 12 && cursor; i++) {
         // `source` (the collection slug) lets makeComponent seed prop defaults + types
         // from the collection's first item — so the new master renders real content.
@@ -324,7 +346,7 @@ export default function ContextMenu() {
     }
 
     const result = makeComponent(
-      activeFilePath, compTargetId, makeCompName.trim(),
+      activeFilePath, compTargetId, displayName,
       !!isDirectViewportChild && vpDims.length > 1,
       vpDims.length > 0 ? vpDims : undefined,
       cmsItemVar,
@@ -411,7 +433,7 @@ export default function ContextMenu() {
     <NameInputModal
       isOpen={!!makeCompModal}
       onClose={handleCloseCompModal}
-      onSubmit={(name) => { setMakeCompName(name); setTimeout(() => handleMakeComponentConfirm(), 0); }}
+      onSubmit={(name) => { setMakeCompName(name); handleMakeComponentConfirm(name); }}
       title="Name Component"
       placeholder="Component name"
       defaultValue={makeCompName || node?.name || ''}
@@ -861,9 +883,15 @@ export default function ContextMenu() {
         />
         {/* Construction shortcuts — most-used surface, kept at top */}
         {/* Detach Instance — only for component instances; inlines the master's content as normal
-            nodes (resolving variables/variant/styles), keeping any NESTED instances as instances. */}
+            nodes (resolving variables/variant/styles), keeping any NESTED instances as instances.
+            GREYED on a replica viewport / non-default variant artboard: detach rewrites the ONE
+            shared instance in the page source and replays the other viewports as @media rules, so
+            it is inherently a primary-artboard action. Offering it on a replica invited a detach
+            that silently baked THAT tile's variant as the base for every viewport. Greyed rather
+            than hidden (unlike Make Component) because the node IS detachable — just not from
+            here — and a vanishing item reads as "this isn't an instance". */}
         {isDesignInstance && (
-          <MenuItem label="Detach Instance" shortcut="Ctrl+Alt+B" onClick={handleDetachInstance} disabled={!nodeId} />
+          <MenuItem label="Detach Instance" shortcut="Ctrl+Alt+B" onClick={handleDetachInstance} disabled={!nodeId || isNonPrimaryArtboard} />
         )}
         {showComponentOrMap && (
           <MenuItem label="Make Component" shortcut="Ctrl+Alt+K" onClick={handleMakeComponent} disabled={!nodeId} />
@@ -883,9 +911,9 @@ export default function ContextMenu() {
           <MenuItem label="Ungroup" shortcut="Ctrl+Shift+G" onClick={handleUngroupSvgs} />
         )}
         {/* "Make into Map" (inline .map() repeater) was retired — CMS
-            collection lists are the single authoring path for repeats now.
-            The inline-map ENGINE (parser `inlineMapData` + Renderer ghosts +
-            map-gen) is kept so any EXISTING inline maps still render/edit. */}
+            collection lists are the single authoring path for repeats now;
+            the inline-map engine is gone and the oracle rejects inline
+            \`.map()\` repeaters (INLINE_MAP_UNSUPPORTED). */}
         {/* No "Unbind from <collection>" item — the reference has no such action; a
             collection list is removed by deleting it, not unbound in place.
             (Binding happens by dragging a collection from the Insert panel.) */}

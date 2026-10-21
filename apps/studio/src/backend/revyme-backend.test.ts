@@ -204,3 +204,92 @@ describe('Template flow — free templates + remix-into', () => {
     await expect(remixTemplateIntoWebsite('t1', 'w1')).rejects.toThrow(/already has content/);
   });
 });
+
+// 2026-10-14: stale tabs overwrote newer work (whole-row saves, last write
+// wins), and the boot getters fetched the 13 MB project row seven times.
+describe('RevymeBackend — revisions and the light row', () => {
+  it('load records the row revision; the next save names it as its base', async () => {
+    const { resetSaveRevisionForTest } = await import('./save-revision');
+    resetSaveRevisionForTest();
+    const backend = new RevymeBackend();
+    setResponse({ id: '1', name: 'A', revision: 41, json: JSON.stringify({ format: 'revyme-v1', files: { a: 'b' } }) });
+    await backend.loadProject('1');
+    setResponse({ id: '1', revision: 42 });
+    await backend.saveProject('1', { format: 'revyme-v1', files: { a: 'c' } });
+    const body = JSON.parse(calls[1].init.body as string);
+    expect(body.baseRevision).toBe(41);
+    // …and the landed revision becomes the next base.
+    setResponse({ id: '1', revision: 43 });
+    await backend.saveProject('1', { format: 'revyme-v1', files: { a: 'd' } });
+    expect(JSON.parse(calls[2].init.body as string).baseRevision).toBe(42);
+  });
+
+  it('a 409 becomes a SaveConflictError carrying the row\'s revision', async () => {
+    const { SaveConflictError } = await import('./types');
+    const backend = new RevymeBackend();
+    setResponse({ error: { code: 'CONFLICT', message: 'stale', details: { revision: 9 } } }, { status: 409 });
+    const err = await backend.saveProject('1', { format: 'revyme-v1', files: {} }).catch((e) => e);
+    expect(err).toBeInstanceOf(SaveConflictError);
+    expect(err.serverRevision).toBe(9);
+  });
+
+  it('a readable API error message reaches the save banner, not raw JSON', async () => {
+    const backend = new RevymeBackend();
+    setResponse({ error: { code: 'UNPROCESSABLE', message: 'This project is 17.0 MB — too large to save.' } }, { status: 422 });
+    await expect(backend.saveProject('1', { format: 'revyme-v1', files: {} })).rejects.toThrow('Save failed: 422 This project is 17.0 MB — too large to save.');
+  });
+
+  it('the boot getters share ONE light /meta request', async () => {
+    const backend = new RevymeBackend();
+    setResponse({ id: '1', name: 'Site', _role: 'owner', closed_source: false, workspace_id: 'ws' });
+    const [role, name, closed] = await Promise.all([
+      backend.getWebsiteRole('1'), backend.getWebsiteName('1'), backend.getWebsiteClosedSource('1'),
+    ]);
+    expect([role, name, closed]).toEqual(['owner', 'Site', false]);
+    expect(calls).toHaveLength(1);
+    expect(calls[0].url).toBe(`${API}/api/websites/1/meta`);
+  });
+});
+
+describe('RevymeBackend — compressed saves', () => {
+  const big = { format: 'revyme-project@2', files: { 'app/page.client.tsx': 'x'.repeat(200_000) } } as never;
+
+  beforeEach(async () => {
+    (await import('./save-encoding')).resetSaveEncodingForTest();
+  });
+
+  it('sends plain JSON until the API has advertised gzip', async () => {
+    setResponse({ revision: 1 });
+    await new RevymeBackend().saveProject('site-1', big);
+    expect((calls[0].init.headers as Record<string, string>)['Content-Encoding']).toBeUndefined();
+    expect(typeof calls[0].init.body).toBe('string');
+  });
+
+  it('gzips a large save once a response carried x-revyme-accept-encoding: gzip', async () => {
+    setResponse({ revision: 1 }, { status: 200, headers: { 'x-revyme-accept-encoding': 'gzip' } });
+    const backend = new RevymeBackend();
+    await backend.saveProject('site-1', big); // learns the capability
+    await backend.saveProject('site-1', big);
+    const second = calls[1].init;
+    expect((second.headers as Record<string, string>)['Content-Encoding']).toBe('gzip');
+    const inflated = await new Response(new Response(second.body as ArrayBuffer).body!.pipeThrough(new DecompressionStream('gzip'))).text();
+    expect(JSON.parse(JSON.parse(inflated).json).files['app/page.client.tsx']).toHaveLength(200_000);
+    expect((second.body as ArrayBuffer).byteLength).toBeLessThan(20_000);
+  });
+
+  it('a refused compressed save is resent plain, and compression stays off', async () => {
+    setResponse({ revision: 1 }, { status: 200, headers: { 'x-revyme-accept-encoding': 'gzip' } });
+    const backend = new RevymeBackend();
+    await backend.saveProject('site-1', big);
+    vi.mocked(fetch).mockImplementationOnce(async (u, init) => {
+      calls.push({ url: String(u), init: init ?? {} });
+      return new Response(JSON.stringify({ error: { message: 'bad body' } }), { status: 400 });
+    });
+    setResponse({ revision: 2 });
+    await backend.saveProject('site-1', big);
+    expect((calls[1].init.headers as Record<string, string>)['Content-Encoding']).toBe('gzip');
+    expect((calls[2].init.headers as Record<string, string>)['Content-Encoding']).toBeUndefined();
+    await backend.saveProject('site-1', big);
+    expect((calls[3].init.headers as Record<string, string>)['Content-Encoding']).toBeUndefined();
+  });
+});

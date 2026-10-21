@@ -365,6 +365,27 @@ describe('LayoutLiftedStrategy', () => {
     // child is absolute there. Parent is NOT flex → must still bail so
     // AbsoluteInFrameStrategy handles it. The stale-computed reconciliation above
     // is gated on `parent is flex`, so it doesn't swallow this case.
+    // Overlay-in-edit case (2026-09-07): the overlay is display:none until the
+    // edit-mode show rule reveals it, and the computed cache snapshot taken
+    // BEFORE a Layout was added kept saying `block`. On the PRIMARY viewport no
+    // @container override exists, so authored flex must win → layout drag.
+    test('returns TRUE on the primary viewport when computed says block but the parent is authored flex', () => {
+      const nodes = new Map<string, any>([
+        ['node-1', { id: 'node-1', styles: { position: 'relative', flex: '0 0 auto' }, parentId: 'parent-1', isCanvasNode: false }],
+        ['parent-1', { id: 'parent-1', styles: { display: 'flex', position: 'fixed' } }],
+      ]);
+      mockFindNodeComputedStyle.mockImplementation((id: string, _vp: string, prop: string) => {
+        if (id === 'node-1' && prop === 'position') return 'relative';
+        if (id === 'parent-1' && prop === 'display') return 'block'; // STALE (hidden overlay)
+        return '';
+      });
+      const ctx = makeContext({
+        draggedNodes: [makeDraggedNode({ startParentId: 'parent-1' })],
+        nodes,
+      });
+      expect(strategy.canHandle(ctx)).toBe(true);
+    });
+
     test('returns FALSE for a @container-absolute child whose parent is NOT flex on this vp', () => {
       const nodes = new Map<string, any>([
         ['node-1', { id: 'node-1', styles: { position: 'relative' }, parentId: 'parent-1', isCanvasNode: false }],
@@ -378,6 +399,7 @@ describe('LayoutLiftedStrategy', () => {
       const ctx = makeContext({
         draggedNodes: [makeDraggedNode({ startParentId: 'parent-1' })],
         nodes,
+        viewportPrefix: 'tablet-', // a replica: @container overrides only exist there
       });
       expect(strategy.canHandle(ctx)).toBe(false);
     });
@@ -932,6 +954,35 @@ describe('LayoutLiftedStrategy', () => {
       expect(moveCall.newParentId).toBeNull();
       expect(moveCall.canvasNode).toBe(true);
       expect(moveCall.styles).toHaveProperty('position', 'absolute');
+    });
+
+    // User report 2026-10-16: a bare `<p>` (no width/height — auto/auto in the
+    // Dimensions panel) dragged out of a centred column landed as 95px × 19px.
+    test('an auto-size TEXT dropped outside its parent stays auto — not the measured px', () => {
+      setupNodeCache('parent-1', ['text-0'], { display: 'flex', flexDirection: 'column', alignItems: 'center' });
+      const text = { ...nodeCache.get('text-0')!, tag: 'p', type: 'p', styles: { fontSize: '16px', position: 'relative', flex: '0 0 auto' } };
+      nodeCache.set('text-0', text);
+      setupNodeRects({
+        'parent-1': { x: 100, y: 100, width: 160, height: 78 },
+        'text-0': { x: 132, y: 129, width: 95.19, height: 19.2 },
+      });
+      const ctx = makeContext({
+        draggedNodes: [makeDraggedNode({ id: 'text-0', startParentId: 'parent-1', width: 95.19, height: 19.2 })],
+        nodes: new Map([['parent-1', nodeCache.get('parent-1')!], ['text-0', text]]) as DragContext['nodes'],
+      });
+
+      strategy.onStart(ctx);
+      vi.mocked(isInsideRect).mockReturnValue(true);
+      strategy.onMove(ctx, { x: 510, y: 310 });
+      vi.mocked(isInsideRect).mockReturnValue(false);
+      strategy.onMove(ctx, { x: 900, y: 900 });
+      strategy.onEnd(ctx);
+
+      const moveCall = mockQueueMutation.mock.calls
+        .map((c: any[]) => c[0])
+        .find((m: any) => m.type === 'move' && m.nodeId === 'text-0');
+      expect(moveCall?.canvasNode).toBe(true);
+      expect(moveCall.styles).toMatchObject({ position: 'absolute', width: 'max-content', height: 'auto' });
     });
 
     // Ghost rows are DOM-only clones of the template row, and the Renderer's

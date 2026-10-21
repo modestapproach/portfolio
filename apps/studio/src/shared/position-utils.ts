@@ -87,6 +87,87 @@ export function buildAxisCenterTransform(axis: 'x' | 'y', existingTransform: str
   return [thisT, otherT, visuals].filter(Boolean).join(' ');
 }
 
+/** Which channel carries an element's centering translate. A design-component
+ *  (`motion.*`) element may pin through motion's INDEPENDENT props
+ *  (`x: '-50%'`, `y: '-50%'`) instead of a CSS translate string — that is how
+ *  the rotation commit / geometry migration store a pin. Every writer that
+ *  sets a centering translate must use the SAME channel: the Renderer folds
+ *  the string first, then the shorthands, so mixing them shifts the element
+ *  twice (live find 2026-09-05: align on a shorthand-centred svg wrote
+ *  `translateX(-50%)` beside `x: '-50%'` and it landed half a width left). */
+export function centeringChannel(styles: Record<string, string | undefined>): 'shorthand' | 'string' {
+  const set = (v: string | undefined) => v != null && v !== '' && v !== 'auto';
+  return set(styles.x) || set(styles.y) ? 'shorthand' : 'string';
+}
+
+/** Remove ONE axis's translate from a transform string, keeping the OTHER
+ *  axis's translate and every visual (rotate/scale/skew). A 2-arg
+ *  `translate(x, y)` is split so the kept axis survives as `translateY(..)`.
+ *  Returns '' when nothing is left (→ remove the property). */
+export function removeAxisTranslate(transform: string | undefined, axis: 'x' | 'y'): string {
+  if (!transform || transform === 'none') return '';
+  const other = extractAxisTranslate(transform, axis === 'x' ? 'y' : 'x');
+  const visuals = stripTranslateTransforms(transform);
+  return [other, visuals].filter(Boolean).join(' ');
+}
+
+// ─── SVG shape canonical position model (reference parity, 2026-09-05) ────────
+//
+// A vector shape has ONE position model: px `left`/`top` (layout-box top-left,
+// rotation about its own centre), no pins, no `%` positioning, no centering
+// translate in EITHER channel. the reference builder's shape panel is Position X/Y + Size for
+// this reason — the pin/inset model isn't configurable on shapes because it
+// can't be made stable: a `-50%` centering translate is a percentage of the
+// shape's OWN size, so every resize moved the shape by half the delta while
+// the resize math (which reads px pins) believed the opposite corner was
+// anchored ("going in crazy directions", live find 2026-09-05). Every writer
+// that touches a shape's position (resize start, align, X/Y fields) normalises
+// to this model first; the resize/rotate math is then trivially stable.
+
+const round3 = (n: number): string => `${Math.round(n * 1000) / 1000}px`;
+const isPx = (v: string | undefined) => !!v && /^-?[\d.]+px$/.test(v.trim());
+const isSetVal = (v: string | undefined) => v != null && v !== '' && v !== 'auto';
+
+/** The style write that puts a shape into the canonical model, or null when it
+ *  already is. Visually a no-op by construction: `rect` is the painted
+ *  layout-box position (see captureVisualRect — AABB-centre based, so a
+ *  rotated shape resolves to its un-rotated box). Clears both centering
+ *  channels: `x`/`y` shorthands here (the generators evict any matching string
+ *  translate on that write — never send `transform: ''` on a motion element,
+ *  that is the rotation reset). */
+export function shapePositionNormalizationStyles(
+  styles: Record<string, string | undefined>,
+  rect: VisualRect,
+): Record<string, string> | null {
+  const t = styles.transform || '';
+  const hasStringTranslate = /translate/i.test(t);
+  const canonical = isPx(styles.left) && isPx(styles.top)
+    && !isSetVal(styles.right) && !isSetVal(styles.bottom)
+    && !isSetVal(styles.x) && !isSetVal(styles.y)
+    && !hasStringTranslate;
+  if (canonical) return null;
+  return { left: round3(rect.left), top: round3(rect.top), right: '', bottom: '', x: '', y: '' };
+}
+
+/** Align a shape inside its parent in the canonical model: the aligned axis
+ *  gets its px edge/centre, the other axis keeps its current px, and every
+ *  non-canonical key is cleared in the same write. */
+export function shapeAlignStyles(
+  direction: 'left' | 'center-h' | 'right' | 'top' | 'center-v' | 'bottom',
+  rect: VisualRect,
+): Record<string, string> {
+  let left = rect.left, top = rect.top;
+  switch (direction) {
+    case 'left': left = 0; break;
+    case 'center-h': left = (rect.parentWidth - rect.width) / 2; break;
+    case 'right': left = rect.parentWidth - rect.width; break;
+    case 'top': top = 0; break;
+    case 'center-v': top = (rect.parentHeight - rect.height) / 2; break;
+    case 'bottom': top = rect.parentHeight - rect.height; break;
+  }
+  return { left: round3(left), top: round3(top), right: '', bottom: '', x: '', y: '' };
+}
+
 // ─── Position Mode Conversions ──────────────────────────────────────────────
 
 /**
@@ -381,6 +462,12 @@ export function neutralizeReplicaClears(
     if (AUTO_NEUTRAL_PROPS.has(key)) out[key] = 'auto';
     else if (key === 'position') out[key] = 'static';
     else if (key === 'transform') out[key] = 'translate(0px, 0px)';
+    // Motion shorthands (a shape's `x/y: '-50%'` centering, a rotate): a
+    // variant-entry delete just re-exposes the default entry's value, so the
+    // clear must be an explicit neutral (2026-09-06, shape canonical model on
+    // variant tiles).
+    else if (/^(x|y|z|translate[XYZ]|rotate[XYZ]?|skew[XY])$/.test(key)) out[key] = '0';
+    else if (/^scale[XY]?$/.test(key)) out[key] = '1';
   }
   return out;
 }

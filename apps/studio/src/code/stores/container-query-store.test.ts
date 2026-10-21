@@ -58,6 +58,22 @@ describe('parseContainerRules', () => {
     expect(props.get('height')).toBe('auto');
   });
 
+  test('merges SEVERAL blocks for the same breakpoint (later value wins) instead of dropping the first', () => {
+    // Real file (2026-07-31 backup): two tablet blocks and two mobile blocks. Replacing the earlier
+    // block lost its rules on the next rewrite (a breakpoint resize, the band clean-up).
+    const css = `
+      @media (max-width: 768px) and (min-width: 375.02px) { [data-id="head"] { padding: 120px !important; } }
+      @media (max-width: 375px) { [data-id="head"] { padding: 96px !important; } }
+      @media (max-width: 768px) and (min-width: 375.02px) { [data-id="list"] { padding: 64px !important; } [data-id="head"] { gap: 8px !important; } }
+      @media (max-width: 375px) { [data-id="list"] { padding: 40px !important; } [data-id="head"] { padding: 90px !important; } }
+    `;
+    const rules = parseContainerRules(css);
+    expect(Object.fromEntries(rules.get(768)!.get('head')!)).toEqual({ padding: '120px', gap: '8px' });
+    expect(Object.fromEntries(rules.get(768)!.get('list')!)).toEqual({ padding: '64px' });
+    expect(Object.fromEntries(rules.get(375)!.get('head')!)).toEqual({ padding: '90px' });   // later block wins
+    expect(Object.fromEntries(rules.get(375)!.get('list')!)).toEqual({ padding: '40px' });
+  });
+
   test('returns empty map for no rules', () => {
     expect(parseContainerRules('')).toEqual(new Map());
     expect(parseContainerRules('body { color: red; }')).toEqual(new Map());
@@ -408,5 +424,16 @@ describe(':lang rules are NOT regular overrides', () => {
     // into control values / the Localize popup Fallback (the "Set syncs
     // Fallback on replicas" report).
     expect(card.get('border-radius')).toBeUndefined();
+  });
+});
+
+// Border row override detection: inline longhands OR the overlay border's
+// motion variables count as a per-variant/per-viewport border override.
+import { overrideAliasKeys as _aliasKeys } from './container-query-store';
+describe('overrideAliasKeys — border', () => {
+  it('covers inline longhands and the --rvb-* overlay variables', () => {
+    const keys = _aliasKeys('border');
+    for (const k of ['border', 'borderWidth', 'borderTopWidth', 'borderLeftColor', '--rvb-bw', '--rvb-bs', '--rvb-bc']) expect(keys).toContain(k);
+    expect(_aliasKeys('gap')).toEqual(['gap']);
   });
 });

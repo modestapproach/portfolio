@@ -2,7 +2,7 @@
 // Watches nodesAtom for Code component instances, compiles their source, and renders them.
 
 import { useEffect, useRef, useCallback, useMemo } from 'react';
-import { useAtomValue } from 'jotai';
+import { useAtomValue, getDefaultStore } from 'jotai';
 import { nodesAtom, codeAtom } from '@/code/stores/store';
 import { coerceScalar } from '@/code/values/value-eval';
 import { projectFS } from '@/code/project/project-fs';
@@ -15,10 +15,26 @@ import { getCanvasBridge } from '@/canvas/canvas-bridge';
 import { getViewportWidths } from '@/code/stores/viewport-store';
 import type { CanvasNode } from '@/code/parsing/parser';
 import { WRAPPER_ONLY_STYLE_PROPS } from '@/shared/constants';
-import { serializeSlotChildren } from './slot-children';
+import { serializeSlotChildren, mergeSlotConnections } from './slot-children';
 import { getAllSlotConnections } from '@/code/generation/slot-ops';
+import { activeFilePathAtom, getLayoutForPage, getLayoutClientPath } from '@/code/project/active-file-store';
+import { projectVersionAtom } from '@/code/project/project-fs';
+import { parseProjectFile } from '@/code/parsing/project-parser';
 
 import { getCdnComponent, loadCdnComponent } from '@/cloud/components/cdn-component-cache';
+import { previewModeAtom } from '@/code/stores/editor-store';
+
+/**
+ * A code component is CANVAS-STATIC only while the canvas is the canvas.
+ *
+ * `useStaticCanvas()` is how a component knows to paint one representative
+ * still instead of running a rAF loop, and the loader hard-wires it to `true`
+ * for everything it compiles. Preview is not the canvas, though: it is the
+ * site. Left unsaid, a preview ran every component in its frozen pose — the
+ * nexora hero's cursor reveal answered no pointer at all, because its own
+ * handlers return early when they believe they are being drawn on a canvas.
+ */
+const liveCompileOpts = () => ({ previewMode: getDefaultStore().get(previewModeAtom) });
 
 /**
  * CodeComponentHost — mounts live React components for Code component nodes on the canvas.
@@ -47,6 +63,14 @@ export function extractCodeComponentProps(node: CanvasNode): Record<string, any>
   if (node.componentProps) {
     for (const [key, value] of Object.entries(node.componentProps)) {
       props[key] = coerceValue(value);
+    }
+  }
+  // Literal list / object props (`items={[{question, answer}, …]}`), carried
+  // by the parser as JSON text. NOT coerced — these are already structured,
+  // and coerceScalar would turn the whole array into a string.
+  if (node.componentJsonProps) {
+    for (const [key, value] of Object.entries(node.componentJsonProps)) {
+      try { props[key] = JSON.parse(value); } catch { /* leave the prop unset */ }
     }
   }
   // Bake INLINE per-viewport variable VALUES into `data-responsive` so the code component resolves the
@@ -98,6 +122,14 @@ export function extractCodeComponentProps(node: CanvasNode): Record<string, any>
     const innerStyle: Record<string, string> = {};
     for (const [key, value] of Object.entries(node.styles)) {
       if (WRAPPER_ONLY_STYLE_PROPS.has(key)) continue;
+      // `display` belongs to the WRAPPER, like the placement props above. The
+      // instance's base style carries `display: 'none'` when it was dropped
+      // into a replica (the only write that can hide the primary — see
+      // drag/instance-replica-visibility.ts); the entered tile's band unhides
+      // the CONTAINER. Forwarding the base value inward hid the component on
+      // every tile INCLUDING the one it was dropped on, because this forward
+      // is not per-viewport.
+      if (key === 'display') continue;
       innerStyle[key] = value;
     }
     if (isUrlImportedComponent) {
@@ -132,18 +164,65 @@ function getCanvasViewportWidth(el: HTMLElement): number | undefined {
   return widths[vpId];
 }
 
-/** Walk up from node to find the nearest parent with an inline collection source. */
-function findMapParent(node: CanvasNode, nodes: Map<string, CanvasNode>): CanvasNode | null {
-  let mapParent = node.parentId ? nodes.get(node.parentId) ?? null : null;
-  while (mapParent && !mapParent.collectionList?.source?.startsWith('__inline:')) {
-    mapParent = mapParent.parentId ? nodes.get(mapParent.parentId) ?? null : null;
-  }
-  return mapParent;
-}
-
 // Module-level ref for direct Code component prop updates (bypass parse cycle for instant feedback)
 let _codeComponentRoots: Map<string, { root: Root; component: string; propsHash: string }> | null = null;
 let _codeComponentNodes: Map<string, CanvasNode> | null = null;
+
+/** The connected SLOT children each instance was last mounted with. The mount
+ *  serializes them from the slot connections (not from the node), so a direct
+ *  re-render that rebuilds props from the node alone shipped none — and a
+ *  Marquee dropped to its empty "Connect Content" state for the whole of a
+ *  Fill or slider drag, until the commit re-mounted it (user report
+ *  2026-10-15). renderCodeComponentDirect carries these along. */
+const _mountedSlotChildren = new Map<string, ReturnType<typeof serializeSlotChildren>>();
+
+/** Record (or clear, when empty) what the sync last mounted `nodeId` with. */
+export function rememberMountedSlotChildren(nodeId: string, kids: ReturnType<typeof serializeSlotChildren>): void {
+  if (kids.length > 0) _mountedSlotChildren.set(nodeId, kids);
+  else _mountedSlotChildren.delete(nodeId);
+}
+
+/**
+ * LIVE (drag-time) style preview for a code-component instance — the twin of
+ * the prop-slider path below. ControlProvider.updateStyleLive patches the
+ * instance's outer WRAPPER, but a code component paints its forwarded styles
+ * (fill, radius, …) on its OWN root through `...props.style`, which sits on top
+ * of the wrapper — so a Fill drag on a Marquee changed nothing until mouse-up
+ * re-rendered it from the committed source (user report 2026-10-15). Re-render
+ * it in place with the patched forward: the flat `style` for a base edit, the
+ * `__variantStyles` branch for a component-master variant tile (the sandbox
+ * resolves that per tile, so other variants keep their own value).
+ * Returns false and does nothing for any node that is not a code component, or
+ * when every key stays on the wrapper.
+ */
+export function renderCodeComponentStyleLive(
+  nodeId: string,
+  styles: Record<string, string>,
+  variant?: string | null,
+): boolean {
+  const node = _codeComponentNodes?.get(nodeId);
+  if (!node?.isCodeComponent || !node.componentFile) return false;
+  const forwardable = Object.entries(styles).filter(([k]) => !WRAPPER_ONLY_STYLE_PROPS.has(k) && k !== 'display');
+  if (forwardable.length === 0) return false;
+  const vs: Record<string, Record<string, string>> = { ...(node.conditionalStyles ?? {}) };
+  if (variant && variant !== 'default') {
+    for (const [k, v] of forwardable) vs[k] = { ...(vs[k] ?? {}), [variant]: v };
+    renderCodeComponentDirect(nodeId, { __variantStyles: vs });
+  } else {
+    const style = extractCodeComponentProps({ ...node, styles: { ...(node.styles ?? {}), ...Object.fromEntries(forwardable) } }).style;
+    // A key with per-variant branches resolves from its `default` branch on the
+    // base tile, ahead of the flat style — move that branch too.
+    for (const [k, v] of forwardable) if (vs[k]) vs[k] = { ...vs[k], default: v };
+    renderCodeComponentDirect(nodeId, Object.keys(vs).length > 0 ? { style, __variantStyles: vs } : { style });
+  }
+  trace.action('code-component-style-live', { nodeId, keys: forwardable.map(([k]) => k), variant: variant ?? null });
+  return true;
+}
+
+/** Test-only: seed the node map the host keeps in sync while it is mounted. */
+export function setCodeComponentNodesForTest(nodes: Map<string, CanvasNode> | null): void {
+  _codeComponentNodes = nodes;
+}
 
 /**
  * Directly re-render Code component instances by data-id with updated props.
@@ -188,6 +267,8 @@ export function renderCodeComponentDirect(
   if (node.attrConditional && Object.keys(node.attrConditional).length > 0) {
     baseProps.__variantProps = node.attrConditional;
   }
+  const slotKids = _mountedSlotChildren.get(codeComponentId);
+  if (slotKids) baseProps.__slotChildren = slotKids;
   let mergedProps: Record<string, any>;
   if (targetVariant && targetVariant !== 'default') {
     const vp: Record<string, Record<string, string>> = { ...((baseProps.__variantProps as Record<string, Record<string, string>>) ?? {}) };
@@ -241,7 +322,7 @@ export function renderCodeComponentDirect(
     } else {
       const componentCode = projectFS.readFile(node.componentFile);
       if (componentCode) {
-        Component = compileCodeComponent(componentCode, node.type);
+        Component = compileCodeComponent(componentCode, node.type, liveCompileOpts());
       }
     }
     if (Component) {
@@ -298,29 +379,70 @@ export default function CodeComponentHost() {
   // it composes fine on the live site (real JSX, identifiers resolve in
   // the component file's own scope).
   const code = useAtomValue(codeAtom);
+  const activeFilePath = useAtomValue(activeFilePathAtom);
+  const projectVersion = useAtomValue(projectVersionAtom);
+  /** The template this page is built on, if any. */
+  const templateFilePath = useMemo(() => {
+    const layoutPath = getLayoutForPage(activeFilePath);
+    if (!layoutPath) return null;
+    const clientPath = getLayoutClientPath(layoutPath);
+    return projectFS.readFile(clientPath) != null ? clientPath : layoutPath;
+  }, [activeFilePath, projectVersion]);
+
+  /**
+   * The template's CANVAS NODES, `layout::`-prefixed.
+   *
+   * The template merge deliberately drops them from the page tree — they are
+   * off-canvas authoring artifacts and would render as stray boxes beside
+   * every page. But they are exactly what the template's slots are wired to,
+   * so slot serialization still needs to see them. They live HERE rather
+   * than in `nodes`: nothing else (layers, selection, hit-testing) should
+   * ever meet them on a page.
+   */
+  const templateSlotNodes = useMemo(() => {
+    if (!templateFilePath) return null;
+    const parsed = parseProjectFile(templateFilePath, projectFS);
+    const out = new Map<string, CanvasNode>();
+    // Each canvas node and everything under it — nothing else from the
+    // template, which the page already holds in its own merged form.
+    const take = (id: string) => {
+      const n = parsed.get(id);
+      if (!n || out.has('layout::' + id)) return;
+      out.set('layout::' + id, {
+        ...n,
+        id: 'layout::' + id,
+        parentId: n.parentId ? 'layout::' + n.parentId : null,
+        children: n.children.map((c) => 'layout::' + c),
+      } as CanvasNode);
+      n.children.forEach(take);
+    };
+    for (const [id, n] of parsed) if (n.isCanvasNode) take(id);
+    return out.size > 0 ? out : null;
+  }, [templateFilePath, projectVersion]);
+  const templateSlotNodesRef = useRef(templateSlotNodes);
+  templateSlotNodesRef.current = templateSlotNodes;
+
   const slotConnections = useMemo(() => {
-    const merged = new Map<string, string[]>(getAllSlotConnections(code));
-    // Visit each top-level instance — `componentInstanceId == null` means
-    // this IS the instance node, not one of its expanded children.
+    const sources: { prefix: string; connections: Map<string, string[]> }[] = [];
+    const from = (prefix: string, file: string | null | undefined) => {
+      if (!file || file.startsWith('http')) return;
+      const fileCode = projectFS.readFile(file);
+      if (fileCode) sources.push({ prefix, connections: getAllSlotConnections(fileCode) });
+    };
+    // The TEMPLATE this page is built on: its nodes merge in `layout::`-
+    // prefixed, but its slot wiring lives only in the template FILE.
+    from('layout::', templateFilePath);
+    // Every design-component INSTANCE, at ANY depth. The parser expands an
+    // instance by prefixing its children `${instanceId}:`, and a nested
+    // instance's own id already carries its whole path, so that id is the
+    // right prefix wherever it sits. Only TOP-LEVEL instances used to be
+    // visited, so a slot one component deeper never resolved.
     for (const node of nodes.values()) {
       if (!node.isComponentInstance) continue;
-      if (node.componentInstanceId) continue; // expanded child, skip
-      const file = node.componentFile;
-      if (!file || file.startsWith('http')) continue;
-      const compCode = projectFS.readFile(file);
-      if (!compCode) continue;
-      const inner = getAllSlotConnections(compCode);
-      for (const [compId, childIds] of inner) {
-        const prefixedComp = node.id + ':' + compId;
-        const prefixedChildren = childIds.map(c => node.id + ':' + c);
-        // If the same prefixedComp already exists (rare — same instance
-        // visited twice), concatenate so we don't lose either set.
-        const existing = merged.get(prefixedComp);
-        merged.set(prefixedComp, existing ? existing.concat(prefixedChildren) : prefixedChildren);
-      }
+      from(node.id + ':', node.componentFile);
     }
-    return merged;
-  }, [code, nodes]);
+    return mergeSlotConnections(getAllSlotConnections(code), sources);
+  }, [code, nodes, templateFilePath]);
   const slotConnectionsRef = useRef(slotConnections);
   slotConnectionsRef.current = slotConnections;
 
@@ -392,7 +514,7 @@ export default function CodeComponentHost() {
           trace.error('code-component-host:source-not-found', { nodeId: node.id, file: node.componentFile });
           continue;
         }
-        Component = compileCodeComponent(componentCode, node.type);
+        Component = compileCodeComponent(componentCode, node.type, liveCompileOpts());
         if (!Component) {
           trace.error('code-component-host:compile-failed', { nodeId: node.id, component: node.type });
           continue;
@@ -403,100 +525,8 @@ export default function CodeComponentHost() {
       const props = extractCodeComponentProps(node);
       trace.action('code-component-host:resolve-props', { nodeId: node.id, propCount: Object.keys(props).length });
 
-      // Resolve prop + attr bindings from map data (item 0 for the template)
-      if (node.isCollectionTemplate) {
-        const mapParent = findMapParent(node, nodes);
-        if (mapParent?.inlineMapData?.[0]) {
-          for (const pb of (node.propBindings || [])) {
-            const val = mapParent.inlineMapData[0][pb.field];
-            // urlWrap = whole-value image binding — the instance source wraps the
-            // plain-URL field in url() (`prop={`url(${item.f})`}`); re-apply here
-            // since we substitute the RAW field value.
-            if (val !== undefined) props[pb.prop] = pb.urlWrap ? `url(${val})` : coerceValue(val);
-          }
-          for (const ab of (node.attrBindings || [])) {
-            const val = mapParent.inlineMapData[0][ab.field];
-            if (val !== undefined) props[ab.property] = val;
-          }
-        }
-      }
-
       // Code components only run in the sandbox iframe (mounted via the bridge below).
     }
-    // ─── Ghost Code component mounting: mount Code component instances on .map() ghost copies ──
-    // For each Code component node that's inside a collection template, find ghost copies
-    // and mount separate React roots with per-item resolved props.
-    trace.fn('code-component-host:ghost-sync-pass', { codeComponentCount: codeComponentNodes.filter(n => n.isCollectionTemplate).length });
-    for (const node of codeComponentNodes) {
-      if (!node.componentFile || !node.isCollectionTemplate) continue;
-
-      // Find the parent that has the collectionList (data source)
-      const mapParent = findMapParent(node, nodes);
-      if (!mapParent?.inlineMapData) continue;
-
-      const componentCode = projectFS.readFile(node.componentFile);
-      if (!componentCode) continue;
-      const Component = compileCodeComponent(componentCode, node.type);
-      if (!Component) continue;
-
-      // Base props from template (static props)
-      const baseProps = extractCodeComponentProps(node);
-      trace.action('code-component-host:resolve-props', { nodeId: node.id, propCount: Object.keys(baseProps).length, ghost: true });
-
-      // Mount on ALL ghost copies across ALL viewports (desktop + replicas)
-      // data-collection-ghost is on the ghost ROOT, Code component element may be a child inside it.
-      // Query both: Code component IS the ghost root, or Code component is INSIDE a ghost root.
-      const allGhostEls = document.querySelectorAll(
-        `[data-collection-ghost][data-code-component="true"][data-id="${node.id}"], ` +
-        `[data-collection-ghost] [data-code-component="true"][data-id="${node.id}"]`
-      );
-
-      allGhostEls.forEach(ghostDom => {
-        const ghostEl = ghostDom as HTMLElement;
-        const ghostNodeId = ghostEl.getAttribute('data-node-id') || '';
-        // Extract ghost index from data-node-id: "...nodeId__2" → 2
-        const suffixMatch = ghostNodeId.match(/__(\d+)$/);
-        if (!suffixMatch) return;
-        const gi = parseInt(suffixMatch[1], 10);
-        if (gi < 1 || gi >= mapParent!.inlineMapData!.length) return;
-
-        const itemData = mapParent!.inlineMapData![gi];
-        const ghostProps = { ...baseProps };
-        for (const binding of (node.propBindings || [])) {
-          if (itemData[binding.field] !== undefined) {
-            // urlWrap: see the template-resolve pass above — re-apply the url() wrap.
-            ghostProps[binding.prop] = binding.urlWrap ? `url(${itemData[binding.field]})` : coerceValue(itemData[binding.field]);
-          }
-        }
-        for (const ab of (node.attrBindings || [])) {
-          if (itemData[ab.field] !== undefined) {
-            ghostProps[ab.property] = itemData[ab.field];
-          }
-        }
-
-        // Inject canvas viewport width for ghost elements too
-        const ghostVpWidth = getCanvasViewportWidth(ghostEl);
-        const ghostMountProps = ghostVpWidth !== undefined ? { ...ghostProps, __canvasViewportWidth: ghostVpWidth } : ghostProps;
-        const ghostPropsHash = JSON.stringify(ghostMountProps);
-        const existing = rootsRef.current.get(ghostNodeId);
-
-        if (existing && existing.component === node.type && existing.propsHash === ghostPropsHash) {
-          return;
-        }
-
-        if (existing) {
-          existing.root.render(React.createElement(Component, ghostMountProps));
-          existing.propsHash = ghostPropsHash;
-          trace.action('code-component-host:ghost-update', { ghostId: ghostNodeId, component: node.type, itemIndex: gi, vpWidth: ghostVpWidth });
-        } else {
-          const root = createRoot(ghostEl);
-          root.render(React.createElement(Component, ghostMountProps));
-          rootsRef.current.set(ghostNodeId, { root, component: node.type, propsHash: ghostPropsHash });
-          trace.action('code-component-host:ghost-mount', { ghostId: ghostNodeId, component: node.type, itemIndex: gi, vpWidth: ghostVpWidth });
-        }
-      });
-    }
-
     // ─── Forward code component mounts to sandbox ───────────────────────
     //
     // Always forward. The sandbox-side `mountCodeComponent` is idempotent —
@@ -523,7 +553,7 @@ export default function CodeComponentHost() {
         // instances (e.g. the six advisors-hero Counters) mounted one-per-frame
         // in a visible "dominos" cascade. Batching makes the sandbox create all
         // roots in a single pass → React batches the first commits → one paint.
-        const mountBatch: Array<{ nodeId: string; code: string; props: Record<string, any>; vpWidth: number }> = [];
+        const mountBatch: Array<{ nodeId: string; code: string; props: Record<string, any>; vpWidth: number; preview?: boolean }> = [];
         for (const node of codeComponentNodes) {
           if (!node.componentFile) continue;
           // Sandbox bridge accepts EITHER a full TSX source string OR a
@@ -571,12 +601,17 @@ export default function CodeComponentHost() {
           // children). Live site already does this implicitly via JSX
           // composition; canvas needs the merged tree explicitly.
           const connectedIds = slotConnectionsRef.current.get(node.id) ?? [];
-          const slotKids = serializeSlotChildren(connectedIds, nodes, slotConnectionsRef.current);
+          // A template's connected nodes are not in the page tree (see
+          // templateSlotNodes), so serialize against both.
+          const tplNodes = templateSlotNodesRef.current;
+          const slotSource = tplNodes ? new Map([...tplNodes, ...nodes]) : nodes;
+          const slotKids = serializeSlotChildren(connectedIds, slotSource, slotConnectionsRef.current);
           if (slotKids.length > 0) props.__slotChildren = slotKids;
+          rememberMountedSlotChildren(node.id, slotKids);
           const vpWidths = getViewportWidths();
           const vpWidth = vpWidths['desktop'] || 1440;
           seenIds.add(node.id);
-          mountBatch.push({ nodeId: node.id, code: codeOrUrl, props, vpWidth });
+          mountBatch.push({ nodeId: node.id, code: codeOrUrl, props, vpWidth, preview: liveCompileOpts().previewMode });
         }
 
         // Single batched forward (one macrotask in the sandbox → one paint).
@@ -622,6 +657,13 @@ export default function CodeComponentHost() {
     }
 
   }, []);
+
+  // A preview toggle changes how every code component COMPILES
+  // (`useStaticCanvas`), so the sandbox has to be told again — nothing else
+  // about the page changed, and without this the components stay in the pose
+  // the canvas left them in for the whole preview.
+  const previewMode = useAtomValue(previewModeAtom);
+  useEffect(() => { syncCodeComponents(); }, [previewMode, syncCodeComponents]);
 
   // Sync code components whenever nodes change or renderer completes.
   // Uses a polling interval that runs until all expected ghost mounts succeed,

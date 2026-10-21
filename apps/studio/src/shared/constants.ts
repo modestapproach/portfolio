@@ -7,6 +7,11 @@ export const VIEWPORT_GAP = 160;
 
 export const DEFAULT_VIEWPORT_WIDTH = 1440;
 
+/** The breakpoint ladder every NEW page, site, template and "+" quick-add starts from (Framer's):
+ *  each number is where that breakpoint STARTS — Desktop 1200+, Tablet 810–1199, Mobile below 810.
+ *  (DEFAULT_VIEWPORT_WIDTH stays the render fallback for a width nothing declares.) */
+export const DEFAULT_BREAKPOINT_STARTS = { desktop: 1200, tablet: 810, mobile: 390 } as const;
+
 // ─── Drag ──────────────────────────────────────────────────────────────────
 
 export const MIN_DRAG_DISTANCE = 3;        // px before drag starts (prevents accidental drags from clicks)
@@ -24,7 +29,6 @@ export const DOUBLE_CLICK_THRESHOLD = 400; // ms
 
 // ─── Visual Helpers ────────────────────────────────────────────────────────
  // pink — distinct snap-guide helper
-export const MAP_TEMPLATE_COLOR = '#f97316';  // orange — inline .map() template selection
 
 // ── Token-driven canvas overlay colors ─────────────────────────────────────
 // These tint the selection box, resize handles, borders, hover outline, drop
@@ -279,6 +283,12 @@ export function isFitSize(v: string | undefined | null): boolean {
 export const WRAPPER_ONLY_STYLE_PROPS: ReadonlySet<string> = new Set([
   'position', 'left', 'top', 'right', 'bottom', 'inset',
   'zIndex',
+  // A size BOUND is placement too: a `flex: 1 0 0px` card with `minWidth:
+  // 280px` wraps in its row because the ITEM refuses to shrink under 280.
+  // Left on the root inside the host, the host shrank to 248 and three
+  // cards that wrap live sat in one row on the canvas (an imported site's
+  // pricing, 2026-09-16). The runtime's own PLACEMENT_KEYS lift them too.
+  'minWidth', 'maxWidth', 'minHeight', 'maxHeight',
   'transform', 'transformOrigin', 'transformBox', 'transformStyle',
   'order',
   'flex', 'flexShrink', 'flexGrow', 'flexBasis',
@@ -337,7 +347,7 @@ export const CONDITIONAL_LAYOUT_PROPS: ReadonlySet<string> = new Set([
  * The variants channel's historical wobble had two causes, both fixed
  * elsewhere: values above height/2 crossing the CSS clamp mid-tween
  * (RadiusControl's capsule clamp commits the rendered value) and bouncy
- * springs breathing through the scale correction (real Framer sidesteps by
+ * springs breathing through the scale correction (real the reference builder sidesteps by
  * keeping radius CONSTANT and letting the clamp reshape it). Radius stays
  * in the variants channel so it interpolates.
  */

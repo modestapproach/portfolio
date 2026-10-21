@@ -54,6 +54,12 @@ export { LIQUID_METAL_COMPONENT } from './LiquidMetal';
 export { CAUSTICS_LIGHT_COMPONENT } from './CausticsLight';
 export { NEON_PARTICLE_FIELD_COMPONENT } from './NeonParticleField';
 
+// ─── Shaders pack (Paper-derived WebGL2, vendored paper-design/shaders) ────
+export { GEM_SMOKE_COMPONENT } from './GemSmoke';
+export { GRAIN_GRADIENT_COMPONENT } from './GrainGradient';
+export { METABALLS_COMPONENT } from './Metaballs';
+export { SMOKE_RING_COMPONENT } from './SmokeRing';
+
 // ─── Containers (slot-based — render connected canvas nodes as children) ──
 export { LENS_BOX_COMPONENT } from './LensBox';
 export { MAGNET_BOX_COMPONENT } from './MagnetBox';
@@ -94,4 +100,38 @@ export { GOOGLE_FORM_EMBED_COMPONENT } from './GoogleFormEmbed';
 // ─── Interactive utility Code components (theme + locale, real on the live site) ───
 export { THEME_TOGGLE_COMPONENT } from './ThemeToggle';
 export { COPY_BUTTON_COMPONENT } from './CopyButton';
+export { EMBED_COMPONENT } from './Embed';
 export { LOCALE_SWITCHER_COMPONENT } from './LocaleSwitcher';
+
+// ─── WebGL background pack (hand-written GLSL, hash + value-noise fBm) ────
+export { SILK_RIBBONS_COMPONENT } from './SilkRibbons';
+export { LIGHT_PILLAR_COMPONENT } from './LightPillar';
+export { IRIDESCENT_FILM_COMPONENT } from './IridescentFilm';
+export { GOD_RAYS_COMPONENT } from './GodRays';
+export { GRAIN_FIELD_COMPONENT } from './GrainField';
+export { NEBULA_FIELD_COMPONENT } from './NebulaField';
+export { DOT_WAVE_COMPONENT } from './DotWave';
+export { CONTOUR_MAP_COMPONENT } from './ContourMap';
+export { FLUID_GRADIENT_COMPONENT } from './FluidGradient';
+export { CYBER_GRID_COMPONENT } from './CyberGrid';
+export { RIPPLE_GRID_COMPONENT } from './RippleGrid';
+export { VORONOI_CELLS_COMPONENT } from './VoronoiCells';
+export { METABALL_FIELD_COMPONENT } from './MetaballField';
+export { HALFTONE_SCREEN_COMPONENT } from './HalftoneScreen';
+export { SCANLINE_C_R_T_COMPONENT } from './ScanlineCRT';
+export { SMOKE_COMPONENT } from './Smoke';
+export { MARBLE_COMPONENT } from './Marble';
+export { WARP_TUNNEL_COMPONENT } from './WarpTunnel';
+export { STAR_WARP_COMPONENT } from './StarWarp';
+export { HEX_GRID_COMPONENT } from './HexGrid';
+export { LIGHTNING_COMPONENT } from './Lightning';
+export { LIQUID_CHROME_COMPONENT } from './LiquidChrome';
+export { BOKEH_COMPONENT } from './Bokeh';
+export { RAIN_GLASS_COMPONENT } from './RainGlass';
+export { FIREFLIES_COMPONENT } from './Fireflies';
+export { VORTEX_COMPONENT } from './Vortex';
+export { SUNSET_COMPONENT } from './Sunset';
+export { DUNES_COMPONENT } from './Dunes';
+export { OIL_SLICK_COMPONENT } from './OilSlick';
+export { WAVE_STACK_COMPONENT } from './WaveStack';
+

@@ -1,4 +1,5 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useMemo } from 'react';
+import { useWorkspaceFonts, workspaceFamilyWeights } from '@/code/stores/workspace-fonts-store';
 import { ToolInput, ToolSlider, ToolSelect, ToolSegmentedControl, ControlLabel } from '../../../controls';
 import { resolveControl } from '../../../controls/control-registry';
 import { LegacyVariableBoundPill } from '../../../controls/VariableBoundPill';
@@ -9,13 +10,14 @@ import { calculateFitViewBox } from '@/code/generation/fit-text-gen';
 import { refitFitTextForStyles } from '../fit-refit';
 import { useDebouncedCallback } from '../../../hooks/useDebouncedCallback';
 import { useRef } from 'react';
-import { useAtomValue, useSetAtom } from 'jotai';
+import { getDefaultStore, useAtomValue, useSetAtom } from 'jotai';
 import { selectedNodeAtom, selectedIdsAtom, getNodesSnapshot } from '@/code/stores/store';
 import { useNode, useNodesComputed } from '@/code/stores/node-family';
-import { isReplicaViewportAtom, interactingViewportWidthAtom } from '@/code/stores/viewport-store';
+import { isReplicaViewportAtom, interactingViewportWidthAtom, interactingViewportRenderWidthAtom } from '@/code/stores/viewport-store';
 import { containerOverridesAtom, getOverrideValue, hasOverrideAtWidth } from '@/code/stores/container-query-store';
 import { findNodeComputedStyle, getInteractingViewport, forceCanvasRender, updateNodeStyles, getContentRoot } from '@/canvas/node-ops';
 import { trace } from '@/shared/debug-trace';
+import { isFitSize } from '@/shared/constants';
 
 /** Convert a font-size value to its visually-equivalent value in another
  *  unit. Without this, swapping the unit dropdown from `px` to `vw` keeps
@@ -162,6 +164,29 @@ interface TextPropertyControlProps {
   onChange?: (value: string) => void;
 }
 
+/**
+ * Weight options for the selected node's font, or `null` to keep the
+ * standard 100–900 list.
+ *
+ * Only a workspace (uploaded) family can answer this: we hold its files, so
+ * we know which cuts exist. Google and system families keep the flat list.
+ */
+function useWorkspaceWeightOptions(
+  property: string,
+  familyValue: string,
+): Array<{ value: string; label: string }> | null {
+  // Subscribe so the list fills in when the library finishes loading.
+  const fonts = useWorkspaceFonts();
+  return useMemo(() => {
+    if (property !== 'fontWeight') return null;
+    // `fontFamily` is a STACK — take the first name and unquote it.
+    const first = (familyValue || '').split(',')[0]?.trim() ?? '';
+    const family = first.replace(/^['"]|['"]$/g, '');
+    if (!family) return null;
+    return workspaceFamilyWeights(family);
+  }, [property, familyValue, fonts]);
+}
+
 export function TextPropertyControl({ property, label, value: externalValue, onChange: externalOnChange }: TextPropertyControlProps) {
   const isExternal = externalValue !== undefined && externalOnChange !== undefined;
   // Only call useTextStyles when NOT in external mode (it requires ControlProvider)
@@ -169,6 +194,15 @@ export function TextPropertyControl({ property, label, value: externalValue, onC
   const { value: textValue, isMixed } = isExternal ? { value: externalValue!, isMixed: false } : text!.get(property);
   const value = isExternal ? externalValue! : textValue;
   const registryDef = resolveControl(property);
+
+  // Weight is family-dependent. The registry's list is a flat 100–900, so on
+  // a custom family that only ships Light/Regular/Bold the other six entries
+  // produce a SYNTHESISED weight — the browser smearing the nearest cut —
+  // with nothing on screen saying so. When the family is one of the
+  // workspace's own fonts we know exactly which cuts exist, so offer those
+  // and name them the way the foundry does.
+  const familyValue = isExternal ? '' : text!.get('fontFamily').value;
+  const weightOptions = useWorkspaceWeightOptions(property, familyValue);
 
   const selectedId = useAtomValue(selectedNodeAtom);
   const setSelectedIds = useSetAtom(selectedIdsAtom);
@@ -314,7 +348,11 @@ export function TextPropertyControl({ property, label, value: externalValue, onC
     return (
       <div className="flex items-center justify-between w-full">
         <ControlLabel label={label} property={property} plain={isExternal} />
-        <ToolSelect value={isMixed ? '' : value} onChange={setValue} options={registryDef.options} />
+        <ToolSelect
+          value={isMixed ? '' : value}
+          onChange={setValue}
+          options={weightOptions ?? registryDef.options}
+        />
       </div>
     );
   }
@@ -366,8 +404,18 @@ export function TextPropertyControl({ property, label, value: externalValue, onC
         const textContent = node?.textContent || '';
         const styles = node?.styles || {};
         const viewBox = calculateFitViewBox(textContent, styles);
+        // A hug width (auto / fit-content …) cannot host a FIT: the wrapper's
+        // width must be Fixed or Relative (reference parity). Bake the painted
+        // px width so the switch is visually a no-op and the Size tool shows px.
+        let bakedWidth: string | undefined;
+        if (isFitSize(styles.width)) {
+          const { vpId: fitVpId } = getInteractingViewport();
+          const px = parseFloat(findNodeComputedStyle(selectedId, fitVpId, 'width')) || 0;
+          if (px > 0) bakedWidth = `${Math.round(px)}px`;
+          trace.action('font-size:fit-bake-hug-width', { nodeId: selectedId, from: styles.width, px });
+        }
         flushNow();
-        queueMutation({ type: 'wrapFitText', nodeId: selectedId, viewBox });
+        queueMutation({ type: 'wrapFitText', nodeId: selectedId, viewBox, width: bakedWidth });
         const svgId = `${selectedId}-svg`;
         setTimeout(() => setSelectedIds([svgId]), 150);
         trace.action('font-size:switch-to-fit', { nodeId: selectedId, viewBox });
@@ -383,7 +431,8 @@ export function TextPropertyControl({ property, label, value: externalValue, onC
         // the text keeps its on-screen size through the switch.
         const textId = fitTextNode?.id;
         if (!textId) return;
-        const { vpId, vpWidth } = getInteractingViewport();
+        const { vpId } = getInteractingViewport();
+        const vpWidth = getDefaultStore().get(interactingViewportRenderWidthAtom); // the DRAWN tile width
         const unitPx = parseFloat(fitTextNode?.styles?.fontSize ?? '') || 16;
         const vbW = parseFloat(String((fitWrapperNode?.attrs as any)?.viewBox ?? '').split(/\s+/)[2] ?? '') || 0;
         const wrapperW = parseFloat(findNodeComputedStyle(selectedId, vpId, 'width')) || 0;
@@ -410,7 +459,10 @@ export function TextPropertyControl({ property, label, value: externalValue, onC
       // then express that px in the new unit. Without this the user
       // swap from `56px` → `vw` would write `56vw` and balloon the text;
       // with it, `56px` becomes `~3.89vw` at vp=1440, looking identical.
-      const { vpId, vpWidth } = getInteractingViewport();
+      // vw / vh convert against the width the tile is DRAWN at (a start-model breakpoint's start),
+      // not its stored width (where its range ends).
+      const { vpId } = getInteractingViewport();
+      const vpWidth = getDefaultStore().get(interactingViewportRenderWidthAtom);
       const currentPx = resolveCurrentFontSizePx(selectedId ?? null, vpId, value, vpWidth);
       const converted = convertFontSizeUnit(currentPx, newUnit, vpWidth);
       const newValue = `${formatConvertedValue(converted)}${newUnit}`;

@@ -13,6 +13,8 @@ import { codeAtom, stableCodeAtom, nodesAtom, selectedNodeAtom, selectedIdsAtom,
 import { enterComponentFile } from '@/canvas/component-navigation';
 import { projectFS, projectVersionAtom, stableProjectVersionAtom } from '@/code/project/project-fs';
 import { activeFilePathAtom, componentBreadcrumbAtom } from '@/code/project/active-file-store';
+import { isIconSetFilePath } from '@/code/project/file-path-kind';
+import { getAnchorsForPage } from './LinkTool/LinkUrlControl';
 import { isComponentFilePath } from '@/code/project/file-path-kind';
 import { isReplicaViewportAtom, interactingViewportWidthAtom, isComponentVariantViewportAtom, activeComponentVariantAtom } from '@/code/stores/viewport-store';
 import { buildComponentRegistry, parseComponentInfoFromSource } from '@/code/components/component-registry';
@@ -32,6 +34,7 @@ import { FontFamilyControl } from './TextStyleTool/atoms/FontFamilyControl';
 import SlotControl from './SlotControl';
 import GroupControl from './GroupControl';
 import ImageListControl from './ImageListControl';
+import ObjectListControl from './ObjectListControl';
 import TransitionControl from './TransitionControl';
 import { modifyProjectFile } from '@/code/project/modify-file';
 import { renderCodeComponentDirect } from '@/canvas/CodeComponentHost';
@@ -41,6 +44,7 @@ import Button from '@/design-system/Button';
 import { parseVariantConfig, selectableVariants } from '@/code/variants/variant-config';
 import {
   parseConditionalPropExpression,
+  conditionalPropVarForVariant,
   resolveConditionalPropValue,
 } from '@/code/components/instance-conditional-prop';
 import {
@@ -64,7 +68,7 @@ import { propertyHasPresets, buildPresetSubmenuItems } from '../controls/control
 import { presetTokensAtom } from '@/code/stores/preset-store';
 import { flushNow, queueMutation } from '@/code/mutation/mutation-queue';
 import { useControl } from '../controls/ControlProvider';
-import { CmsBoundPill, CmsMissingPill, CmsFieldPill, cmsFieldLabel } from '../controls/CmsBoundPill';
+import { CmsBoundPill, CmsMissingPill, CmsFieldPill, cmsFieldLabel, cmsOrphanInScope } from '../controls/CmsBoundPill';
 import { getScrollVariant, setScrollVariantInCode, rehydrateScrollVariant } from '@/code/generation/scroll-variant-gen';
 import { getActiveAnimationScope } from '@/editor/tools/AnimationTool/animation-scope-source';
 import { isComponentLikeFilePath, isTemplateFilePath } from '@/code/project/active-file-store';
@@ -89,6 +93,7 @@ import { viewportsConfigAtom } from '@/code/stores/viewport-store';
 import { interactingViewportIdAtom } from '@/code/stores/viewport-store';
 import { trace } from '@/shared/debug-trace';
 import { expediteStableAtomSync } from '@/canvas/hooks/useStableAtomSync';
+import { cmsPageMetaAtom } from '@/code/stores/cms-page-store';
 
 // Lifted-out row components + helpers (Phase 7 god-file split, item 7.5) — see
 // ./ComponentPropsTool/. The public API below is re-exported so existing
@@ -115,6 +120,7 @@ import {
 import { VariablePresetPillRow } from './ComponentPropsTool/VariablePresetPillRow';
 import { CodeComponentControlField } from './ComponentPropsTool/CodeComponentControlField';
 import { LinkVariableInstanceRow } from './ComponentPropsTool/LinkVariableInstanceRow';
+import { FormattedTextInstanceRow } from './ComponentPropsTool/FormattedTextInstanceRow';
 import { CursorVariableInstanceRow } from './ComponentPropsTool/CursorVariableInstanceRow';
 
 export {
@@ -129,7 +135,14 @@ export { setInstanceProp, removeInstanceProp } from './ComponentPropsTool/instan
  * Component props tool — renders when a component instance is selected.
  * Shows each prop with its current value (or default), editable.
  */
-export default function ComponentPropsTool() {
+/**
+ * `embedded` renders the PROP ROWS ONLY, without the component header and its
+ * Edit button. An icon set's colour variables belong in the Icon Set section
+ * beside the icon picker — the way Framer shows them — not in a second,
+ * competing Component block with its own name and Edit button below it.
+ * IconSetTool renders this tool embedded inside its own section.
+ */
+export default function ComponentPropsTool({ embedded = false }: { embedded?: boolean } = {}) {
   const nodes = useAtomValue(nodesAtom);
   const jotaiStore = useStore();
   const selectedId = useAtomValue(selectedNodeAtom);
@@ -171,6 +184,7 @@ export default function ComponentPropsTool() {
   // margin / shadow / border).
   const presetTokens = useAtomValue(presetTokensAtom);
   const isReplica = useAtomValue(isReplicaViewportAtom);
+  const cmsPageMeta = useAtomValue(cmsPageMetaAtom);
   const vpWidth = useAtomValue(interactingViewportWidthAtom);
   // Component-file routing: when the user is on a non-default variant in a
   // component master, prop changes (especially `initialVariant`) must land in
@@ -180,6 +194,8 @@ export default function ComponentPropsTool() {
   const activeComponentVariant = useAtomValue(activeComponentVariantAtom);
   const setActiveFile = useSetAtom(activeFilePathAtom);
   const setBreadcrumb = useSetAtom(componentBreadcrumbAtom);
+  // The page an instance sits on — inside a master the breadcrumb's origin page.
+  const breadcrumb = useAtomValue(componentBreadcrumbAtom);
   const setSelectedIds = useSetAtom(selectedIdsAtom);
   const setInteractingVp = useSetAtom(interactingViewportIdAtom);
   const setUpdatingFromCanvas = useSetAtom(updatingFromCanvasAtom);
@@ -252,6 +268,17 @@ export default function ComponentPropsTool() {
       const hashMatch = componentFile.match(/@([a-f0-9]+)\./);
       const hash = hashMatch?.[1] ?? componentFile;
       return parseComponentInfoFromSource(componentFile, cdnCode, hash);
+    }
+    // An ICON SET lives under `icons/`, which the registry never scans, so an
+    // icon instance had no props panel at all — its colour variable existed in
+    // the file and was unreachable from the page. Parse it directly, the same
+    // fallback a template uses, and drop `name`: that is the icon PICKER,
+    // which IconSetTool already renders above this.
+    if (isIconSetFilePath(componentFile)) {
+      const code = projectFS.readFile(componentFile);
+      if (!code) return null;
+      const info = parseComponentInfoFromSource(componentFile, code, String(code.length));
+      return info ? { ...info, props: info.props.filter((p) => p.name !== 'name') } : null;
     }
     const registry = buildComponentRegistry(projectFS);
     for (const info of registry.values()) {
@@ -922,7 +949,8 @@ export default function ComponentPropsTool() {
         if (node.textVariable === activeName) {
           for (const vpPrefix of targetVpPrefixes) {
             const el = contentEl.querySelector(`[data-node-id="${vpPrefix}${node.id}"]`) as HTMLElement | null;
-            if (el) el.textContent = value;
+            // A formatted text variable paints its (sanitized) HTML, like the Renderer does.
+            if (el) { if (node.formattedTextVariable) el.innerHTML = value; else el.textContent = value; }
           }
         }
 
@@ -1004,6 +1032,12 @@ export default function ComponentPropsTool() {
 
   const handlePropChange = useCallback((propName: string, value: string, defaultValue: string | null) => {
     if (!selectedId || !componentInfo) return;
+    // Panel-originated write: the label accent / value this tool shows derive
+    // from the STABLE code mirror, which otherwise waits out the 450ms
+    // canvas-paint budget (the DOM updated instantly, the label ~1s later —
+    // user report 2026-09-09 on Reset Override). One-shot, see
+    // useStableAtomSync.
+    expediteStableAtomSync();
     // Hold the chosen value on screen through the async commit/parse churn.
     setPropOptimistic(propName, value);
 
@@ -1042,6 +1076,21 @@ export default function ComponentPropsTool() {
       // handleWrite isInstant. (The READ converts duration:0 back to type:'instant' so the editor still shows it.)
       if (obj.type === 'instant') obj = { duration: '0' };
       writeValue = formatTransitionObj(obj);
+    }
+    // An objectList's value is a real ARRAY, for the same reason a
+    // transition's is a real object: the component does `items.map(…)`, and
+    // a JSON STRING prop would render nothing (and blow up on .map).
+    if (controlDef?.type === 'objectList') {
+      writeUseExpr = true;
+      try { writeValue = JSON.stringify(JSON.parse(value || '[]')); } catch { writeValue = '[]'; }
+    }
+    // A FORMATTED TEXT value is inline HTML — it holds both quote kinds (`<a href="…">`) and
+    // entities a JSX attribute string would DECODE (`&lt;` → a live `<`). Always a JS string
+    // literal: `content={"<strong>Hi</strong>"}`.
+    const isFormattedText = propVarType === 'formattedText';
+    if (isFormattedText) {
+      writeUseExpr = true;
+      writeValue = JSON.stringify(value);
     }
 
     // Instant live preview — the canvas reflects the value at once.
@@ -1083,6 +1132,12 @@ export default function ComponentPropsTool() {
             propName, activeComponentVariant, writeValue, baseSeed,
           );
         });
+      } else if (isComponentFilePath(activeFile) && isFormattedText) {
+        // Formatted text inside a master: the per-variant ternary writer quotes values with
+        // bare `'…'` / `"…"`, which markup breaks — the value is written to the base prop.
+        modifyProjectFile(activeFile, (currentCode) => (value === (defaultValue ?? '') || value === '')
+          ? removeInstanceProp(currentCode, selectedId, componentInfo.name, propName)
+          : setInstanceProp(currentCode, selectedId, componentInfo.name, propName, writeValue, true));
       } else if (isComponentFilePath(activeFile)) {
         // COMPONENT FILE, DEFAULT variant: write the DEFAULT branch through
         // the conditional writer so existing per-variant branches SURVIVE —
@@ -1136,6 +1191,7 @@ export default function ComponentPropsTool() {
   // stay an expression. One-shot (no preview/commit deferral); viewport-agnostic
   // so it writes the base attr, not a data-responsive override.
   const handleSetLinkExpr = useCallback((propName: string, expr: string) => {
+    expediteStableAtomSync();
     if (!selectedId || !componentInfo) return;
     trace.action('component-props:set-link-expr', { nodeId: selectedId, propName, expr });
     modifyProjectFile(activeFile, (code) => setInstanceProp(code, selectedId, componentInfo.name, propName, expr, true));
@@ -1163,6 +1219,9 @@ export default function ComponentPropsTool() {
   const handleResetOverride = useCallback((propName: string) => {
     if (!selectedId || !componentInfo) return;
     trace.action('component-props:reset-override', { nodeId: selectedId, propName, vpWidth });
+    // The accent on this row reads the STABLE mirror — expedite it so the
+    // label drops its override colour with the click, not 450ms+ later.
+    expediteStableAtomSync();
     modifyProjectFile(activeFile, (currentCode) => {
       return resyncScrollResting(
         setResponsiveOverride(currentCode, selectedId, componentInfo.name, vpWidth, propName, '', null));
@@ -1178,6 +1237,7 @@ export default function ComponentPropsTool() {
     const scope = getActiveAnimationScope();
     if (!scope || !('query' in scope)) return;
     trace.action('component-props:reset-attr-var', { nodeId: selectedId, propName, query: scope.query });
+    expediteStableAtomSync();
     modifyProjectFile(activeFile, (currentCode) =>
       resetResponsiveInstancePropVarInCode(currentCode, selectedId, componentInfo.name, scope.query, propName));
     const newCode = projectFS.readFile(activeFile);
@@ -1264,6 +1324,9 @@ export default function ComponentPropsTool() {
   // On component-file non-default variant: writes a JSX ternary so the choice
   // applies only to that parent variant (per-parent-variant child variant).
   const handleVariantSelect = (variantName: string) => {
+    // Panel write — see handlePropChange: the Variant row's accent/value
+    // read the stable mirror.
+    expediteStableAtomSync();
     if (!selectedId || !componentInfo) return;
     trace.action('component-tool:variant-change', {
       nodeId: selectedId, variant: variantName,
@@ -1654,6 +1717,9 @@ export default function ComponentPropsTool() {
           const hasInlineVpVariant = isReplica && vpWidth != null && selectedId != null
             && nodes.get(selectedId)?.responsiveAttrPropValues?.initialVariant?.[vpWidth] != null;
           const variantResetOverride = !variantOverridden ? undefined : () => {
+            // Every branch below is a panel write whose result is THIS label's
+            // accent — the stable mirror must not wait out the canvas budget.
+            expediteStableAtomSync();
             // Per-PARENT-VARIANT override (variable OR literal) → Reset Override drops THIS variant's branch
             // so it re-inherits the base/default; every other parent variant + the base are untouched.
             if (cvVariantBranch && isComponentVariant && activeComponentVariant && selectedId && componentInfo) {
@@ -1727,6 +1793,12 @@ export default function ComponentPropsTool() {
   // the default tile shows the base — instead of the raw ternary source.
   const resolveVariantBranchDisplay = (raw: string | undefined): string | undefined => {
     if (raw == null || !isComponentFilePath(activeFile)) return raw;
+    // A per-variant VARIABLE binding (`value={variant === 'variant-1' ? priceYearly
+    // : priceMonthly}` — one number driven by two of the master's variables).
+    // Resolving to the ACTIVE variant's variable NAME lets the row render the
+    // ordinary bound pill below instead of the raw ternary (live find 2026-09-17).
+    const branchVar = conditionalPropVarForVariant(raw, (isComponentVariant && activeComponentVariant) || null);
+    if (branchVar && parentVarsByName.has(branchVar)) return branchVar;
     const map = parseConditionalPropExpression(raw);
     if (!map) return raw;
     return resolveConditionalPropValue(map, (isComponentVariant && activeComponentVariant) || 'default');
@@ -1748,6 +1820,7 @@ export default function ComponentPropsTool() {
       reset: () => {
         const defVal = map['default'] ?? '';
         setPropOptimistic(propName, defVal);
+        expediteStableAtomSync();
         modifyProjectFile(activeFile, (c) =>
           setConditionalInstanceProp(c, selectedId, componentInfo.name, propName, activeComponentVariant, defVal));
         trace.action('component-props:reset-variant-override', { propName, variant: activeComponentVariant });
@@ -1893,6 +1966,28 @@ export default function ComponentPropsTool() {
             />)}
           </ToolRow>
         );
+      case 'objectList': {
+        // The list's value is a real ARRAY prop. Read it from the parsed
+        // node, which already normalised the JSX literal to JSON — the raw
+        // attribute text is JS (`[{question:"…"}]`), not JSON, so parsing the
+        // attribute string here would fail on the unquoted keys.
+        const fromNode = node?.componentJsonProps?.[propName];
+        const raw = fromNode ?? (typeof controlDef.default === 'string' ? controlDef.default : JSON.stringify(controlDef.default ?? []));
+        let list: Record<string, unknown>[] = [];
+        try {
+          const parsed: unknown = JSON.parse(raw);
+          if (Array.isArray(parsed)) list = parsed as Record<string, unknown>[];
+        } catch { list = Array.isArray(controlDef.default) ? controlDef.default as Record<string, unknown>[] : []; }
+        return (
+          <ObjectListControl
+            key={propName}
+            label={controlDef.label}
+            controlDef={controlDef}
+            value={list}
+            onChange={(next) => handlePropChange(propName, JSON.stringify(next), JSON.stringify(controlDef.default ?? []))}
+          />
+        );
+      }
       case 'imageList':
         // Ordered image list — popup with per-image sub-rows + append upload.
         return (
@@ -2052,13 +2147,17 @@ export default function ComponentPropsTool() {
       <>
       <div
         ref={revealRef}
-        className="cut-corners transition-[box-shadow,background-color] duration-500"
+        // Cut-corner shell: the clip-path slices any shadow/outline ring at the
+        // two diagonals (the flash ring showed square corners cut off). A real
+        // `border` + the `.cut-border` diagonal stroke (accent as
+        // --cut-border-color) follows the clip — same rule as every other cut
+        // shell in the editor (2026-09-06).
+        className={`cut-corners cut-border border transition-[border-color,background-color] duration-500 ${revealFlash ? 'border-[var(--accent-secondary,#a855f7)] [--cut-border-color:var(--accent-secondary,#a855f7)]' : 'border-transparent [--cut-border-color:transparent]'}`}
         style={revealFlash ? {
-          boxShadow: 'inset 0 0 0 1.5px var(--accent-secondary, #a855f7)',
           backgroundColor: 'color-mix(in srgb, var(--accent-secondary, #a855f7) 8%, transparent)',
         } : undefined}
       >
-        {componentHeader}
+        {!embedded && componentHeader}
         {/* Same px-2 + pl-3 as ToolSection so code component control labels line up
             with Styles / Layout / Position labels (ControlLabel's chevron
             offset only makes sense at this column). */}
@@ -2085,9 +2184,14 @@ export default function ComponentPropsTool() {
               // fell through to `renderControl` (which already shows the overridden value + a Reset). Net
               // effect: per-replica override / removing the var on a replica appeared to do NOTHING. Mirrors
               // the design-component propValue (~2226). A per-viewport VARIABLE is handled by vpVarRef above.
+              // A PER-VARIANT binding (`value={variant === 'variant-1' ? priceYearly :
+              // priceMonthly}` — one control driven by two of the master's variables)
+              // resolves to the ACTIVE variant's variable, so the row shows that
+              // variable's pill like any other binding instead of the raw ternary.
               const currentLiteral = String(
                 (isReplica ? responsiveOverrides.get(propName) : undefined)
-                ?? currentValues.get(propName) ?? defaultStr,
+                ?? resolveVariantBranchDisplay(currentValues.get(propName))
+                ?? defaultStr,
               );
               // Label is "Create Variable" (not "Hoist Variable"): a code
               // component is a leaf — its control becomes a NEW variable on
@@ -2248,7 +2352,7 @@ export default function ComponentPropsTool() {
 
   return (
     <>
-      {componentHeader}
+      {!embedded && componentHeader}
 
       {hasRegularProps && (
         // mt-2 separates the prop list from the Variant selector above so
@@ -2427,7 +2531,7 @@ export default function ComponentPropsTool() {
                         label: v.label,
                         show: true,
                         hoverColor: 'accent-secondary' as const,
-                        onClick: () => modifyProjectFile(activeFile, (c) => setInstanceProp(c, selectedId, componentInfo.name, prop.name, v.name, true)),
+                        onClick: () => { expediteStableAtomSync(); modifyProjectFile(activeFile, (c) => setInstanceProp(c, selectedId, componentInfo.name, prop.name, v.name, true)); },
                       })),
                     });
                   }
@@ -2503,6 +2607,7 @@ export default function ComponentPropsTool() {
                     <ControlLabel label={prop.label || prop.name} property={cssProp ?? ''} plain />
                     <CmsMissingPill
                       field={orphanField}
+                      label={cmsOrphanInScope(orphanField, cmsBinding, cmsPageMeta?.kind === 'detail') ?? undefined}
                       onClear={() => { if (selectedId) queueMutation({ type: 'clearCmsOrphan', nodeId: selectedId, propName: prop.name }); }}
                     />
                   </div>
@@ -2574,6 +2679,43 @@ export default function ComponentPropsTool() {
               // Yes/No segmented control — NOT the display/flex-wrap value <select>; an Option gets a
               // dropdown of its @propMeta choices; a Number gets a numeric input. Color/image/border/
               // shadow keep the richer atom path below (their full pickers beat a bare primitive editor).
+              // A SECTION variable (the Scroll Variant's "Section", the reference builder's Scroll
+              // Section Ref): its value is an anchor id on the page, so the instance
+              // picks from that page's anchors instead of typing the id by hand.
+              // Inside a master the page is the breadcrumb's origin.
+              if (prop.varType === 'section') {
+                const anchorPage = isComponentFilePath(activeFile) ? (breadcrumb[0] ?? activeFile) : activeFile;
+                const anchors = anchorPage ? getAnchorsForPage(anchorPage) : [];
+                const sectionOptions = [
+                  { value: '', label: anchors.length === 0 ? 'No sections on the page' : 'Select…' },
+                  ...anchors.map((id) => ({ value: id, label: `#${id}` })),
+                  // A value the page no longer has (or one from another route) stays selectable.
+                  ...(propValue && !anchors.includes(propValue) ? [{ value: propValue, label: `#${propValue}` }] : []),
+                ];
+                return (
+                  <HoistMenuItemProvider key={prop.name} item={hoistMenuItem}>
+                    <div className="flex items-center justify-between w-full">
+                      <ControlLabel label={prop.label || prop.name} property="" plain={false} hideLocalize overridden={propOverridden} onResetOverride={propResetOverride} subLabel="Scroll Section" />
+                      <ToolSelect value={propValue} onChange={(v) => handlePropChange(prop.name, v, prop.defaultValue)} options={sectionOptions} />
+                    </div>
+                  </HoistMenuItemProvider>
+                );
+              }
+              if (prop.varType === 'formattedText') {
+                return (
+                  <HoistMenuItemProvider key={prop.name} item={hoistMenuItem}>
+                    <FormattedTextInstanceRow
+                      label={prop.label || prop.name}
+                      propName={prop.name}
+                      value={propValue}
+                      defaultValue={prop.defaultValue}
+                      overridden={propOverridden}
+                      onResetOverride={propResetOverride}
+                      onChange={handlePropChange}
+                    />
+                  </HoistMenuItemProvider>
+                );
+              }
               if (prop.varType === 'toggle') {
                 return (
                   <HoistMenuItemProvider key={prop.name} item={hoistMenuItem}>

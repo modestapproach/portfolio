@@ -1,5 +1,6 @@
 import { describe, it, expect } from 'vitest';
 import { applyDetailPageBindings } from './cms-page-bindings';
+import { shouldClearEmptiedText } from '@/canvas/Renderer';
 import type { CanvasNode } from '../parsing/parser';
 
 function makeNode(partial: Partial<CanvasNode>): CanvasNode {
@@ -94,5 +95,96 @@ describe('applyDetailPageBindings', () => {
     const out = applyDetailPageBindings(nodes, { title: 'X' });
     expect(out.get('plain')).toBe(plain);   // same reference
     expect(out.get('bound')).not.toBe(bound); // cloned
+  });
+
+  // ── Regression: the bake is not cosmetic, it is load-bearing ──────────────
+  //
+  // Live 2026-09-01: changing padding-right on a `/collection-1/[slug]` page
+  // made every image and paragraph vanish from the canvas while the live
+  // preview stayed correct. A style edit ends in `forceRenderAfterExternalEdit`,
+  // and that imperative path shipped the RAW parser map instead of the baked
+  // one. A bound node parses with EMPTY textContent, so `patchElement` reached
+  // `shouldClearEmptiedText`, which cleared 72 paragraphs in a single pass.
+  //
+  // These two assertions are the whole bug: unbaked = "clear me", baked =
+  // "leave me alone". Any render path that skips the bake wipes the page.
+  describe('detail-page nodes must be baked before they reach the renderer', () => {
+    const boundParagraph = () => makeNode({
+      id: 'p1', type: 'p',
+      binding: { field: 'body', property: 'text' },
+    } as any);
+
+    it('an UNBAKED bound node looks empty and would be cleared', () => {
+      const node = boundParagraph();
+      expect(node.textContent).toBeUndefined();
+      // hasActiveTextBinding is false on a detail page: values live in the
+      // node, not in a bindingData record, so nothing vetoes the clear.
+      expect(shouldClearEmptiedText(node, node.textContent, false, true)).toBe(true);
+    });
+
+    it('a BAKED bound node carries its text and is left alone', () => {
+      const nodes = new Map<string, CanvasNode>([['p1', boundParagraph()]]);
+      const baked = applyDetailPageBindings(nodes, { body: 'Meridian Architects is a practice…' }).get('p1')!;
+
+      expect(baked.textContent).toBe('Meridian Architects is a practice…');
+      expect(shouldClearEmptiedText(baked, baked.textContent, false, true)).toBe(false);
+    });
+
+    it('a field MISSING from the item still reads as empty', () => {
+      // The preview record not carrying the field is indistinguishable from
+      // never baking, so this documents the boundary rather than hiding it.
+      const nodes = new Map<string, CanvasNode>([['p1', boundParagraph()]]);
+      const baked = applyDetailPageBindings(nodes, { unrelated: 'x' }).get('p1')!;
+      expect(shouldClearEmptiedText(baked, baked.textContent, false, true)).toBe(true);
+    });
+  });
+});
+
+// ─── A canvas copy keeps FOLLOWING the field ──────────────────────────────
+// Dragged onto the canvas of its own detail page, a bound node cannot keep a
+// live `{item.field}` (module scope, no `item`), so the binding is stashed in
+// `data-cms-orphan` and the row's value baked into the JSX. That literal is a
+// snapshot — editing the field left the canvas copy showing the old text
+// (report 2026-09-09). The canvas paints the stash instead.
+describe('applyDetailPageBindings — dormant (canvas) bindings', () => {
+  it('paints the live field over a stale baked text literal', () => {
+    const nodes = new Map<string, CanvasNode>([
+      ['parked', makeNode({
+        id: 'parked', type: 'p',
+        textContent: '2103344',                       // baked when it left the page
+        orphanBindings: [{ prop: '__text', field: 'outcome1' }],
+      } as any)],
+    ]);
+    const out = applyDetailPageBindings(nodes, { outcome1: '210334455' });
+    expect(out.get('parked')!.textContent).toBe('210334455');
+  });
+
+  it('paints stashed attribute and style bindings too', () => {
+    const nodes = new Map<string, CanvasNode>([
+      ['pic', makeNode({
+        id: 'pic', type: 'img',
+        orphanBindings: [
+          { prop: 'src', field: 'cover' },
+          { prop: '__style.backgroundImage', field: 'cover' },
+        ],
+      } as any)],
+    ]);
+    const out = applyDetailPageBindings(nodes, { cover: 'https://cdn/x.png' });
+    expect(out.get('pic')!.attrs!.src).toBe('https://cdn/x.png');
+    // Same formatter the live-bound path uses (quoted url()).
+    expect(out.get('pic')!.styles.backgroundImage).toBe('url("https://cdn/x.png")');
+  });
+
+  it('leaves a stash whose field this page does not have (a nested list row) on its baked value', () => {
+    const nodes = new Map<string, CanvasNode>([
+      ['other', makeNode({
+        id: 'other', type: 'p',
+        textContent: 'baked from another collection',
+        orphanBindings: [{ prop: '__text', field: 'authorBio' }],
+      } as any)],
+    ]);
+    const out = applyDetailPageBindings(nodes, { outcome1: '210334455' });
+    expect(out.get('other')!.textContent).toBe('baked from another collection');
+    expect(out.get('other')).toBe(nodes.get('other')); // untouched by reference
   });
 });

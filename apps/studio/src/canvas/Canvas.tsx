@@ -1,12 +1,13 @@
 // Canvas.tsx — Thin shell wiring together: TransformManager, DragCoordinator, text editing.
 // All complex logic lives in dedicated systems. Canvas just routes events.
 
+import { withLiveWidth } from '@/shared/types';
 import { useEffect, useRef, useCallback, useState, useMemo } from 'react';
 import { nextFrames } from '@/shared/dom-utils';
 import { getCanvasRenderer } from './CanvasRenderer';
 import { finishPendingRestore } from '@/code/mutation/history';
 import { useAtom, useAtomValue, useSetAtom, useStore } from 'jotai';
-import { codeAtom, nodesAtom, selectedNodeAtom, selectedIdsAtom, hoveredIdAtom, hoveredNodeIdAtom, hoveredViewportIdAtom, canvasInteractingAtom, mapItemIndexAtom, mapContextAtom, updatingFromCanvasAtom, marqueeViewportSpreadAtom, getNodesSnapshot, getCachedNodesMap } from '../code/stores/store';
+import { codeAtom, nodesAtom, selectedNodeAtom, selectedIdsAtom, hoveredIdAtom, hoveredNodeIdAtom, hoveredViewportIdAtom, canvasInteractingAtom, mapItemIndexAtom, updatingFromCanvasAtom, marqueeViewportSpreadAtom, getNodesSnapshot, getCachedNodesMap } from '../code/stores/store';
 import type { CanvasNode } from '../code/parsing/parser';
 import { activeFilePathAtom, componentBreadcrumbAtom, isComponentFilePath, isIconSetFilePath } from '../code/project/active-file-store';
 // updateVariantPosition, updateIconPosition/Size, parseIconSetConfig
@@ -22,6 +23,10 @@ import { shouldSkipLaggingForcedRender } from './render-integrity';
 import { autoFocusLayersAtom } from '@/code/stores/user-preferences-store';
 import { snappedRulerGuideIdsAtom } from '@/code/stores/ruler-guides-store';
 import { overlayEditingIdAtom, overlayCallsAtom } from '@/code/stores/overlay-store';
+import { prePlaceOverlayForEdit, overlayShowRuleBody } from '@/canvas/overlay-preplace';
+import { setPasteUiHooks } from '@/code/features/paste-engine/execute-from-ui';
+import { expediteStableAtomSync } from '@/canvas/hooks/useStableAtomSync';
+import { useLiveNode } from '@/code/stores/node-family';
 import { setViewportHeaderOverlayEditMode } from './ViewportHeaderManager';
 import { activeLocaleAtom, isDefaultLocaleAtom, i18nConfigAtom, localeOverridesAtom } from '@/code/stores/locale-store';
 import {
@@ -35,7 +40,8 @@ import ToolbarGhost from './ui/ToolbarGhost';
 import CanvasRulers from './ui/CanvasRulers';
 import RulerGuides from './ui/RulerGuides';
 import Comments from './ui/Comments';
-import { getViewportPrefix, setStyleContext, setUpdatingFromCanvasFlagger, setForceCanvasRender, setReplicaOverridesGetter, getNodeHitsAtPoint, injectCanvasCSS, removeCanvasCSS, forceCanvasRender } from './node-ops';
+import { getContentRoot, getViewportPrefix, setStyleContext, setUpdatingFromCanvasFlagger, setForceCanvasRender, setReplicaOverridesGetter, getNodeHitsAtPoint, injectCanvasCSS, removeCanvasCSS, forceCanvasRender } from './node-ops';
+import { reclaimKeyboardFocus } from './reclaim-keyboard-focus';
 import { registerTextEditCommitter } from './text-edit-committer';
 // redirectToComponentInstance, redirectToCollectionTemplate, redirectToFitTextWrapper,
 // redirectLayoutNodeToViewport, getIsolatedChildOfGroup, vpIdFromPrefix,
@@ -43,6 +49,7 @@ import { isGhostNodeId } from '@/shared/ghost-id';
 import { containerOverridesAtom, getOverridesAtWidth } from '@/code/stores/container-query-store';
 import { collectionSchemasAtom, collectionDataAtom } from '@/code/stores/cms-store';
 import { cmsPageMetaAtom, activePreviewItemAtom } from '@/code/stores/cms-page-store';
+import { applyDetailPageBindings } from '@/code/features/cms-page-bindings';
 import { openCmsEditorAtom } from '@/code/stores/cms-editor-store';
 import { leftPanelAtom } from '@/code/stores/left-panel-store';
 import { SANDBOX_ORIGIN } from '@/canvas-sandbox/protocol';
@@ -53,7 +60,7 @@ import { CLOUD_ENABLED } from '@/shared/cloud-flag';
 import { DISK_ENABLED } from '@/shared/disk-flag'; // LOCAL FORK
 import { preloadProjectFonts } from '@/code/project/font-preload';
 import { backfillCmsTimestamps } from '@/code/project/cms-ops';
-import { toolModeAtom, panHighlightAtom } from '@/code/stores/tool-store';
+import { toolModeAtom, panHighlightAtom, creatorToolsLockedAtom, isCreatorToolMode } from '@/code/stores/tool-store';
 import { commentModeActiveAtom } from '@/code/stores/comment-store';
 import { componentEditorFileAtom } from '@/code/stores/component-editor-store';
 import { isShapeMode, isLayoutMode } from '@/code/stores/tool-store';
@@ -76,6 +83,7 @@ import ComponentBreadcrumb from './ui/ComponentBreadcrumb';
 import SlugPageBreadcrumb from './ui/SlugPageBreadcrumb';
 import AddVariantUI from './ui/AddVariantUI';
 import AddVectorUI from './ui/AddVectorUI';
+import AddFormFieldUI from './ui/AddFormFieldUI';
 import ArrowConnectors from './ui/ArrowConnectors';
 import ConnectionHandle from './ui/ConnectionHandle';
 import SlotConnectionHandle from './ui/SlotConnectionHandle';
@@ -199,6 +207,19 @@ export default function Canvas() {
   // Exit overlay-edit mode (shared by the per-viewport header's Done button AND the
   // component-master "Editing Overlay" banner below — component masters render NO
   // viewport headers, so the header affordance never appears there).
+  // Paste follow-up: an overlay ATTACHED to the selection by Cmd+V opens in
+  // overlay edit mode, exactly like the Overlay tool's Add (expedite the
+  // stable mirror first so the overlay panel reads the new call this tick).
+  useEffect(() => {
+    setPasteUiHooks({
+      enterOverlayEdit: (overlayId) => {
+        expediteStableAtomSync();
+        setOverlayEditingId(overlayId);
+        setSelectedIds([overlayId]);
+      },
+    });
+    return () => setPasteUiHooks(null);
+  }, [setOverlayEditingId, setSelectedIds]);
   const exitOverlayEdit = useCallback(() => {
     const oid = overlayEditingId;
     setOverlayEditingId(null);
@@ -236,7 +257,16 @@ export default function Canvas() {
     // `z-index: 50` lifts the shown overlay above the canvas tint (z-index 10)
     // so a canvas-node overlay pops over the dimmed canvas, not under it.
     const showSelector = `[data-id="${overlayEditingId}"][data-overlay-node]`;
-    injectCanvasCSS(showSelector, '/*persist*/ display: block !important; z-index: 50 !important;');
+    // Place the overlay at its final position BEFORE the show rule paints it —
+    // otherwise it flashes at its stale left/top for a frame and snaps
+    // (see overlay-preplace.ts).
+    { const root = getContentRoot(); if (root) prePlaceOverlayForEdit(overlayEditingId, root); }
+    // Reveal with the overlay's OWN display (flex / grid / block), never a
+    // hard `block`: a forced block wiped the overlay's flex on the canvas, so
+    // its children lost the centering and the layout detector read the
+    // overlay as a non-layout parent — a child drag started as ABSOLUTE
+    // while the live site (no override) laid it out fine (2026-09-06).
+    injectCanvasCSS(showSelector, overlayShowRuleBody(getNodesSnapshot().get(overlayEditingId)));
     injectCanvasCSS('[data-viewport]', '/*persist*/ position: relative;');
     // Accent tint (standard, kept LIGHT) over viewports AND root-level
     // canvas nodes — every parentless thing on the canvas EXCEPT the edited
@@ -285,16 +315,36 @@ export default function Canvas() {
       forceCanvasRender();
     };
   }, [overlayEditingId]);
+  // The show rule bakes the overlay's display with !important, so it must
+  // FOLLOW the overlay: adding a Layout (block → flex) after the overlay was
+  // opened left the canvas on the stale `display: block !important` while
+  // the source (and the live site) laid the children out in flex — the text
+  // sat top-left instead of centered (live find 2026-09-06). Live-subscribed
+  // node so the rule re-injects the same frame the layout commits.
+  const overlayEditingNode = useLiveNode(overlayEditingId);
+  const overlayEditingDisplay = overlayEditingNode ? overlayShowRuleBody(overlayEditingNode) : '';
+  useEffect(() => {
+    if (!overlayEditingId || !overlayEditingDisplay) return;
+    injectCanvasCSS(`[data-id="${overlayEditingId}"][data-overlay-node]`, overlayEditingDisplay);
+  }, [overlayEditingId, overlayEditingDisplay]);
   // While editing a text node, hide the variant-connection handle — it overlaps the text caret/selection and
   // a drag-to-connect would fight the text selection. Mirrors SelectionOverlay, which also bails on text edit.
   const isTextEditing = useAtomValue(isTextEditingAtom);
   const setMapItemIndex = useSetAtom(mapItemIndexAtom);
   const mapItemIndexVal = useAtomValue(mapItemIndexAtom);
-  const mapContextVal = useAtomValue(mapContextAtom);
-  // mapItemIndexRef / mapContextRef removed — controllers read jotaiStore.get(atom) directly.
+  // mapItemIndexRef removed — controllers read jotaiStore.get(atom) directly.
   // ghostClickHandledRef moved to CanvasMouseController (owns ghost detection state).
   const activeLocale = useAtomValue(activeLocaleAtom);
   const isDefaultLocale = useAtomValue(isDefaultLocaleAtom);
+  // Translation mode: lock the creator tools (toolbar greys them, shortcuts
+  // go inert) and drop an active creator tool back to Select.
+  useEffect(() => {
+    jotaiStore.set(creatorToolsLockedAtom, !isDefaultLocale);
+    if (!isDefaultLocale && isCreatorToolMode(jotaiStore.get(toolModeAtom))) {
+      trace.action('canvas:translation-mode-drops-creator-tool', { mode: jotaiStore.get(toolModeAtom) });
+      jotaiStore.set(toolModeAtom, 'select');
+    }
+  }, [isDefaultLocale]);
   const i18nConfig = useAtomValue(i18nConfigAtom);
   // localeOverrides / setLocaleOverrides — consumed by CanvasTextEditController via jotaiStore.
   // Canvas.tsx no longer reads localeOverrides directly; useRendererSync reads it from its own atom hook.
@@ -533,6 +583,11 @@ export default function Canvas() {
       const editId = jotaiStore.get(shapeEditingIdAtom);
       trace.action('canvas:bridge-shape-edit-cancelled', { editId });
       if (!editId) return;
+      // The exit click landed INSIDE the iframe (outside-click commit, Escape
+      // after an anchor drag): the iframe now owns keyboard focus and the
+      // parent shortcuts (Cmd+Z of the commit we are about to make) are dead
+      // until it is handed back. Same find as text edit.
+      reclaimKeyboardFocus('shape-edit');
       setShapeEditingId(null);
       setSelectedPoint(null);
       jotaiStore.set(selectedAnchorInfoAtom, null);
@@ -544,6 +599,7 @@ export default function Canvas() {
       const editId = jotaiStore.get(shapeEditingIdAtom);
       trace.action('canvas:bridge-shape-edit-done', { editId });
       if (!editId) return;
+      reclaimKeyboardFocus('shape-edit');
       setShapeEditingId(null);
       setSelectedPoint(null);
       jotaiStore.set(selectedAnchorInfoAtom, null);
@@ -701,12 +757,34 @@ export default function Canvas() {
     const freshViewports = isMasterFile
       ? activeViewportsRef.current
       : freshConfigs.map(v => {
-          const merged = { ...v, width: freshWidths[v.id] ?? v.width };
+          const merged = withLiveWidth({ ...v }, freshWidths[v.id]);
           const pos = freshPositions[v.id];
           return pos ? { ...merged, ...pos } : merged;
         });
+    // DETAIL-PAGE CMS VALUES LIVE IN THE NODES, AND ARE BAKED IN RIGHT HERE.
+    //
+    // Exactly the localeOverrides trap below, one binding system over. On a
+    // `/collection/[slug]` page the parser leaves `{item.title}` nodes with an
+    // EMPTY textContent and a `binding` descriptor; the words only exist once
+    // `applyDetailPageBindings` substitutes the previewed record. React renders
+    // do that in useRendererSync, but this imperative path shipped the raw
+    // parser map — so `patchElement` saw empty text, `shouldClearEmptiedText`
+    // fired, and every bound paragraph and image on the page was wiped.
+    //
+    // It reproduced on ANY style edit, because those end in
+    // `forceRenderAfterExternalEdit` (user report 2026-09-01: changing padding
+    // made all the images disappear; 72 `clear-emptied-text` traces in one
+    // pass, and the live preview - which never takes this path - stayed
+    // correct). Read from the store, not a closure: this callback is
+    // imperative and long-lived, and the previewed slug changes under it.
+    const cmsMeta = store.get(cmsPageMetaAtom);
+    const cmsPreviewItem = store.get(activePreviewItemAtom);
+    const boundNodes = cmsMeta?.kind === 'detail' && cmsPreviewItem
+      ? applyDetailPageBindings(freshNodes, cmsPreviewItem)
+      : freshNodes;
+
     const freshInput = {
-      nodes: freshNodes,
+      nodes: boundNodes,
       viewports: freshViewports,
       code: freshCode,
       css: '',
@@ -1096,7 +1174,6 @@ export default function Canvas() {
       openCmsEditor,
       setLeftPanel: (p: string) => setLeftPanel(p as any),
       setToolMode: (m: string) => setToolMode(m as any),
-      getCmsData: () => cmsData,
     });
     controller.bindNodeMouseDown(nodeMouseDownRef);
     mouseControllerRef.current = controller;
@@ -1384,6 +1461,9 @@ export default function Canvas() {
           vector is selected. Separate from AddVariantUI so each system
           stays focused. Self-gates internally. */}
       {!isViewer && <AddVectorUI />}
+
+      {/* Add Field "+" under a selected form (Text / Checkbox / Radio / Select). */}
+      {!isViewer && <AddFormFieldUI />}
 
       {/* Connection arrows between variant blocks — kept for viewers so
           the variant transition graph stays legible for inspection. */}

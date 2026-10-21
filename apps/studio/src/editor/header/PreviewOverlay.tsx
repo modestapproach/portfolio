@@ -19,9 +19,12 @@ import { flushNow } from '@/code/mutation/mutation-queue';
 import { activeFilePathAtom, filePathToSlug, isComponentFilePath, getVariantBasePage } from '@/code/project/active-file-store';
 import { templateGroupFromLayoutFile, templatePreviewRoute } from '@/preview/template-preview';
 import { migrateLegacyDarkBlock } from '@/code/project/preset-ops';
+import { canvasThemeMode } from '@/canvas/canvas-theme';
 import { activePreviewSlugAtom } from '@/code/stores/cms-page-store';
 import { selectedNodeAtom, codeAtom, getNodesSnapshot } from '@/code/stores/store';
-import { interactingViewportIdAtom, interactingViewportWidthAtom } from '@/code/stores/viewport-store';
+import { interactingViewportIdAtom, interactingViewportRenderWidthAtom, viewportsConfigAtom } from '@/code/stores/viewport-store';
+import { startOf } from '@/code/project/breakpoint-ladder';
+import { DEFAULT_BREAKPOINT_STARTS } from '@/shared/constants';
 import { parseVariantConfig } from '@/code/variants/variant-config';
 import { previewComponentFileOverrideAtom } from '@/code/stores/editor-store';
 import { activeLocaleAtom } from '@/code/stores/locale-store';
@@ -61,10 +64,12 @@ const PREVIEW_ORIGIN =
  *  whichever origin actually serves the iframe are accepted. */
 const POST_MESSAGE_TARGET = '*';
 
+// Preview devices: each width lands inside the matching breakpoint of the default ladder
+// (Desktop 1200+, Tablet 810–1199, Mobile < 810) AND of the older 1440 / 768 / 375 one.
 const PRESETS = {
   desktop: { width: 1440, height: 900 },
-  tablet: { width: 768, height: 1024 },
-  mobile: { width: 375, height: 812 },
+  tablet: { width: DEFAULT_BREAKPOINT_STARTS.tablet, height: 1024 },
+  mobile: { width: DEFAULT_BREAKPOINT_STARTS.mobile, height: 812 },
 };
 
 // Header height — the preview surface sits below the 52px LeftHeader/
@@ -150,7 +155,11 @@ export default function PreviewOverlay({ open, onClose }: Props) {
   // analogue of the component-mode `initialVariant` seeding above: select inside
   // the Tablet viewport + press Play → preview boots at 768px so the page's
   // responsive (@media/@container) rules match the tile the user was editing.
-  const interactingVpWidth = useAtomValue(interactingViewportWidthAtom);
+  // The preview opens at what the TILE is drawn at: pressing Play on the
+  // phone tile should show the page the width that tile shows it, not the top
+  // of the band it represents (809 for a tile drawn at 390).
+  const interactingVpWidth = useAtomValue(interactingViewportRenderWidthAtom);
+  const pageViewports = useAtomValue(viewportsConfigAtom);
   const code = useAtomValue(codeAtom);
 
   // ─── Viewport sizing state ─────────────────────────────────────────
@@ -209,8 +218,14 @@ export default function PreviewOverlay({ open, onClose }: Props) {
   const renderedWidth = isFullScreen ? '100%' : Math.min(currentWidth, windowWidth - 64);
   const renderedHeight = isFullScreen ? '100%' : Math.min(currentHeight, maxIframeHeight);
 
-  const activeViewport = currentWidth <= PRESETS.mobile.width ? 'mobile'
-    : currentWidth <= PRESETS.tablet.width ? 'tablet' : 'desktop';
+  // Which breakpoint the previewed width falls in — by the PAGE's own starts (a breakpoint runs
+  // from its start up to the next wider one's), not the device presets.
+  const primaryVp = pageViewports.find((v) => v.isPrimary);
+  const tabletVp = pageViewports.find((v) => v.id === 'tablet');
+  const desktopStart = primaryVp ? startOf(primaryVp) : DEFAULT_BREAKPOINT_STARTS.desktop;
+  const tabletStart = tabletVp ? startOf(tabletVp) : DEFAULT_BREAKPOINT_STARTS.tablet;
+  const activeViewport = currentWidth >= desktopStart ? 'desktop'
+    : currentWidth >= tabletStart ? 'tablet' : 'mobile';
 
   // ─── Drag handlers (4-side grip resize) ────────────────────────────
 
@@ -356,13 +371,12 @@ export default function PreviewOverlay({ open, onClose }: Props) {
       }
       files.push([path, content]);
     }
-    // Pin the preview to the same theme the canvas always uses (light) so
-    // user edits to `:root { --foo: … }` show up. The canvas Renderer
-    // skips `:root.dark` by design — without this, next-themes' `enableSystem`
-    // can flip the iframe to dark and the user's light-mode preset edits
-    // never appear in the preview. Sent BEFORE files so the iframe's
-    // theme is set on the first paint, not a flash of dark.
-    iframe.contentWindow.postMessage({ type: 'preview:force-theme', theme: 'light' }, POST_MESSAGE_TARGET);
+    // Pin the preview to the theme the CANVAS shows — the editor's own mode
+    // (canvas-theme.ts) — so canvas, preview and chrome agree. Without a pin,
+    // next-themes' `enableSystem` follows the OS instead. Sent BEFORE files so
+    // the iframe's theme is set on the first paint, not a flash of the other
+    // mode. A Theme Toggle on the page can still switch it afterwards.
+    iframe.contentWindow.postMessage({ type: 'preview:force-theme', theme: canvasThemeMode() }, POST_MESSAGE_TARGET);
     // Pin the LOCALE too, same reasoning as the theme above. The generated
     // `providers.tsx` resolves an unprefixed route's locale from
     // `localStorage.getItem('locale')` — and the preview iframe runs on its OWN

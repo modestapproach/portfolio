@@ -21,6 +21,9 @@ export interface ClipboardNode {
   attrs?: Record<string, string>;
   name?: string;
   textContent?: string;
+  /** Component prop the text is bound to (`{prop}`) — kept on a paste into
+   *  the SAME master, baked to `textContent` elsewhere. */
+  textVariable?: string;
   hasMixedContent?: boolean;
   isCanvasNode?: boolean;
   componentFile?: string | null;
@@ -48,6 +51,31 @@ export interface ClipboardNode {
    * values via `updateMotionProp` (see paste/motion-reinject.ts).
    */
   motionProps?: CanvasNode['motionProps'];
+  /** NON-default-locale texts of a translated node, captured at COPY
+   *  (locale → string). `textContent` already carries the baked default, so
+   *  a paste into a non-localized project keeps today's plain-text fallback —
+   *  but a paste anywhere the locale IS configured re-mints the `t()` call
+   *  and seeds the messages, so the duplicate stays translated (the FR
+   *  duplicate showed baked English, live find 2026-09-05). */
+  translations?: Record<string, string>;
+  /** Text-effect config (`data-text-anim` + the `<RevymeSplitText>` wrapper)
+   *  read off the SOURCE at copy time. The clipboard node carries only the
+   *  plain `textContent`, so without this a duplicated / pasted text lost its
+   *  text effect (live find 2026-09-09). Paste re-applies it through
+   *  `addTextAnimInCode` on the new id. */
+  textAnim?: Record<string, unknown>;
+  /** Code overrides (`<Override with={…}>` wrapper) resolved to file + export
+   *  at copy time, so a duplicate / paste — also into another page — re-wraps
+   *  the new id and imports the override there. */
+  codeOverrides?: Array<{ file: string; name: string }>;
+  /** Same, per translatable ATTR: attr → locale → string. */
+  attrTranslations?: Record<string, Record<string, string>>;
+  /** Per-breakpoint style overrides captured from the source page's @media
+   *  bands (`[data-id="X"] { … !important }` rules keyed by the band's
+   *  max-width). Same style-block failure mode as the ::after border: the
+   *  clipboard tree alone loses them, so a duplicate showed base styles on
+   *  every replica tile — descendants included (live find 2026-09-05). */
+  responsiveBands?: Array<{ maxWidth: number; styles: Record<string, string> }>;
 
   /**
    * `::after` border-overlay rule BODY captured from the source page's
@@ -109,6 +137,9 @@ export interface ClipboardData {
    * bare tags whose masters don't exist in the target.
    */
   sourceProjectId?: string | null;
+  /** The file the copy was made in — a paste into the same design component
+   *  master keeps variable bindings (`textVariable`). */
+  sourceFilePath?: string | null;
 
   /**
    * Masters for every component instance in `nodes` (deduped by path).
@@ -185,10 +216,26 @@ export interface PasteContext {
   viewportWidths?: Record<string, number>;
 
   /**
+   * Does the selected node's PARENT lay its children out, ON THE VIEWPORT
+   * BEING EDITED?
+   *
+   * `node.styles.display` is the BASE style, and a frame added on one replica
+   * is stored hidden there (`display: 'none'` + a band rule that shows it) — so
+   * reading the base said "no layout" for a perfectly good flex parent, and
+   * Cmd+D inside a mobile overlay pasted an absolute node instead of a flex
+   * sibling (user report 2026-09-18). The caller lives in the canvas layer and
+   * can resolve the real computed display, so it answers this; the engine falls
+   * back to the base style when it is absent (tests, headless paths).
+   */
+  parentHasLayout?: boolean;
+
+  /**
    * Active file path — needed to decide whether the paste is happening in a
    * component file (replica = variant entry) vs page file (replica = @container).
    */
   activeFilePath?: string;
+  /** From ClipboardData.sourceFilePath (see textVariable). */
+  sourceFilePath?: string | null;
 
   // Live nodes map — passed in by the call-site.
   nodes: Map<string, CanvasNode>;
@@ -256,6 +303,12 @@ export interface PasteResult {
   success: boolean;
   createdIds: string[];
   message?: string;
+  /** `message` is written for the USER (a refusal they should read — e.g. a
+   *  component cycle), not a diagnostic; the UI path toasts it. */
+  userFacing?: boolean;
+  /** Set when a copied overlay was ATTACHED to the selected node: the UI
+   *  enters overlay edit mode on it (same follow-up as the Overlay tool's Add). */
+  attachedOverlayId?: string;
 }
 
 export interface CopyResult {

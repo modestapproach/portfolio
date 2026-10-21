@@ -11,6 +11,17 @@ describe('localCssPropForVar — prop → cssProp resolution', () => {
   it('per-variant ternary (alternate branch)', () => {
     expect(localCssPropForVar('z', `style={{ opacity: variant === 'v' ? '1' : z }}`)).toBe('opacity');
   });
+  it('does NOT match a variable name that is a word INSIDE a string branch (`end` in flex-end)', () => {
+    // An imported Number Card: `end` is the counter's target, forwarded into a child code
+    // component; the root's alignItems ternary carries 'flex-end' / 'flex-start'.
+    const code = `function NumberCard({ end = 12, ...rest }) {
+      return <motion.div style={{ alignItems: variant === 'variant-1' ? 'flex-end' : 'flex-start', width: 'min-content' }}>
+        <AnimatedNumber end={end} />
+      </motion.div>; }`;
+    expect(localCssPropForVar('end', code)).toBe('');
+    expect(localCssPropForVar('start', code)).toBe('');
+  });
+
   it('does NOT false-match a CHAINED MotionConfig ternary consequent as a cssProp', () => {
     // chained per-variant transition — `… ? transition2 : variant === 'variant-1' ? transition1 …`. Neither var
     // is a STYLE binding, so cssProp must be '' (NOT the preceding consequent `transition2` / `transition`). This
@@ -168,5 +179,38 @@ function Header({ content = "AI Intelligence" }) {
     expect(isVariableAppliedInCode('content', `/** @propMeta {"content":{"type":"plainText"}} */`)).toBe(false);
     expect(isVariableAppliedInCode('content', `const __templateProps = {"/blog":{"content":"x"}};`)).toBe(false);
     expect(isVariableAppliedInCode('content', `content = __tp.content ?? content;`)).toBe(false);
+  });
+});
+
+describe('a custom property consumed by an SVG presentation ATTRIBUTE', () => {
+  // An icon paints through `stroke="var(--X)"` — that is how SVG states
+  // colour, and what an imported vector carries. Looked for only as a style
+  // key (`stroke: var(--X)`), the variable resolved to no property at all and
+  // its row fell back to a raw text input showing `rgb(0, 0, 0)` instead of a
+  // colour swatch.
+  const ICON = `
+    <svg data-id="button-3" style={{ '--4rxgx6': variant === 'default-hover' ? hoverIconColor : iconColor }}>
+      <path d="M 0 7 L 18 7" stroke="var(--4rxgx6)" strokeWidth="2" />
+    </svg>`;
+
+  it('resolves through the variant ternary', () => {
+    expect(localCssPropForVar('iconColor', ICON)).toBe('stroke');
+    expect(localCssPropForVar('hoverIconColor', ICON)).toBe('stroke');
+  });
+
+  it('resolves through a direct overlay binding', () => {
+    const code = `<svg style={{ '--c1': iconColor }}><path fill="var(--c1)" /></svg>`;
+    expect(localCssPropForVar('iconColor', code)).toBe('fill');
+  });
+
+  // The style-key form has to keep working — it is what a border/shadow
+  // overlay uses.
+  it('still resolves the style-key form', () => {
+    const code = `<div style={{ '--b1': borderVar, border: 'var(--b1)' }} />`;
+    expect(localCssPropForVar('borderVar', code)).toBe('border');
+  });
+
+  it('says nothing when the custom property is never consumed', () => {
+    expect(localCssPropForVar('iconColor', `<svg style={{ '--c1': iconColor }} />`)).toBe('');
   });
 });

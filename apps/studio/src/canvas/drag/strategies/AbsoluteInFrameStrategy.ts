@@ -39,13 +39,14 @@ import { projectFS } from '@/code/project/project-fs';
 import { getReplicaContext } from '../replica-context';
 import { getConsolidationClone, clearConsolidationClone } from '../consolidation-clone-store';
 import { registerPendingReplicaExtraction, getPendingReplicaExtraction, clearPendingReplicaExtraction } from '../pending-replica-extraction-store';
+import { exitSize, isTextExitNode } from '../exit-size';
 import { commitExitToCanvas } from '../exit-commit';
 import { getInsetState, mergeVariantPinStyles } from '@/shared/pin-utils';
 import { parentHighlightOps } from '@/canvas/selection/parent-highlight-store';
 import { dropLineOps } from '@/canvas/selection/drop-line-store';
-import { detectParentLayoutById, getFlexDirectionById } from '../types';
+import { detectParentLayoutById, getFlexDirectionById, resolveParentDisplay } from '../types';
 import { trace } from '@/shared/debug-trace';
-import { motionPropsToCSSTransform, MOTION_TRANSFORM_PROPS } from '@/shared/motion-transform';
+import { motionPropsToCSSTransform, MOTION_TRANSFORM_PROPS, foldEffectiveTransform } from '@/shared/motion-transform';
 import { calculateLayoutInsertIndexById } from '../reparent-utils';
 import { computeEntryParentLocalPosition, computeExitCanvasPosition } from '../transform-reparent';
 import { queueMutation, flushNow, flushNowDeferredDuringDrag, getCurrentCode } from '@/code/mutation/mutation-queue';
@@ -290,7 +291,7 @@ export class AbsoluteInFrameStrategy implements DragStrategy {
     this.entryGraceCounter = AbsoluteInFrameStrategy.ENTRY_GRACE_PERIOD;
     this.vpId = vpIdFromPrefix(context.viewportPrefix);
 
-    const parentDisplay = findNodeComputedStyle(this.parentId, this.vpId, 'display');
+    const parentDisplay = resolveParentDisplay(this.parentId, this.vpId, context.nodes.get(this.parentId));
     this.parentIsFlexGrid = parentDisplay === 'flex' || parentDisplay === 'inline-flex'
       || parentDisplay === 'grid' || parentDisplay === 'inline-grid';
 
@@ -625,23 +626,22 @@ export class AbsoluteInFrameStrategy implements DragStrategy {
       // drag (otherwise it appears axis-aligned mid-drag and snaps back rotated
       // on mouseup). Passing the merged map to motionPropsToCSSTransform is
       // safe — it only reads the transform-family keys.
-      const variantStyles = nodeData?.motionVariants?.[variantKey] ?? {};
       // Component INSTANCES (e.g. vector sets) keep per-variant motion props as
       // INLINE `rotate: variant === 'v' ? … : …` conditionals → node.conditionalStyles,
       // NOT a motionVariants object. Resolve the transform-family ones for the
       // active variant too, else the captured `orig` misses the rotation and the
       // per-frame `translate(dx,dy)` overwrites it — the element appears
       // axis-aligned mid-drag and snaps back rotated on mouseup.
-      const condTransform: Record<string, string> = {};
-      for (const [prop, branches] of Object.entries(nodeData?.conditionalStyles ?? {})) {
-        if (!MOTION_TRANSFORM_PROPS.has(prop)) continue;
-        const b = branches as Record<string, string>;
-        const val = b[variantKey] ?? b['default'];
-        if (val != null) condTransform[prop] = val;
-      }
-      const motionCss = motionPropsToCSSTransform({ ...effectiveNs, ...variantStyles, ...condTransform });
-      const cssT = (effectiveNs.transform || '').trim();
-      const tv = [cssT === 'none' ? '' : cssT, motionCss].filter(Boolean).join(' ').trim();
+      // `effectiveNs` already carries this viewport's @media overrides, so no
+      // separate override map is needed here. Shared with the replica fan-out
+      // (foldEffectiveTransform) so the dragged tile and its replicas can never
+      // disagree about what the element is painting.
+      const tv = foldEffectiveTransform({
+        styles: effectiveNs,
+        motionVariants: nodeData?.motionVariants as Record<string, Record<string, unknown>> | undefined,
+        conditionalStyles: nodeData?.conditionalStyles,
+        variantKey,
+      });
       this.originalTransforms.set(node.id, tv);
 
       // SCALE FIX: parentDimRect is in SCREEN px (from findNodeRect),
@@ -1290,8 +1290,22 @@ export class AbsoluteInFrameStrategy implements DragStrategy {
         const vpCfg = allVpsForFan.find(v => v.id === vpId);
         const maxWidth = vpCfg?.width ?? 0;
         const replicaProps = containerOverridesForFan.get(node.id)?.get(maxWidth);
-        const overrideT = replicaProps?.get('transform');
-        if (overrideT && overrideT !== '' && overrideT !== 'auto' && overrideT !== 'none') return overrideT;
+        // MOTION transform props, folded exactly as the onStart capture folds
+        // them for the dragged viewport — same function, so the two can no
+        // longer drift. Reading only `styles.transform` here missed a rotation
+        // held in the `rotate` CHANNEL, which is how the panel stores it
+        // (`variants.default.rotate: 141.9`, `styles.transform` empty): the
+        // replica painted a bare `translate(dx, dy)`, lost its rotation for the
+        // whole drag, and snapped back on mouse-up (user report 2026-09-20).
+        const fanNode = context.nodes.get(node.id);
+        const folded = foldEffectiveTransform({
+          styles: fanNode?.styles,
+          motionVariants: fanNode?.motionVariants as Record<string, Record<string, unknown>> | undefined,
+          conditionalStyles: fanNode?.conditionalStyles,
+          overrides: replicaProps ?? null,
+          variantKey: isPrimaryViewport(vpId) ? 'default' : vpId,
+        });
+        if (folded) return folded;
         return nodeBaseTransform === 'none' ? '' : nodeBaseTransform;
       };
 
@@ -1894,12 +1908,15 @@ export class AbsoluteInFrameStrategy implements DragStrategy {
               // W/2 / H/2 (the very offset the drag was already accounting
               // for inside the parent). Keep rotate/scale/skew untouched.
               const exitTransform = stripTranslateFunctions(orig);
+              // Content-sized stays content-sized — see exit-size.ts.
+              const keepAuto = (prop: 'width' | 'height', px: string): string =>
+                exitSize(nd?.styles, prop, px, isTextExitNode(nd));
               const ms: Record<string, string> = {
                 position: 'absolute',
                 left: `${cssLeft}px`,
                 top: `${cssTop}px`,
-                width: `${Math.round(cssWidth)}px`,
-                height: `${Math.round(cssHeight)}px`,
+                width: keepAuto('width', `${Math.round(cssWidth)}px`),
+                height: keepAuto('height', `${Math.round(cssHeight)}px`),
                 transform: exitTransform,
               };
               if (nd?.styles?.right || nd?.styles?.bottom) { ms.right = ''; ms.bottom = ''; }
@@ -1938,8 +1955,8 @@ export class AbsoluteInFrameStrategy implements DragStrategy {
                     position: 'absolute',
                     left: `${cssLeft}px`,
                     top: `${cssTop}px`,
-                    width: `${Math.round(cssWidth)}px`,
-                    height: `${Math.round(cssHeight)}px`,
+                    width: keepAuto('width', `${Math.round(cssWidth)}px`),
+                    height: keepAuto('height', `${Math.round(cssHeight)}px`),
                     // Strip translate — `cssLeft/cssTop` is visible top-left,
                     // keeping the translate would shift the clone by W/2.
                     transform: exitTransform,
@@ -3339,16 +3356,21 @@ export class AbsoluteInFrameStrategy implements DragStrategy {
     }
 
     // Commit a pending layout-sibling drop: insert the dragged element as a
-    // flex/grid child at the previewed insertion index. position/left/top are
-    // stripped — the element joins the layout flow. `flex: '0 0 auto'` is baked
-    // so the new flow child never inherits the CSS-default flex-shrink: 1,
-    // which collapses it to ~0 computed height in a height-constrained flex
-    // column (design-tool parity: flow children are always shrink: 0 / Fixed-Hug).
+    // flex/grid child at the previewed insertion index. The insets are
+    // stripped and `position` becomes `relative` — NOT deleted: every flow
+    // child carries an explicit position (the hard rule behind
+    // NODE_MISSING_POSITION; a position-less node breaks Make Component /
+    // detach transfer and reads as "unset" in the Position tool — bug-hunt
+    // #11, 2026-09-07). `flex: '0 0 auto'` is baked on FLEX targets so the
+    // new flow child never inherits flex-shrink: 1 (collapses to ~0 height in
+    // a constrained column); on a GRID target it is meaningless and omitted.
     if (this.pendingLayoutDrop && !this.exitedParent) {
       const { siblingId, insertIndex } = this.pendingLayoutDrop;
+      const targetDisplay = resolveParentDisplay(siblingId, this.vpId, context.nodes.get(siblingId));
+      const targetIsGrid = targetDisplay === 'grid' || targetDisplay === 'inline-grid';
       trace.action('abs-in-frame:commit-layout-sibling-drop', {
         nodeIds: context.draggedNodes.map(n => n.id),
-        siblingId, insertIndex,
+        siblingId, insertIndex, targetDisplay,
       });
       for (const node of context.draggedNodes) {
         updates.push({
@@ -3356,7 +3378,10 @@ export class AbsoluteInFrameStrategy implements DragStrategy {
           nodeId: node.id,
           newParentId: siblingId,
           newIndex: insertIndex,
-          styles: { position: '', left: '', top: '', right: '', bottom: '', flex: '0 0 auto' },
+          styles: {
+            position: 'relative', left: '', top: '', right: '', bottom: '',
+            ...(targetIsGrid ? {} : { flex: '0 0 auto' }),
+          },
         });
       }
       this.cleanup();

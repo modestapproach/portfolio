@@ -82,6 +82,9 @@ export interface PendingUpdate {
   maxWidth?: number;
   variantName?: string;
   orderMap?: Record<string, number>;
+  /** Variants whose branch must be written even if it equals the default —
+   *  see `setConditionalOrderInCode`. */
+  pinVariants?: string[];
   /** For setConditionalStyle — the layout prop + its value for `variantName`. */
   prop?: string;
   value?: string;
@@ -166,11 +169,31 @@ export interface ViewportConfig {
    *  back onto the root div's JSX style. `undefined` is still accepted
    *  on the read path for backward compat with older projects. */
   height?: number | 'auto';
+  /** The width the TILE RENDERS AT, when that differs from the band it
+   *  represents. A viewport's `width` is the top of its responsive band —
+   *  every `@media (max-width: …)` the project writes comes from it — but a
+   *  band is not always designed at its top edge: the reference phone band is
+   *  everything up to 809.98px and is drawn on a 390px canvas.
+   *
+   *  RENDER ONLY. The band ladder (`getSortedBreakpointWidths`,
+   *  `getViewportWidths`) must never see this, or the published CSS stops
+   *  matching the tiles it was authored on. Absent = render at `width`. */
+  designWidth?: number;
   isPrimary: boolean;
   order: number;
   x: number;
   y: number;
 }
+
+/** What a viewport's tile is drawn at — its design width when it has one. */
+export const renderWidth = (vp: { width: number; designWidth?: number }): number =>
+  vp.designWidth && vp.designWidth > 0 ? vp.designWidth : vp.width;
+
+/** A viewport merged with the widths atom. A width that differs from the config is LIVE — a width
+ *  drag / scrub writes the tile's live width there — and is what the tile is drawn at, so the
+ *  stored `designWidth` (the start) no longer applies while it lasts. */
+export const withLiveWidth = <T extends { width: number; designWidth?: number }>(vp: T, live: number | undefined): T =>
+  live === undefined || live === vp.width ? vp : { ...vp, width: live, designWidth: undefined };
 
 // ─── Overlay ───────────────────────────────────────────────────────────────
 
@@ -286,6 +309,8 @@ export interface I18nConfig {
 export interface LocaleConfig {
   code: string;
   label: string;
+  /** Legacy, IGNORED: the layout never mirrors for any language. An RTL
+   *  language's TEXT reads right to left on its own (shared/rtl-text.ts). */
   direction?: 'ltr' | 'rtl';
   fallback?: string;
 }

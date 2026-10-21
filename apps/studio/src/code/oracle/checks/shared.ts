@@ -2,6 +2,7 @@
 // groups. All code moved VERBATIM from check-file.ts (Phase 7.1 god-file split).
 
 import _traverse from '@babel/traverse';
+import { PARSER_TRANSPARENT_TAGS } from '@/code/parsing/transparent-tags';
 import type { NodePath } from '@babel/traverse';
 import * as t from '@babel/types';
 import { TEXT_TAGS } from '@/shared/constants';
@@ -23,7 +24,10 @@ export interface OracleViolation {
 /** Tags the parser treats as transparent wrappers — no data-id needed, never a node.
  *  `PageTransitions` is the generated Page-Effects controller: it wraps {children} and renders them
  *  through unchanged (a SPA View-Transitions pass-through), so it's never a canvas box. */
-const TRANSPARENT_TAGS = new Set(['AnimatePresence', 'LayoutGroup', 'MotionConfig', 'Fragment', 'React.Fragment', 'PageTransitions', 'RevymeSplitText']);
+// ONE list for the three consumers (oracle, data-id healer, forced-render
+// integrity guard) — they diverged once and a healed `<PageTransitions data-id>`
+// made every forced render on a template skip (review find 2026-09-09).
+const TRANSPARENT_TAGS = new Set<string>([...PARSER_TRANSPARENT_TAGS]);
 
 /** Inline rich-text runs inside a text element — not structural nodes. */
 const INLINE_RUN_TAGS = new Set(['span', 'strong', 'em', 'b', 'i', 'u', 'br', 'sup', 'sub']);
@@ -116,18 +120,39 @@ function hasAttr(attrs: t.JSXAttribute[], name: string): boolean {
 function needsDataId(tag: string, path: NodePath<t.JSXElement>): boolean {
   const base = tag.startsWith('motion.') ? tag.slice('motion.'.length) : tag;
   if (TRANSPARENT_TAGS.has(tag) || TRANSPARENT_TAGS.has(base)) return false;
+  // The `MotionLink` wrapper the builder declares (`const MotionLink =
+  // motion.create(React.forwardRef(… href ? <Link …/> : <div …/> …))`) has a
+  // <Link> and a <div> inside a variable declarator, not in the tree. They are
+  // the wrapper's plumbing — the same exemption link-rules.ts applies — and
+  // flagging them rejected every master the Link tool itself links.
+  if (path.findParent((p) => p.isVariableDeclarator() && t.isIdentifier(p.node.id) && p.node.id.name === 'MotionLink')) return false;
   // SVG shape children inherit identity from their <svg data-id> wrapper.
   // `foreignObject` is the FIT-text SVG wrapper (svg[data-id="X-svg"] >
   // foreignObject > p[data-id="X"]) — a structural container, never a node;
   // the svg wrapper and inner text carry the ids.
   if (['path', 'polygon', 'circle', 'ellipse', 'rect', 'line', 'polyline', 'defs', 'g', 'text', 'pattern', 'stop', 'linearGradient', 'radialGradient', 'foreignObject'].includes(base)) return false;
-  // inline runs inside a text element are rich-text, not nodes
+  // inline runs inside a text element are rich-text, not nodes. The owning
+  // element is not always the DIRECT parent: per-variant rich text stores its
+  // runs inside a ternary branch fragment —
+  //   <p data-id="x">{variant === 'v1' ? <><span>…</span></> : 'plain'}</p>
+  // — so the run's ancestry climbs JSXFragment → ConditionalExpression →
+  // JSXExpressionContainer before reaching the <p>. Those wrappers are
+  // rich-text plumbing, not structure; climb through them (and through outer
+  // runs, e.g. <span><strong>) to whatever ELEMENT actually owns the text.
   if (INLINE_RUN_TAGS.has(base)) {
-    const parent = path.parentPath?.node;
-    if (parent && t.isJSXElement(parent)) {
-      const parentTag = jsxTagName(parent.openingElement.name);
-      const parentBase = parentTag.startsWith('motion.') ? parentTag.slice('motion.'.length) : parentTag;
-      if (TEXT_TAGS.has(parentBase)) return false;
+    let p: NodePath | null = path.parentPath;
+    while (p) {
+      const n = p.node;
+      if (t.isJSXElement(n)) {
+        const parentTag = jsxTagName(n.openingElement.name);
+        const parentBase = parentTag.startsWith('motion.') ? parentTag.slice('motion.'.length) : parentTag;
+        return !(TEXT_TAGS.has(parentBase));
+      }
+      if (t.isJSXFragment(n) || t.isJSXExpressionContainer(n) || t.isConditionalExpression(n)) {
+        p = p.parentPath;
+        continue;
+      }
+      break;
     }
   }
   return true;
@@ -183,4 +208,40 @@ export { traverse, TRANSPARENT_TAGS, findSetVariantArg, endsWithVariantFallthrou
  *  the file as a design component (kind split-brain, 2026-08-11). */
 export function isCodeComponentSource(code: string): boolean {
   return /\/\*\*?\s*@controls\s*\{/.test(code);
+}
+
+/**
+ * The names of a component's own BOOLEAN props — `{ style, iconVisible = true }`.
+ *
+ * These are per-INSTANCE toggles ("Icon Visible", "Footer Visible"), the thing
+ * a design component exposes so one instance can drop a part the next one
+ * keeps. The builder resolves them per instance when it expands the master
+ * (`resolveInstancePropOverrides`), and the props panel renders them as a
+ * Yes/No row.
+ *
+ * Deliberately narrow, so nothing else can pass for one: the first parameter
+ * must be a destructured object that also carries `style` or `initialVariant`
+ * (a component, not a helper), and the prop must default to a boolean
+ * literal. A `useState` flag, a page-level variable or a local const can
+ * never match.
+ */
+export function booleanPropNames(ast: t.File): Set<string> {
+  const out = new Set<string>();
+  traverse(ast, {
+    Function(p) {
+      const p0 = (p.node.params ?? [])[0];
+      if (!t.isObjectPattern(p0)) return;
+      const keys = p0.properties
+        .filter((x): x is t.ObjectProperty => t.isObjectProperty(x) && t.isIdentifier(x.key))
+        .map((x) => (x.key as t.Identifier).name);
+      if (!keys.includes('style') && !keys.includes('initialVariant')) return;
+      for (const prop of p0.properties) {
+        if (t.isObjectProperty(prop) && t.isIdentifier(prop.key)
+            && t.isAssignmentPattern(prop.value) && t.isBooleanLiteral(prop.value.right)) {
+          out.add(prop.key.name);
+        }
+      }
+    },
+  });
+  return out;
 }

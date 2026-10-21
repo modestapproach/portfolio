@@ -44,6 +44,7 @@ import { getScreenCorners } from '@/canvas/resize/geometry-utils';
 import { findElByNodeId, nodeIdSelector } from './sandbox-dom-utils';
 import { measureFitRefit } from '@/shared/fit-measure';
 import { trace } from '@/shared/debug-trace';
+import { flattenPastedRichHtml } from '@/shared/rich-message';
 
 // Properties tracked at the textStyle (per-portion, mark-level) layer.
 const MARK_PROPS = [
@@ -423,6 +424,20 @@ export function startTextEdit(
   // is only honored when the live element is empty (e.g. brand-new node).
   const liveHtml = el.innerHTML;
   const html = liveHtml || initialHtml || '';
+  // The ProseMirror root is a CHILD div of the node, and ProseMirror's own
+  // stylesheet gives `.ProseMirror` `white-space: pre-wrap` — a class rule on
+  // the child, which beats the node's INHERITED `nowrap`/`pre`. So a nowrap
+  // text wrapped onto two lines the moment edit mode opened and the layout
+  // jumped back on commit (live find 2026-09-06). Mirror the node's
+  // NON-wrapping white-space onto the editor root so edit == paint. Wrapping
+  // modes (normal / pre-line) keep pre-wrap: the editor must still show typed
+  // edge spaces, and both wrap at the same box edge anyway.
+  let editorWhiteSpace = '';
+  try {
+    const ws = getComputedStyle(el).whiteSpace;
+    if (ws === 'nowrap' || ws === 'pre') editorWhiteSpace = ws;
+  } catch { /* detached */ }
+  trace.action('text-edit-host:editor-white-space', { nodeId, editorWhiteSpace: editorWhiteSpace || 'pre-wrap(default)' });
   el.innerHTML = '';
 
   activeEditor = new Editor({
@@ -466,6 +481,15 @@ export function startTextEdit(
     parseOptions: { preserveWhitespace: 'full' },
     autofocus: 'all',
     editorProps: {
+      // PASTE: a text node is one paragraph. Block HTML from Google Docs / Word
+      // (<h1>, <p>, lists, 22pt Noto…) is flattened to inline runs + <br> with
+      // only structural marks kept, BEFORE ProseMirror parses it — so the
+      // editor shows what will be committed (the reference builder behaviour).
+      transformPastedHTML: (html: string) => {
+        const flat = flattenPastedRichHtml(html);
+        if (flat !== html) trace.action('text-edit-host:paste-flattened', { from: html.length, to: flat.length });
+        return flat;
+      },
       // Match the non-edit wrap behavior: don't override word-wrap /
       // overflow-wrap / white-space / word-break. The element's own inline
       // styles (e.g. `overflow-wrap: break-word` from TextCreator) decide
@@ -480,7 +504,8 @@ export function startTextEdit(
       // element's `overflow-wrap: break-word` long words still break at
       // the box edge — matching non-edit appearance.
       attributes: {
-        style: 'outline: none; cursor: text; margin: 0; padding: 0;',
+        style: 'outline: none; cursor: text; margin: 0; padding: 0;'
+          + (editorWhiteSpace ? ` white-space: ${editorWhiteSpace};` : ''),
       },
     },
     onTransaction: ({ editor }) => {

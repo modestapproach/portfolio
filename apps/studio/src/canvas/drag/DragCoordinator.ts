@@ -13,6 +13,7 @@ import type { Transform, NodeMap, DraggedNode, PendingUpdate, Point, SnapGuide, 
 import type { DragContext, DragStrategy } from './types';
 import { MIN_DRAG_DISTANCE } from '@/shared/constants';
 import { trace } from '@/shared/debug-trace';
+import { isComponentFilePath } from '@/code/project/active-file-store';
 import { isViewerMode } from '@/code/stores/viewer-mode-store';
 import { getCanvasBridge } from '@/canvas/canvas-bridge';
 import type { PostMessageBridge } from '@/canvas-sandbox/bridge-host';
@@ -26,6 +27,7 @@ import { AbsoluteInFrameStrategy } from './strategies/AbsoluteInFrameStrategy';
 import { ToolbarDragStrategy } from './strategies/ToolbarDragStrategy';
 import type { ToolbarItem } from './toolbar-item-config';
 import { dragStateOps } from './drag-state-store';
+import { refusedByCollaboratorLock, beginLocalInteraction } from '../collab/collab-locks';
 import { resetSnapHysteresis } from './handlers/snap-handler';
 import { findNodeRect, vpIdFromPrefix, findNodeComputedStyles } from '@/canvas/node-ops';
 import { getIframeOffset } from './helpers/coords';
@@ -36,6 +38,7 @@ import { visibleViewportsAtom, interactingViewportIdAtom } from '@/code/stores/v
 import { isDefaultLocaleAtom } from '@/code/stores/locale-store';
 import { getScreenCornersById, getElementCenter } from '@/canvas/resize/geometry-utils';
 import { buildDuplicateDescriptor, queueBorderOverlayDuplicates, queueReplicaCreationUnhide } from '@/canvas/creators/creator-utils';
+import { isInstanceLike, instanceReplicaUnhideDisplay } from './instance-replica-visibility';
 import { tileContextFor } from '@/canvas/replica-bake';
 import { queueMutation, flushNow, setForceRender, setDeferNextFanOut, hasQueuedMutations } from '@/code/mutation/mutation-queue';
 import { isComponentLikeFilePath } from '@/code/project/file-path-kind';
@@ -251,9 +254,11 @@ export class DragCoordinator {
   }
 
   startPending(nodeId: string, event: MouseEvent, viewportPrefix: string = '', options?: { gripAxis?: 'x' | 'y' }): void {
-    // View-only: viewers can SELECT a node (the caller still runs the
-    // selection set) but never drag it. Bailing here keeps selection
-    // working while no drag pending/active state is ever created.
+    // View-only (viewer role, offline, or an agent run holds this branch —
+    // viewer-mode-store): the user can SELECT a node (the caller still runs
+    // the selection set) but never drag it. Bailing here keeps selection
+    // working while no drag pending/active state is ever created — so no
+    // optimistic DOM move can interleave with a run's mutations.
     if (isViewerMode()) {
       trace.action('drag:pending-blocked-viewer', { nodeId });
       return;
@@ -697,7 +702,17 @@ export class DragCoordinator {
         queueMutation({ type: 'updateStyles', nodeId: moveUpdate.nodeId, styles: { display: '' } });
       }
 
-      if (droppedOnCanvas) {
+      // A component master's VARIANT ROOT tile is dragged with the canvas
+      // strategy too, but it never leaves its variant — resetting the
+      // interacting viewport to the primary re-selected the primary tile on
+      // mouse-up ("I dragged the hover variant and the selection jumped to the
+      // primary", 2026-09-06). Only a real page canvas-node drop resets.
+      const isVariantTileDrag = isComponentFilePath(getActiveFilePath())
+        && (this.context?.selectedIds ?? []).some((id) => {
+          const n = getNodeFromCache(id);
+          return !!n && !n.parentId && !n.isCanvasNode && !n.attrs?.['data-overlay'];
+        });
+      if (droppedOnCanvas && !isVariantTileDrag) {
         const store = getDefaultStore();
         const vps = store.get(visibleViewportsAtom);
         const primaryId = (vps.find((v) => v.isPrimary) ?? vps[0])?.id;
@@ -991,6 +1006,12 @@ export class DragCoordinator {
 
     if (draggedNodes.length === 0) return;
 
+    // COLLABORATOR LOCK (collab-locks.ts): someone else is dragging / resizing
+    // one of these nodes right now. Two gestures on one node each commit their
+    // own geometry (user report 2026-10-19), so this one never starts — same
+    // un-started bail as the fixed-overlay block below.
+    if (refusedByCollaboratorLock(draggedNodes.map(n => n.id), 'drag')) return;
+
     // Phase D: Improved offset calculation for rotated/skewed elements.
     // Use bridge corners cache for visual center (works in iframe mode).
     for (const node of draggedNodes) {
@@ -1086,6 +1107,8 @@ export class DragCoordinator {
     beginOverlayFollow(this.context.nodes, draggedNodes.map(n => n.id), this.contentEl);
     this.isDragStarted = true;
     dragStateOps.set(true);
+    // Collaborators lock these nodes until release (no-op without a room).
+    beginLocalInteraction(draggedNodes.map(n => n.id));
     this.callbacks.onDragStateChange(true, this.activeStrategy.name);
     this.installAltDuplicateKeyListeners();
     // If ALT was already held when the drag started (user pressed ALT
@@ -1220,7 +1243,11 @@ export class DragCoordinator {
         }
         // On a replica: stamp the inline `display: 'none'` hide-baseline
         // before creating so every OTHER vp renders it hidden by default.
-        const originalDisplay = descriptor.styles.display;
+        // A duplicated INSTANCE re-shows with the master ROOT's display (never
+        // `unset`) — see instance-replica-visibility.ts.
+        const originalDisplay = isInstanceLike(sourceNode)
+          ? instanceReplicaUnhideDisplay(sourceNode, this.context.nodes)
+          : descriptor.styles.display;
         if (isReplica) {
           descriptor.styles.display = 'none';
         }

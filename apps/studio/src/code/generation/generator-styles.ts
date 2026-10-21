@@ -9,8 +9,10 @@ import { parseVariantConfig } from '@/code/variants/variant-config';
 
 import { toKebab, SHORTHAND_LONGHANDS } from '@/shared/css-utils';
 import { escapeRegExp } from '@/shared/regex-utils';
+import { scopeVariantConstsReadingProps } from './variant-const-scope';
 import { CSS_LAYOUT_DEFAULTS } from '@/shared/constants';
-import { cssTransformToMotionProps, MOTION_TRANSFORM_PROPS } from '@/shared/motion-transform';
+import { cssTransformToMotionProps, MOTION_TRANSFORM_PROPS, MOTION_VISUAL_TRANSFORM_PROPS } from '@/shared/motion-transform';
+import { removeAxisTranslate } from '@/shared/position-utils';
 import { parseJSX } from '@/code/parsing/ast-utils';
 import * as t from '@babel/types';
 import _traverse from '@babel/traverse';
@@ -152,7 +154,7 @@ const MOTION_TRANSFORM_NEUTRAL: Record<string, string> = {
  *  sever inheritance — those are excluded deliberately, and the dialect
  *  writes text styles inline on text nodes anyway (the inline base wins the
  *  seed before this tier). */
-const CSS_NEUTRAL_FALLBACK: Record<string, string> = {
+export const CSS_NEUTRAL_FALLBACK: Record<string, string> = {
   flex: '0 1 auto', flexGrow: '0', flexShrink: '1', flexBasis: 'auto',
   alignSelf: 'auto', order: '0',
   // Flex-CONTAINER props: UA stylesheets never set these, so their spec
@@ -199,6 +201,8 @@ import { getSortedBreakpointWidths } from '../stores/viewport-store';
 import { transformAllResponsiveAttrs } from '../components/instance-prop-overrides';
 import { rewriteListConfigBreakpoints, addListConfigBreakpoint, removeListConfigBreakpoint } from './cms-responsive-gen';
 import { trace } from '@/shared/debug-trace';
+import { findVariantRootId } from '@/shared/variant-root';
+import { ensureRootDataVariantAttr } from './locale-gen';
 import { findTagClose, findJSXDataIdIndex, quoteStyleValue, findStyleObjectEnd, findMatchingCloseTagIndex, findSubtreeRange, findBalancedBraceEnd } from './generator-utils';
 import { updateNodeInCode } from './generator-crud';
 import { isIndexInsideSlotConst } from './slot-ops';
@@ -624,9 +628,15 @@ export function stripBandedOrderForNode(code: string, nodeId: string): string {
 /**
  * Remove ALL @media rules for a specific node across ALL breakpoints.
  * Used before re-applying a typography preset to clear stale breakpoint rules.
+ *
+ * `includeScopedChildren` also sheds the `<nodeId>:<childId>` rules that a component
+ * instance's children own. Those ids are synthesized at render time and never appear in
+ * the instance's JSX, so deleting the instance is the ONLY chance to collect them —
+ * otherwise they outlive it as dead CSS. Off by default: the preset path re-applies to
+ * one node and has no business touching an instance's interior.
  */
-export function clearContainerStylesForNode(code: string, nodeId: string): string {
-  trace.fn('generator.clearContainerStylesForNode', { nodeId });
+export function clearContainerStylesForNode(code: string, nodeId: string, includeScopedChildren = false): string {
+  trace.fn('generator.clearContainerStylesForNode', { nodeId, includeScopedChildren });
 
   const styleBlockRegex = /(<style>\s*\{[`'])([\s\S]*?)([`']\}\s*<\/style>)/s;
   const blockMatch = styleBlockRegex.exec(code);
@@ -638,9 +648,14 @@ export function clearContainerStylesForNode(code: string, nodeId: string): strin
   const rules = parseContainerRules(lang.css);
 
   // Remove this node from every breakpoint
+  const scopePrefix = `${nodeId}:`;
   let removed = 0;
   for (const [, selectorMap] of rules) {
     if (selectorMap.delete(nodeId)) removed++;
+    if (!includeScopedChildren) continue;
+    for (const id of [...selectorMap.keys()]) {
+      if (id.startsWith(scopePrefix) && selectorMap.delete(id)) removed++;
+    }
   }
 
   if (removed === 0) return code; // nothing to clear
@@ -819,6 +834,14 @@ export function rewriteContainerBreakpoints(
         const existing = newRules.get(nodeId)!;
         for (const [k, v] of props) existing.set(k, v);
       }
+      // The band's LOCALE rules (`:lang(fr) [data-id=…]`) move with it. They sit in `lang.banded`,
+      // keyed by the band's width; left under the old key they were silently dropped on
+      // re-serialize, so resizing a breakpoint lost its per-locale tweaks.
+      const movedLang = lang.banded.get(key);
+      if (movedLang) {
+        lang.banded.delete(key);
+        lang.banded.set(newWidth, [...(lang.banded.get(newWidth) ?? []), ...movedLang]);
+      }
       if (key !== oldWidth) trace.action('rewriteBreakpoints:orphan-band-claimed', { orphanKey: key, oldWidth, newWidth });
     }
   }
@@ -871,14 +894,19 @@ export function rewriteContainerBreakpoints(
  *
  * Normal form: ONE band per non-primary viewport, keyed at that viewport's width. Each
  * viewport's band is the FLATTENED state its tile currently paints: all bands whose
- * interval covers the viewport width, merged in cascade order (serializers emit widest
- * first, so the NARROWEST matching band wins per prop). Banded :lang rules follow their
- * band. Strays covering NO viewport are dropped (no tile paints them — keeping them is
+ * interval covers the viewport width, merged in cascade (source) order, so the band the
+ * tile paints last wins per prop. Banded :lang rules follow their band. Strays covering NO viewport are dropped (no tile paints them — keeping them is
  * exactly the live-vs-canvas divergence this heals) and traced. Idempotent: keys already
  * ⊆ config widths → byte-identical no-op. Deterministic from the code string alone (the
  * config is read from the file, not from editor state).
+ *
+ * `force` skips the cheap gate below and flattens even when every band is already keyed at a
+ * viewport width — the breakpoint migration's pre-pass: a CASCADING legacy band (a non-smallest
+ * band with no floor, `@media (max-width: 768px) {`) is viewport-keyed yet also paints every
+ * smaller tile; flattening folds its rules into the smaller bands so the floors the rewrite adds
+ * change nothing a tile shows.
  */
-export function normalizeResponsiveBandKeys(code: string): string {
+export function normalizeResponsiveBandKeys(code: string, opts?: { force?: boolean }): string {
   const config = parseCanvasConfig(code);
   if (!config?.viewports?.length) return code;
   const primaryW = (config.viewports.find(v => v.isPrimary) ?? config.viewports.reduce((a, b) => (b.width > a.width ? b : a))).width;
@@ -890,50 +918,70 @@ export function normalizeResponsiveBandKeys(code: string): string {
   const blockMatch = styleBlockRegex.exec(code);
   if (!blockMatch) return code;
 
-  // CHEAP GATE (this runs in the mutation-flush pipeline): band keys + floors
-  // straight off the headers; all keys already viewport-keyed → no-op.
-  const bandHeaderRe = /@media\s*\(max-width:\s*([\d.]+)px\)(?:\s*and\s*\(min-width:\s*([\d.]+)px\))?/g;
-  const floors = new Map<number, number>();
+  // CHEAP GATE (this runs in the mutation-flush pipeline): band keys straight
+  // off the headers; all keys already viewport-keyed → no-op.
+  const bandHeaderRe = /@media\s*\(max-width:\s*([\d.]+)px\)/g;
+  const bandKeys = new Set<number>();
   let hm: RegExpExecArray | null;
-  while ((hm = bandHeaderRe.exec(blockMatch[2]))) {
-    floors.set(Number(hm[1]), hm[2] ? Number(hm[2]) : 0);
-  }
-  if (floors.size === 0) return code;
-  if ([...floors.keys()].every(k => vpSet.has(k))) return code;
+  while ((hm = bandHeaderRe.exec(blockMatch[2]))) bandKeys.add(Number(hm[1]));
+  if (bandKeys.size === 0) return code;
+  if (!opts?.force && [...bandKeys].every(k => vpSet.has(k))) return code;
 
   const lang = extractLangRules(blockMatch[2]);
-  const rules = parseContainerRules(lang.css);
-  if (rules.size === 0) return code;
+  // Per BLOCK, in source order — each with its OWN floor. A file can carry two blocks with the
+  // same max-width and different floors (a floored `(max-width: 768px) and (min-width: 375.02px)`
+  // band beside a legacy unfloored `(max-width: 768px)` one). Keyed by max-width alone, the last
+  // floor applied to both, so the floored block's rules were flattened into the smaller tiles too.
+  const blocks: Array<{ max: number; floor: number; rules: Map<string, Map<string, string>>; lang: string[] }> = [];
+  const blockHeadRe = /@(?:media|container)\s*\([^)]*max-width:\s*(\d+)px[^)]*\)[^{]*\{/g;
+  const css = blockMatch[2];
+  let bm: RegExpExecArray | null;
+  while ((bm = blockHeadRe.exec(css))) {
+    let depth = 1;
+    let i = blockHeadRe.lastIndex;
+    for (; i < css.length && depth > 0; i++) { if (css[i] === '{') depth++; else if (css[i] === '}') depth--; }
+    const max = Number(bm[1]);
+    const floor = Number(/min-width:\s*([\d.]+)px/.exec(bm[0])?.[1] ?? 0);
+    const own = extractLangRules(css.slice(bm.index, i));
+    blocks.push({ max, floor, rules: parseContainerRules(own.css).get(max) ?? new Map(), lang: own.banded.get(max) ?? [] });
+    blockHeadRe.lastIndex = i;
+  }
+  if (!blocks.some(b => b.rules.size > 0 || b.lang.length > 0)) return code;
 
-  // Flatten: per viewport, merge every band whose interval covers a REFERENCE
-  // width, widest first, so the narrowest (= latest in serialized source,
-  // cascade winner) band's value wins per prop.
-  const bandKeysDesc = [...rules.keys()].sort((a, b) => b - a);
-  const covers = (bandMax: number, w: number) => w <= bandMax && w >= (floors.get(bandMax) ?? 0);
+  // Flatten: per viewport, merge every block whose interval covers a REFERENCE width, in
+  // SOURCE order — the cascade itself (equal specificity, all !important), so the later
+  // block's value wins per prop exactly as the tile paints it.
+  const covers = (b: { max: number; floor: number }, w: number) => w <= b.max && w >= b.floor;
   const claimed = new Set<number>();
   const flattenAt = (refW: number): { target: Map<string, Map<string, string>>; targetLang: string[] } => {
     const target = new Map<string, Map<string, string>>();
     const targetLang: string[] = [];
-    for (const bandMax of bandKeysDesc) {
-      if (!covers(bandMax, refW)) continue;
-      claimed.add(bandMax);
-      for (const [nodeId, props] of rules.get(bandMax)!) {
+    blocks.forEach((b, idx) => {
+      if (!covers(b, refW)) return;
+      claimed.add(idx);
+      for (const [nodeId, props] of b.rules) {
         if (!target.has(nodeId)) target.set(nodeId, new Map());
         const existing = target.get(nodeId)!;
         for (const [k, v] of props) existing.set(k, v);
       }
-      for (const rule of lang.banded.get(bandMax) ?? []) targetLang.push(rule);
-    }
+      for (const rule of b.lang) targetLang.push(rule);
+    });
     return { target, targetLang };
   };
 
-  // Phase 1 — each viewport flattens what its tile paints TODAY.
+  // Phase 1 — each viewport flattens what its tile paints TODAY: the blocks that cover the width
+  // its tile is DRAWN at (a start-model breakpoint's start, `designWidth`), written under its KEY
+  // (`width`, where its range ends). A band off the ladder (a typography preset tier keyed 599)
+  // is judged exactly as the tile shows it.
   const merged = new Map<number, Map<string, Map<string, string>>>();
   const mergedLang = new Map<number, string[]>();
   const bandless: number[] = [];
-  for (const vpW of nonPrimary) {
-    if (!bandKeysDesc.some(b => covers(b, vpW))) { bandless.push(vpW); continue; }
-    const { target, targetLang } = flattenAt(vpW);
+  for (const vp of config.viewports) {
+    const vpW = vp.width;
+    if (vpW === primaryW || merged.has(vpW) || bandless.includes(vpW)) continue;
+    const drawn = vp.designWidth && vp.designWidth > 0 ? vp.designWidth : vpW;
+    if (!blocks.some(b => covers(b, drawn))) { bandless.push(vpW); continue; }
+    const { target, targetLang } = flattenAt(drawn);
     if (target.size > 0) merged.set(vpW, target);
     if (targetLang.length > 0) mergedLang.set(vpW, targetLang);
   }
@@ -946,8 +994,9 @@ export function normalizeResponsiveBandKeys(code: string): string {
   // case 2026-08-06: config mobile already committed at 1310 while its
   // overrides sat in a stranded (max-width: 500px) band; interval-claiming
   // alone DROPPED them — exactly the loss being healed.
+  const bandKeysDesc = [...new Set(blocks.map(b => b.max))].sort((a, b) => b - a);
   if (bandless.length > 0) {
-    const strays = bandKeysDesc.filter(b => !claimed.has(b));
+    const strays = [...new Set(blocks.filter((_, idx) => !claimed.has(idx)).map(b => b.max))].sort((a, b) => b - a);
     const bandlessDesc = [...bandless].sort((a, b) => b - a);
     for (let i = 0; i < bandlessDesc.length && i < strays.length; i++) {
       const vpW = bandlessDesc[i];
@@ -958,7 +1007,7 @@ export function normalizeResponsiveBandKeys(code: string): string {
       trace.action('generator:normalize-band-keys:stray-claim', { vpWidth: vpW, strayKey: refW });
     }
   }
-  const dropped = bandKeysDesc.filter(k => !claimed.has(k));
+  const dropped = [...new Set(blocks.filter((_, idx) => !claimed.has(idx)).map(b => b.max))];
 
   trace.action('generator:normalize-band-keys', {
     from: bandKeysDesc,
@@ -1261,8 +1310,77 @@ export function mergeDetachedStyleCSSIntoPage(pageCode: string, css: string): st
   return createStyleBlockInCode(pageCode, chunk);
 }
 
-export function updateBorderOverlayStyle(code: string, nodeId: string, afterCSS: string): string {
-  trace.fn('generator.updateBorderOverlayStyle', { nodeId, cssLen: afterCSS.length });
+/**
+ * MAKE COMPONENT carry: move every TOP-LEVEL `<style>` rule keyed to the
+ * extracted subtree — border-overlay `::after`, `:hover`, `::placeholder`,
+ * `:lang()`… — from the page's block into the new master's own block. The
+ * subtree's inline styles travel with its JSX, but an Overlay border lives
+ * ENTIRELY in a `[data-id="X"]::after` rule, so without this the master had
+ * no border (user report 2026-09-09) and every other instance lost it. The
+ * reverse direction (detach) already carries the master's rules back.
+ *
+ * A rule moves when EVERY `[data-id="…"]` in its selector names a moved id;
+ * `@media` / `@container` bands are left alone (the breakpoint transfer
+ * turns them into variant entries separately). Returns the css to add to the
+ * master and the page code with those rules removed.
+ */
+export function moveStyleRulesForIds(pageCode: string, isMovedId: (id: string) => boolean): { css: string; pageCode: string } {
+  const styleBlockRegex = /(<style>\s*\{[`'])([\s\S]*?)([`']\}\s*<\/style>)/s;
+  const blockMatch = styleBlockRegex.exec(pageCode);
+  if (!blockMatch) return { css: '', pageCode };
+  const body = blockMatch[2];
+  const moved: string[] = [];
+  let kept = '';
+  let i = 0;
+  while (i < body.length) {
+    const open = body.indexOf('{', i);
+    if (open === -1) { kept += body.slice(i); break; }
+    let depth = 1;
+    let j = open + 1;
+    while (j < body.length && depth > 0) {
+      if (body[j] === '{') depth++;
+      else if (body[j] === '}') depth--;
+      j++;
+    }
+    if (depth !== 0) { kept += body.slice(i); break; }
+    const rule = body.slice(i, j);
+    const head = body.slice(i, open).trim();
+    const ids = [...head.matchAll(/\[data-(?:node-)?id="([^"]+)"\]/g)].map(m => m[1]);
+    const movable = !head.startsWith('@') && ids.length > 0 && ids.every(isMovedId);
+    if (movable) moved.push(rule.trim());
+    else kept += rule;
+    i = j;
+  }
+  if (moved.length === 0) return { css: '', pageCode };
+  trace.action('generator.moveStyleRulesForIds', { moved: moved.length });
+  const [fullMatch, prefix, , suffix] = blockMatch;
+  const next = pageCode.slice(0, blockMatch.index!) + prefix + kept + suffix + pageCode.slice(blockMatch.index! + fullMatch.length);
+  return { css: moved.join('\n    '), pageCode: next };
+}
+
+/** Selector of a node's border-overlay `::after` rule. BASE: `[data-id="X"]::after`.
+ *  PER-VARIANT (design-component variant `v`, never 'default'): the tile /
+ *  master root carries `data-variant` (canvas: Renderer stamps every tile
+ *  root and instance root; live: the root's `data-variant={variant}` attr), so
+ *  the rule is scoped as `[data-variant="v"] [data-id="X"]::after` (X is a
+ *  child) + `[data-id="X"][data-variant="v"]::after` (X IS the root). Its
+ *  specificity (0,2,1) beats the base rule, so a variant can carry its own
+ *  border while the others keep the base — reference parity (2026-09-06).
+ *  ORDER MATTERS: the descendant form goes first so the base-rule regexes
+ *  (`[data-id="X"]::after\s*{`) can never match inside this rule — there the
+ *  id bracket is followed by `,` or `[data-variant`, not `{`. */
+export function borderOverlaySelector(nodeId: string, variant?: string | null): string {
+  if (!variant || variant === 'default') return `[data-id="${nodeId}"]::after`;
+  return `[data-variant="${variant}"] [data-id="${nodeId}"]::after, [data-id="${nodeId}"][data-variant="${variant}"]::after`;
+}
+
+function borderOverlayVariantRuleRegex(nodeId: string, variant: string): RegExp {
+  const id = escapeRegExp(nodeId); const v = escapeRegExp(variant);
+  return new RegExp(`\\s*\\[data-variant="${v}"\\] \\[data-id="${id}"\\]::after,\\s*\\[data-id="${id}"\\]\\[data-variant="${v}"\\]::after\\s*\\{[^}]*\\}`, 's');
+}
+
+export function updateBorderOverlayStyle(code: string, nodeId: string, afterCSS: string, variant?: string | null): string {
+  trace.fn('generator.updateBorderOverlayStyle', { nodeId, cssLen: afterCSS.length, variant: variant ?? null });
 
   const styleBlockRegex = /(<style>\s*\{[`'])([\s\S]*?)([`']\}\s*<\/style>)/s;
   const blockMatch = styleBlockRegex.exec(code);
@@ -1271,13 +1389,17 @@ export function updateBorderOverlayStyle(code: string, nodeId: string, afterCSS:
   // ONLY in the canvas, never on the live site). The editor element also carries `data-id`, so this
   // works everywhere.
   const nodeIdEsc = escapeRegExp(nodeId);
-  const selector = `[data-id="${nodeId}"]::after`;
+  const isVariantRule = !!variant && variant !== 'default';
+  const selector = borderOverlaySelector(nodeId, variant);
 
   let existingCSS = blockMatch ? blockMatch[2] : '';
 
   // Replace any existing ::after rule for this node — match BOTH `data-id` AND legacy `data-node-id`
   // so an old (canvas-only) rule MIGRATES to `data-id` on the next write.
-  const ruleRegex = new RegExp(`\\s*\\[data-(?:node-)?id="${nodeIdEsc}"\\]::after\\s*\\{[^}]*\\}`, 's');
+  const ruleRegex = isVariantRule
+    ? borderOverlayVariantRuleRegex(nodeId, variant!)
+    : new RegExp(`\\s*\\[data-(?:node-)?id="${nodeIdEsc}"\\]::after\\s*\\{[^}]*\\}`, 's');
+  if (isVariantRule) code = ensureRootDataVariantAttr(code);
   if (ruleRegex.test(existingCSS)) {
     existingCSS = existingCSS.replace(ruleRegex, `\n    ${selector} {\n${afterCSS}\n    }`);
   } else {
@@ -1295,16 +1417,19 @@ export function updateBorderOverlayStyle(code: string, nodeId: string, afterCSS:
 /**
  * Remove the ::after border overlay rule for a node from the <style> block.
  */
-export function removeBorderOverlayStyle(code: string, nodeId: string): string {
-  trace.fn('generator.removeBorderOverlayStyle', { nodeId });
+export function removeBorderOverlayStyle(code: string, nodeId: string, variant?: string | null): string {
+  trace.fn('generator.removeBorderOverlayStyle', { nodeId, variant: variant ?? null });
 
   const styleBlockRegex = /(<style>\s*\{[`'])([\s\S]*?)([`']\}\s*<\/style>)/s;
   const blockMatch = styleBlockRegex.exec(code);
   if (!blockMatch) return code;
 
-  // Remove the node's ::after rule in EITHER form (`data-id` new / `data-node-id` legacy).
+  // Remove the node's ::after rule in EITHER form (`data-id` new / `data-node-id` legacy) —
+  // or ONLY this variant's scoped rule when a variant is given.
   const nodeIdEsc = escapeRegExp(nodeId);
-  const ruleRegex = new RegExp(`\\s*\\[data-(?:node-)?id="${nodeIdEsc}"\\]::after\\s*\\{[^}]*\\}`, 's');
+  const ruleRegex = (variant && variant !== 'default')
+    ? borderOverlayVariantRuleRegex(nodeId, variant)
+    : new RegExp(`\\s*\\[data-(?:node-)?id="${nodeIdEsc}"\\]::after\\s*\\{[^}]*\\}`, 's');
 
   const newCSS = blockMatch[2].replace(ruleRegex, '');
   const [fullMatch, prefix, , suffix] = blockMatch;
@@ -1357,6 +1482,38 @@ export function updateHoverStyleInCode(code: string, nodeId: string, styles: Rec
 }
 
 /**
+ * Shed every rule owned by a component instance's RENDER-TIME children —
+ * selectors headed `[data-id="<nodeId>:<childId>"]`, whatever trails them
+ * (`:hover`, `::before`, `::after`, `::placeholder`, the caret rule, the border
+ * overlay). The per-feature removers above each target one exact selector, so
+ * none of them can see these; and the ids never appear in the instance's JSX,
+ * so nothing downstream can collect them either. Delete is the last chance.
+ *
+ * The banded `@media` copies are handled by clearContainerStylesForNode's
+ * includeScopedChildren pass, which runs first and re-serializes the block.
+ */
+export function removeScopedChildRulesInCode(code: string, nodeId: string): string {
+  trace.fn('generator.removeScopedChildRulesInCode', { nodeId });
+
+  const styleBlockRegex = /(<style>\s*\{[`'])([\s\S]*?)([`']\}\s*<\/style>)/s;
+  const blockMatch = styleBlockRegex.exec(code);
+  if (!blockMatch) return code;
+
+  // `[^}]*` spans newlines, so multi-line declaration blocks come out whole —
+  // a line filter would leave their tails behind.
+  const head = escapeRegExp(`[data-id="${nodeId}:`);
+  const ruleRegex = new RegExp(`\\s*${head}[^"]*"\\][^{}]*\\{[^}]*\\}`, 'g');
+
+  const newCSS = blockMatch[2].replace(ruleRegex, '');
+  if (newCSS === blockMatch[2]) return code;
+
+  trace.action('generator.removeScopedChildRulesInCode:cleared', { nodeId });
+
+  const [fullMatch, prefix, , suffix] = blockMatch;
+  return code.slice(0, blockMatch.index!) + prefix + newCSS + suffix + code.slice(blockMatch.index! + fullMatch.length);
+}
+
+/**
  * Remove the :hover rule for a node from the <style> block.
  */
 export function removeHoverStyleInCode(code: string, nodeId: string): string {
@@ -1387,14 +1544,25 @@ export function removeHoverStyleInCode(code: string, nodeId: string): string {
  * Each property gets !important. Empty string values are filtered out.
  * If no properties remain, the rule is removed entirely.
  */
+/** The rule selector a pseudo kind writes: `::before` / `::after` /
+ *  `::placeholder` are pseudo-ELEMENTS; `checked` and `focus` are the form
+ *  control STATES (Checked / Focus rows in the Styles tool) — `:checked`,
+ *  `:focus`. */
+export function pseudoSelector(nodeId: string, pseudo: PseudoRuleKind): string {
+  return pseudo === 'checked' || pseudo === 'focus'
+    ? `[data-id="${nodeId}"]:${pseudo}`
+    : `[data-id="${nodeId}"]::${pseudo}`;
+}
+export type PseudoRuleKind = 'before' | 'after' | 'placeholder' | 'checked' | 'focus';
+
 export function updatePseudoStyleInCode(
-  code: string, nodeId: string, pseudo: 'before' | 'after' | 'placeholder', styles: Record<string, string>
+  code: string, nodeId: string, pseudo: PseudoRuleKind, styles: Record<string, string>
 ): string {
   trace.fn('generator.updatePseudoStyleInCode', { nodeId, pseudo, styleCount: Object.keys(styles).length });
 
   const styleBlockRegex = /(<style>\s*\{[`'])([\s\S]*?)([`']\}\s*<\/style>)/s;
   const blockMatch = styleBlockRegex.exec(code);
-  const selector = `[data-id="${nodeId}"]::${pseudo}`;
+  const selector = pseudoSelector(nodeId, pseudo);
   const selectorEsc = escapeRegExp(selector);
 
   const entries = Object.entries(styles).filter(([, v]) => v !== '');
@@ -1474,14 +1642,14 @@ export function removeSelectCaretRuleInCode(code: string, nodeId: string): strin
 /**
  * Remove a ::before / ::after / ::placeholder rule from the <style> block.
  */
-export function removePseudoStyleInCode(code: string, nodeId: string, pseudo: 'before' | 'after' | 'placeholder'): string {
+export function removePseudoStyleInCode(code: string, nodeId: string, pseudo: PseudoRuleKind): string {
   trace.fn('generator.removePseudoStyleInCode', { nodeId, pseudo });
 
   const styleBlockRegex = /(<style>\s*\{[`'])([\s\S]*?)([`']\}\s*<\/style>)/s;
   const blockMatch = styleBlockRegex.exec(code);
   if (!blockMatch) return code;
 
-  const selector = `[data-id="${nodeId}"]::${pseudo}`;
+  const selector = pseudoSelector(nodeId, pseudo);
   const selectorEsc = escapeRegExp(selector);
   const ruleRegex = new RegExp(`\\s*${selectorEsc}\\s*\\{[^}]*\\}`, 's');
 
@@ -1571,6 +1739,32 @@ export function setSmoothScrollInCode(code: string, nodeId: string, enabled: boo
  * expressions (prop or literal), so it works for literal AND variable links.
  * Injected when anchor-capable OR keep-params is active; removed otherwise.
  */
+/** Read a JSX expression attribute's value, brace-aware.
+ *
+ *  `href={`/blog/${item.slug}`}` -> "`/blog/${item.slug}`"
+ *
+ *  The naive /\bprop=\{([^}]+)\}/ this replaces stops at the FIRST `}`, which on a
+ *  CMS-bound href is the one closing `${…}`. syncLinkHandlerInCode then inlined that
+ *  truncated expression into the managed onClick and the file stopped parsing
+ *  ("Unexpected token, expected }") — the page could not be edited until the handler
+ *  was deleted by hand. Same depth scan already used for CMS attrs in cms-detach-gen.
+ *  Returns null when the attribute is absent or its braces are unbalanced. */
+function readJsxExprAttr(tag: string, attr: string): string | null {
+  const m = new RegExp(`\\b${attr}=\\{`).exec(tag);
+  if (!m) return null;
+  const braceStart = m.index + m[0].length - 1;
+  let depth = 0;
+  for (let j = braceStart; j < tag.length; j++) {
+    const c = tag[j];
+    if (c === '{') depth++;
+    else if (c === '}') {
+      depth--;
+      if (depth === 0) return tag.slice(braceStart + 1, j);
+    }
+  }
+  return null;
+}
+
 export function syncLinkHandlerInCode(code: string, nodeId: string): string {
   trace.fn('generator.syncLinkHandlerInCode', { nodeId });
 
@@ -1583,12 +1777,12 @@ export function syncLinkHandlerInCode(code: string, nodeId: string): string {
   const tagContent = code.substring(tagStart, tagEnd + 1);
 
   // href value — expression `{EXPR}` (prop) or string literal "LIT".
-  const hrefExprMatch = tagContent.match(/\bhref=\{([^}]+)\}/);
+  const hrefExprRaw = readJsxExprAttr(tagContent, 'href');
   const hrefLitMatch = tagContent.match(/\bhref="([^"]*)"/);
-  const hrefIsExpr = !!hrefExprMatch;
+  const hrefIsExpr = hrefExprRaw !== null;
   const hrefLit = hrefLitMatch ? hrefLitMatch[1] : null;
   const hrefExpr = hrefIsExpr
-    ? hrefExprMatch![1].trim()
+    ? hrefExprRaw!.trim()
     : (hrefLit != null ? JSON.stringify(hrefLit) : null);
 
   // smooth flag → the behavior guard. Expression (variable) → use it raw
@@ -1601,11 +1795,11 @@ export function syncLinkHandlerInCode(code: string, nodeId: string): string {
   const smoothGuard = "e.currentTarget.dataset.smoothScroll === 'true'";
 
   // keep-params flag → guard. Expression (variable) raw, literal "true" → true.
-  const keepExprMatch = tagContent.match(/\bdata-keep-params=\{([^}]+)\}/);
+  const keepExprRaw = readJsxExprAttr(tagContent, 'data-keep-params');
   const keepLitMatch = tagContent.match(/\bdata-keep-params="([^"]*)"/);
-  const keepActive = !!keepExprMatch || (keepLitMatch && keepLitMatch[1] === 'true');
-  const keepGuard = keepExprMatch
-    ? keepExprMatch[1].trim()
+  const keepActive = keepExprRaw !== null || (keepLitMatch && keepLitMatch[1] === 'true');
+  const keepGuard = keepExprRaw !== null
+    ? keepExprRaw.trim()
     : (keepLitMatch && keepLitMatch[1] === 'true' ? 'true' : 'false');
 
   // Inject for any ANCHOR-CAPABLE link (variable href, or literal href with `#`)
@@ -1835,6 +2029,14 @@ function seedWouldBeClobberedByShorthand(key: string, entryContent: string): boo
   return new RegExp(`(?:^|[,{\\s])['"]?${shorthand}['"]?\\s*:`).test(entryContent);
 }
 
+/** Whether `name` is a destructured param of the file's component function
+ *  (`function Card({ style, color = '#fff', ...rest })`). */
+function isComponentPropParam(code: string, name: string): boolean {
+  if (['undefined', 'null', 'true', 'false', 'style', 'rest', 'initialVariant', 'variant'].includes(name)) return false;
+  const sig = /function\s+[A-Z]\w*\s*\(\s*\{([\s\S]*?)\}\s*(?::|\))/.exec(code)?.[1] ?? '';
+  return new RegExp(`(?:^|[,\\s])${escapeRegExp(name)}\\s*(?:=|,|$)`).test(sig);
+}
+
 function readBaseValuesForNode(
   code: string,
   nodeId: string,
@@ -1898,9 +2100,25 @@ function readBaseValuesForNode(
     // `rotate: 14.1` are unquoted). ANCHORED at a key boundary — an
     // unanchored `x\s*:` matched the trailing x of `transformBox:` and read
     // its value ('fill-box') as the x base (live find 2026-06-11).
-    const propRegex = new RegExp(`(?:^|[,{\\s])${prop}\\s*:\\s*(?:'([^']*)'|"([^"]*)"|(-?\\d+(?:\\.\\d+)?))`);
+    // Custom properties are QUOTED in the style object (`'--rvb-bw': '61px'`) —
+    // accept the optional quote around the key, else the animate-back seed
+    // silently skipped them (motion-animated overlay border, 2026-09-06).
+    const keyText = prop.startsWith('--') ? `['"]?${escapeRegExp(prop)}['"]?` : prop;
+    const propRegex = new RegExp(`(?:^|[,{\\s])${keyText}\\s*:\\s*(?:'([^']*)'|"([^"]*)"|(-?\\d+(?:\\.\\d+)?))`);
     const m = styleContent.match(propRegex);
     if (m) { result[prop] = m[1] ?? m[2] ?? m[3] ?? ''; continue; }
+    // A base BOUND to a component variable (`backgroundColor: color`) — the
+    // default entry animates back to that same variable. Seeding the CSS
+    // initial here made a per-variant variable (`'variant-1': { backgroundColor:
+    // color1 }`) wipe the base binding on the default variant: Color A never
+    // showed (user report 2026-09-17). Only a destructured PROP qualifies —
+    // a scroll motion value (`y: heroY`) must never enter a variants object.
+    const identM = styleContent.match(new RegExp(`(?:^|[,{\\s])${keyText}\\s*:\\s*([A-Za-z_$][\\w$]*)\\s*(?=[,}\\n])`));
+    if (identM && isComponentPropParam(code, identM[1])) {
+      trace.fn('generator-styles:seed-variable-base', { nodeId, prop, variable: identM[1] });
+      result[prop] = `var:${identM[1]}`;
+      continue;
+    }
     // SVG presentation base from the tag's attrs (see attrBase above).
     const av = attrBase(prop);
     if (av != null) { result[prop] = av; continue; }
@@ -2202,6 +2420,8 @@ export function healSparseVariantDefaults(code: string): string {
   return healed;
 }
 
+
+
 export function updateVariantStyleInCode(
   code: string,
   nodeId: string,
@@ -2213,7 +2433,16 @@ export function updateVariantStyleInCode(
   // boxShadow/…), stamp `contain:'layout paint' + willChange:'transform'`
   // onto the root so per-frame tweens can't reflow/repaint the whole page
   // (the Illustration/Chat live-jank find). No-op otherwise; idempotent.
-  return ensureRootPerfIsolation(updateVariantStyleInCodeImpl(code, nodeId, variantName, styles));
+  // A default entry seeded from a VARIABLE-bound base reads a prop, which only
+  // exists inside the component: move such a variants const in.
+  // `ensureInitialVariantParam` runs LAST: variant wiring references the
+  // `initialVariant` prop, so a master that never declared it would fail the
+  // oracle gate (WOULD_CRASH) and the whole mutation would revert — the write
+  // reports success while nothing lands. Declaring it here keeps every
+  // variant-entry writer honest, panel and agent alike.
+  return ensureInitialVariantParam(
+    ensureRootPerfIsolation(scopeVariantConstsReadingProps(updateVariantStyleInCodeImpl(code, nodeId, variantName, styles))),
+  );
 }
 
 function updateVariantStyleInCodeImpl(
@@ -2222,12 +2451,23 @@ function updateVariantStyleInCodeImpl(
   variantName: string,
   styles: Record<string, string>,
 ): string {
-  // Reset-override translation: the panel's Rotate control registers under
-  // `transform`, but the unified rotation channel stores `rotate` in the
-  // entry. A `transform: ''` reset must clear BOTH keys or the entry's
-  // rotate survives the reset (Reset Override appeared to do nothing).
-  if (styles.transform === '' && styles.rotate === undefined) {
-    styles = { ...styles, rotate: '' };
+  // Reset-override translation: the Transform controls all register under
+  // `transform`, but a variant entry stores them as the motion props `rotate`,
+  // `skewX`, `scaleY`… So a `transform: ''` reset has to clear the WHOLE
+  // family, or whatever it misses survives the reset.
+  //
+  // This started as a one-line patch for `rotate` alone, written when Reset
+  // Override "appeared to do nothing" — so a node with a skew reset its
+  // rotation to match the primary and stayed skewed (user report 2026-09-20).
+  // Every prop the panel can write has to be listed — that is
+  // MOTION_VISUAL_TRANSFORM_PROPS, which deliberately excludes the translate
+  // channel (`x`/`y`), where a pin's centering lives.
+  if (styles.transform === '') {
+    const clears: Record<string, string> = {};
+    for (const prop of MOTION_VISUAL_TRANSFORM_PROPS) {
+      if (styles[prop] === undefined) clears[prop] = '';
+    }
+    styles = { ...styles, ...clears };
   }
   // INHERITANCE MODEL (the responsive-system parity, 2026-06-12): the source
   // stays SPARSE — a variant entry carries ONLY independently-touched values,
@@ -2283,7 +2523,13 @@ function updateVariantStyleInCodeInner(
   // matches either quoted or bare so existing entries are found regardless. No-ops for non-`--`
   // keys, so every existing variant-write path is byte-identical.
   const emitKey = (k: string) => (k.startsWith('--') ? `'${k}'` : k);
-  const keyPat = (k: string) => (k.startsWith('--') ? `['"]?${k}['"]?` : k);
+  // LEFT-ANCHORED key pattern. Unanchored, a bare `y` matched the TAIL of
+  // `displa|y: 'none'` / `opacit|y:` and `x` the tail of `transformBo|x:` —
+  // an `{ y: '-50%' }` entry write rewrote the default entry to
+  // `display: '-50%'` (live find 2026-09-05: hamburger bar, X arm). The
+  // lookbehind rejects any identifier/`--` character before the key, for
+  // bare AND quoted (`'--x'`) forms.
+  const keyPat = (k: string) => `(?<![A-Za-z0-9_$-])` + (k.startsWith('--') ? `['"]?${k}['"]?` : k);
 
   // Step 1: Find the node's element in the JSX
   const idPattern = `data-id="${nodeId}"`;
@@ -2386,15 +2632,7 @@ function updateVariantStyleInCodeInner(
   // Variant roots have position managed by variantConfig (x, y), not CSS left/top.
   // These values leak from the Renderer's canvas layout and should NOT go to code.
   const CANVAS_ONLY_PROPS = new Set(['left', 'top', 'right', 'bottom', 'position']);
-  const isRootNode = !code.includes(`"${nodeId}"`) || (() => {
-    // Check if this node is a root (no parent in the component) by seeing if it's the
-    // first data-id in the return statement
-    const returnIdx = code.indexOf('return');
-    if (returnIdx === -1) return false;
-    const afterReturn = code.slice(returnIdx);
-    const firstDataId = afterReturn.match(/data-id="([^"]*)"/);
-    return firstDataId?.[1] === nodeId;
-  })();
+  const isRootNode = !code.includes(`"${nodeId}"`) || findVariantRootId(code) === nodeId;
   if (isRootNode) {
     const filtered: Record<string, string> = {};
     for (const [k, v] of Object.entries(styles)) {
@@ -2809,6 +3047,12 @@ function updateVariantStyleInCodeInner(
     return vm ? (vm[1] ?? vm[2] ?? vm[3] ?? null) : null;
   };
 
+  // A seeded rest value must be VALID JS: motion props are usually bare
+  // numbers, but `x`/`y` legitimately hold percent strings (`'-50%'`, a
+  // centering pin). Emitting `x: -50%` raw was a parse error the validator
+  // blocked — every align/pin write on such a shape bounced (live find
+  // 2026-09-06, "Unexpected token (152:49)").
+  const seedLiteral = (v: string): string => (/^-?\d+(\.\d+)?$/.test(v) ? v : `'${v.replace(/'/g, "\\'")}'`);
   const ensureTransformNeutralOnAllVariants = (result: string, props: string[]): string => {
     const motionProps = props.filter((k) => MOTION_TRANSFORM_PROPS.has(k));
     if (motionProps.length === 0) return result;
@@ -2829,7 +3073,7 @@ function updateVariantStyleInCodeInner(
         if (openIdx === -1) continue;
         const seeded = motionProps.map((k) => {
           const rest = defaultEntryValue(out, k) ?? readBaseValues([k])[k] ?? MOTION_TRANSFORM_NEUTRAL[k] ?? '0';
-          return `${emitKey(k)}: ${rest}`;
+          return `${emitKey(k)}: ${seedLiteral(String(rest))}`;
         }).join(', ');
         out = out.slice(0, openIdx + 1) + `\n  '${name}': { ${seeded} },` + out.slice(openIdx + 1);
         continue;
@@ -2848,7 +3092,7 @@ function updateVariantStyleInCodeInner(
         const restValue = defaultEntryValue(out, k) ?? readBaseValues([k])[k] ?? MOTION_TRANSFORM_NEUTRAL[k] ?? '0';
         content = content.trimEnd();
         if (content && !content.endsWith(',')) content += ',';
-        content += ` ${emitKey(k)}: ${restValue},`;
+        content += ` ${emitKey(k)}: ${seedLiteral(String(restValue))},`;
         changed = true;
       }
       if (!changed) continue;
@@ -2861,6 +3105,26 @@ function updateVariantStyleInCodeInner(
   if (entryMatch) {
     // Variant entry exists — update/add properties
     let entryContent = entryMatch[2];
+
+    // ONE CHANNEL PER AXIS (entry twin of updateNodeInCode): an `x`/`y` write
+    // evicts that axis's translate from the entry's own `transform` string —
+    // the primary→default mirror had stored `transform: 'translateX(-50%)'`
+    // beside the shorthand and the fold doubled the shift. Runs AFTER the
+    // transform-reset block far above, so a resulting `transform: ''` is the
+    // loop's plain key delete, never the rotate-wiping reset.
+    if (!('transform' in styles) && ('x' in styles || 'y' in styles)) {
+      const tm = entryContent.match(/(?<![A-Za-z0-9_$-])transform\s*:\s*(?:'([^']*)'|"([^"]*)")/);
+      const existingT = tm ? (tm[1] ?? tm[2] ?? '') : '';
+      if (existingT) {
+        let next = existingT;
+        if ('x' in styles) next = removeAxisTranslate(next, 'x');
+        if ('y' in styles) next = removeAxisTranslate(next, 'y');
+        if (next !== existingT) {
+          trace.action('generator:variant-entry-evict-string-translate', { nodeId, variantName, from: existingT, to: next });
+          styles = { ...styles, transform: next };
+        }
+      }
+    }
 
     // Properties that should be numeric (no quotes) in variant entries
     const NUMERIC_PROPS = new Set(['order', 'opacity', 'scale', 'scaleX', 'scaleY', 'rotate', 'rotateX', 'rotateY', 'rotateZ', 'skewX', 'skewY', 'x', 'y', 'z', 'transformPerspective', 'attrX', 'attrY']);
@@ -2925,14 +3189,44 @@ function updateVariantStyleInCodeInner(
     }
 
 
+    // HEAL an entry poisoned by the pre-anchor `y`/`x` key collision above: a
+    // `display: '-50%'`-style value (numeric/percent — never a display
+    // keyword) is garbage the browser ignores; drop it so the entry stops
+    // carrying it forward on every rewrite.
+    const healedContent = entryContent.replace(/(^|[,{\s])(?:display|transformBox|position|overflow|pointerEvents|visibility)\s*:\s*['"](-?\d[^'"]*)['"]\s*,?/g, '$1');
+    if (healedContent !== entryContent) {
+      trace.action('generator:variant-entry-heal-invalid-display', { nodeId, variantName });
+      entryContent = healedContent;
+    }
     const fullMatchStart = constIdx + afterConst.indexOf(entryMatch[0]);
     const fullMatchEnd = fullMatchStart + entryMatch[0].length;
     let result = code.slice(0, fullMatchStart) + entryMatch[1] + entryContent + entryMatch[3] + code.slice(fullMatchEnd);
+    // The same heal across the WHOLE variants object: the stray value usually
+    // sits in `default` (the entry the pre-anchor collision poisoned) while
+    // the write targets another variant — so sweep every entry, brace-balanced
+    // from the const's opening `{`.
+    {
+      const cStart = result.indexOf(`const ${variantsVarName}`);
+      const oStart = cStart === -1 ? -1 : result.indexOf('{', cStart);
+      if (oStart !== -1) {
+        let depth = 0, i = oStart;
+        for (; i < result.length; i++) {
+          if (result[i] === '{') depth++;
+          else if (result[i] === '}' && --depth === 0) break;
+        }
+        const objText = result.slice(oStart, i + 1);
+        const healedObj = objText.replace(/(^|[,{\s])(?:display|transformBox|position|overflow|pointerEvents|visibility)\s*:\s*['"](-?\d[^'"]*)['"]\s*,?/g, '$1');
+        if (healedObj !== objText) {
+          trace.action('generator:variants-object-heal-invalid-keyword-values', { nodeId, variantsVarName });
+          result = result.slice(0, oStart) + healedObj + result.slice(i + 1);
+        }
+      }
+    }
     // Ensure default entry has base values for these properties
     if (variantName !== 'default') {
       result = ensureDefaultHasBaseValues(result, setProps);
-    result = ensureTransformNeutralOnAllVariants(result, Object.keys(styles));
-      result = ensureTransformNeutralOnAllVariants(result, Object.keys(styles));
+    result = ensureTransformNeutralOnAllVariants(result, setProps);
+      result = ensureTransformNeutralOnAllVariants(result, setProps);
     }
     // Add layout prop when order changes — CSS order is not animatable,
     // framer-motion's layout prop enables smooth FLIP animations for reorder.
@@ -2966,8 +3260,8 @@ function updateVariantStyleInCodeInner(
     let result = code;
     if (variantName !== 'default') {
       result = ensureDefaultHasBaseValues(result, setProps);
-    result = ensureTransformNeutralOnAllVariants(result, Object.keys(styles));
-      result = ensureTransformNeutralOnAllVariants(result, Object.keys(styles));
+    result = ensureTransformNeutralOnAllVariants(result, setProps);
+      result = ensureTransformNeutralOnAllVariants(result, setProps);
     }
     if ('order' in styles) {
       result = ensureLayoutProp(result, nodeId);
@@ -2995,7 +3289,7 @@ function updateVariantStyleInCodeInner(
   // Ensure default entry has base values for these properties
   if (variantName !== 'default') {
     result = ensureDefaultHasBaseValues(result, setProps);
-    result = ensureTransformNeutralOnAllVariants(result, Object.keys(styles));
+    result = ensureTransformNeutralOnAllVariants(result, setProps);
   }
   // Add layout prop when order changes
   if ('order' in styles) {
@@ -3205,8 +3499,14 @@ export function setConditionalOrderInCode(
   code: string,
   nodeId: string,
   orderMap: Record<string, number>, // variantName → order value
+  /** Variants whose branch must be WRITTEN OUT even if it currently equals the
+   *  default. The caller pins a variant that has been ordered independently, so
+   *  it stops tracking the default and a later primary reorder cannot collide
+   *  with it. Only the caller knows that intent — from the map alone a pinned
+   *  branch and an incidental one are identical. */
+  pinVariants?: string[],
 ): string {
-  trace.fn('generator.setConditionalOrderInCode', { nodeId, orderMap });
+  trace.fn('generator.setConditionalOrderInCode', { nodeId, orderMap, pinVariants });
 
   // Which identifier drives the variant: `variant` (useState, only with
   // connections) or `initialVariant` (the always-present master param). A master
@@ -3259,6 +3559,13 @@ export function setConditionalOrderInCode(
     const tailNum = parseFloat(tail);
     if (!isNaN(tailNum)) mergedOrderMap.default = tailNum;
   }
+  // Branches that must SURVIVE the equal-to-default pruning below:
+  //   - those already authored in the expression, and
+  //   - those the caller explicitly PINNED.
+  // Everything else — a branch this call introduces incidentally — is still
+  // dropped when it equals the default, which is what stops dead `? 1 : 1`
+  // branches accumulating on repeated no-op reorders.
+  const authoredBranches = new Set([...Object.keys(mergedOrderMap), ...(pinVariants ?? [])]);
   // New values from this call WIN over existing same-variant values.
   for (const [k, v] of Object.entries(orderMap)) {
     mergedOrderMap[k] = v;
@@ -3268,11 +3575,21 @@ export function setConditionalOrderInCode(
   const defaultOrder = mergedOrderMap['default'] ?? 0;
   // Drop branches whose value already EQUALS the default — `variant === 'v1' ? 1
   // : 1` is a no-op the reader has to decode, and it accumulates: every reorder
-  // that doesn't actually move a node used to append another dead branch. A
-  // dropped branch is loss-free, because re-reading the expression later
-  // re-derives that variant's value from the default it fell through to.
+  // that doesn't actually move a node used to append another dead branch.
+  //
+  // ONLY for branches this call is INTRODUCING. Pruning an ALREADY-AUTHORED
+  // branch is not loss-free, despite what this comment used to claim: it is
+  // true only at that instant. Deleting `variant-1 ? 3` because the default is
+  // momentarily also 3 converts "Tablet is pinned at 3" into "Tablet inherits
+  // Desktop" — so the NEXT reorder of the primary silently drags Tablet with
+  // it, even though the user had arranged it independently.
+  //
+  // That is the reported bug (2026-09-19): the first primary reorder looked
+  // correct (the values coincided, so the collapsed form rendered the same) and
+  // the second one moved Tablet. An explicit branch is a user decision and
+  // survives coinciding with the default.
   const nonDefaultEntries = Object.entries(mergedOrderMap)
-    .filter(([k, v]) => k !== 'default' && v !== defaultOrder);
+    .filter(([k, v]) => k !== 'default' && (v !== defaultOrder || authoredBranches.has(k)));
 
   let orderExpr: string;
   if (nonDefaultEntries.length === 0) {
@@ -3585,3 +3902,149 @@ export function setConditionalStyleInCode(
   return result;
 }
 
+/**
+ * Ensure the component declares the `initialVariant` prop it now references.
+ *
+ * Variant wiring (`initial={['default', initialVariant]}` / ternaries keyed off
+ * `initialVariant`) is only valid when the component function destructures that
+ * param — a master extracted before variants existed (e.g. `{ style }`) has no
+ * such binding, so the emitted reference is an undeclared identifier and the
+ * oracle blocks the whole write as WOULD_CRASH (tier 3). After the wiring step,
+ * when the file references an UNDECLARED `initialVariant` (Babel scope globals —
+ * the validator's own detection, so strings/comments never count) and the
+ * exported component's first param is an object pattern lacking it, append
+ * `initialVariant = 'default'` to the destructuration and `initialVariant?:
+ * string` to the object type literal when one is present. Param-only when there
+ * is no type literal (nothing else invented); no object destructuration at all
+ * (`function Foo()`, `(props)`, `export default function Page()`) is a
+ * documented no-op. Never duplicates an existing declaration; byte-identical
+ * otherwise.
+ */
+export function ensureInitialVariantParam(code: string): string {
+  if (!code.includes('initialVariant')) return code;
+  const ast = parseJSX(code);
+  if (!ast) return code;
+  // Undeclared use? Program scope globals are exactly the validator's signal:
+  // a declared param never appears here, strings/comments never parse as
+  // identifiers, so this is both precise and conservative.
+  let hasUndeclared = false;
+  try {
+    traverseAst(ast, {
+      Program(p) {
+        const globals = Object.keys(
+          (p.scope as unknown as { globals?: Record<string, unknown> } | undefined)?.globals ?? {},
+        );
+        if (globals.includes('initialVariant')) hasUndeclared = true;
+      },
+    });
+  } catch {
+    return code;
+  }
+  if (!hasUndeclared) return code;
+
+  // Bound the heal to variant-system participants: only a file carrying a
+  // `variantConfig` declaration gets the param. Pages never do (their
+  // `initialVariant` references are a different dialect violation the CMS
+  // rules demote, never legitimize) — without this guard the heal would
+  // graft a component param onto `export default function Page`.
+  if (!/\bconst\s+variantConfig\s*=/.test(code)) return code;
+
+  const exportName =
+    code.match(/export default function (\w+)/)?.[1] ??
+    code.match(/export default \w+\((\w+)\)\s*;/)?.[1] ??
+    code.match(/export default (\w+)\s*;/)?.[1] ??
+    null;
+
+  // Holder (not a bare `let … | null`): assignments happen inside traverse
+  // callbacks, which control-flow analysis cannot see — a bare variable would
+  // still be narrowed to its `null` initializer after the call, leaving `never`.
+  const holder: { fn: t.FunctionDeclaration | t.FunctionExpression | t.ArrowFunctionExpression | null } = { fn: null };
+  try {
+    traverseAst(ast, {
+      FunctionDeclaration(path) {
+        if (holder.fn || !exportName) return;
+        if (path.node.id?.name === exportName) holder.fn = path.node;
+      },
+      VariableDeclarator(path) {
+        if (holder.fn || !exportName) return;
+        const id = path.node.id;
+        const init = path.node.init;
+        if (id.type !== 'Identifier' || id.name !== exportName) return;
+        if (init && (t.isArrowFunctionExpression(init) || t.isFunctionExpression(init))) holder.fn = init;
+      },
+      ExportDefaultDeclaration(path) {
+        if (holder.fn || exportName) return;
+        const decl = path.node.declaration;
+        if (t.isFunctionDeclaration(decl) || t.isFunctionExpression(decl) || t.isArrowFunctionExpression(decl)) {
+          holder.fn = decl;
+        }
+      },
+    });
+  } catch {
+    return code;
+  }
+  const targetFn = holder.fn;
+  if (!targetFn) return code;
+
+  const firstParam = targetFn.params[0];
+  if (!firstParam) return code; // no params at all — documented no-op.
+  let objPat: t.ObjectPattern | null = null;
+  if (t.isObjectPattern(firstParam)) objPat = firstParam;
+  else if (t.isAssignmentPattern(firstParam) && t.isObjectPattern(firstParam.left)) objPat = firstParam.left;
+  else return code; // no object destructuration (`(props)`, `()`) — documented no-op.
+
+  const hasParam = objPat.properties.some((p) => {
+    if (!t.isObjectProperty(p)) return false;
+    if (t.isIdentifier(p.key)) return p.key.name === 'initialVariant';
+    if (t.isStringLiteral(p.key)) return p.key.value === 'initialVariant';
+    return false;
+  });
+  if (hasParam) return code; // never duplicate.
+
+  type Splice = { pos: number; text: string };
+  const splices: Splice[] = [];
+  if (objPat.properties.length === 0) {
+    const patStart = objPat.start;
+    if (patStart == null) return code;
+    splices.push({ pos: patStart + 1, text: `initialVariant = 'default'` });
+  } else {
+    const last = objPat.properties[objPat.properties.length - 1];
+    const lastEnd = last.end;
+    if (lastEnd == null) return code;
+    splices.push({ pos: lastEnd, text: `, initialVariant = 'default'` });
+  }
+
+  // Object type literal (`: { style?: … }`) — append the optional prop. No
+  // literal (or a non-literal annotation like `: Props`) means param alone.
+  const typeAnn = (objPat as unknown as { typeAnnotation?: t.TSTypeAnnotation }).typeAnnotation?.typeAnnotation;
+  if (typeAnn && t.isTSTypeLiteral(typeAnn)) {
+    const members = typeAnn.members;
+    const hasTypeMember = members.some((m) => {
+      if (!t.isTSPropertySignature(m)) return false;
+      if (t.isIdentifier(m.key)) return m.key.name === 'initialVariant';
+      if (t.isStringLiteral(m.key)) return m.key.value === 'initialVariant';
+      return false;
+    });
+    if (!hasTypeMember) {
+      if (members.length === 0) {
+        const litStart = typeAnn.start;
+        if (litStart == null) return code;
+        splices.push({ pos: litStart + 1, text: `initialVariant?: string` });
+      } else {
+        const lastM = members[members.length - 1];
+        const lastMEnd = lastM.end;
+        if (lastMEnd == null) return code;
+        const lastMStart = lastM.start ?? lastMEnd;
+        const lastText = code.slice(lastMStart, lastMEnd);
+        const endsWithSep = /[;,]\s*$/.test(lastText);
+        splices.push({ pos: lastMEnd, text: endsWithSep ? ` initialVariant?: string` : `; initialVariant?: string` });
+      }
+    }
+  }
+
+  splices.sort((a, b) => b.pos - a.pos);
+  let out = code;
+  for (const s of splices) out = out.slice(0, s.pos) + s.text + out.slice(s.pos);
+  trace.action('generator:ensure-initial-variant-param', { component: exportName ?? 'default' });
+  return out;
+}

@@ -3,15 +3,20 @@
 // Follows imperative-first pattern: DOM updates instantly, code catches up.
 
 import type { Direction } from './geometry-utils';
+import { isComponentVariantRootNode } from '@/canvas/variant-root';
+import { liveInsetWrites } from './live-inset-writes';
 import { isComponentFilePath, isIconSetFilePath, isVectorSetComponentFile } from '@/code/project/active-file-store';
 import { parseIconSetConfig, iconConfigPx } from '@/code/icons/icon-set-config';
 import { updateIconPosition, updateIconSize } from '@/code/icons/icon-set-ops';
+import { readFitDim, fitModeAfterHandResize, FIT_DIM_ATTR } from '@/code/icons/vector-set-fit';
 import { projectFS } from '@/code/project/project-fs';
+import { parseVariantConfig } from '@/code/variants/variant-config';
 import { syncQueueCode, queueMutation, flushNow } from '@/code/mutation/mutation-queue';
 import { bakeStylesForTile, tileContextFor } from '@/canvas/replica-bake';
 import { getViewportWidths } from '@/code/stores/viewport-store';
 import { dragStateOps } from '@/canvas/drag/drag-state-store';
-import { getActiveFilePath, findNodeRect, findNodeComputedStyles, patchNodeStyles, getViewportPrefix, updateNodeStyles, findSvgShapeChild, getSvgGroupAncestorChain, isPrimaryViewport, forceCanvasRender } from '@/canvas/node-ops';
+import { refusedByCollaboratorLock, beginLocalInteraction } from '@/canvas/collab/collab-locks';
+import { getActiveFilePath, findNodeRect, findNodeComputedStyles, patchNodeStyles, getViewportPrefix, updateNodeStyles, findSvgShapeChild, getSvgGroupAncestorChain, isPrimaryViewport, forceCanvasRender, isFitTextSvgWrapper } from '@/canvas/node-ops';
 import { viewportBandPinOps } from './viewport-band-pin-store';
 import { normalizeGroupOnResize, refitGroupChain } from '@/code/svg/refit-group';
 import {
@@ -35,6 +40,9 @@ import { scaleShapeGeometry, GEOMETRY_ATTRS_BY_TAG } from '@/shared/svg-geometry
 import { getTransformedPoint } from '@/canvas/canvas-math';
 import { transformManager } from '@/canvas/transform';
 import { getCanvasBridge } from '@/canvas/canvas-bridge';
+import { captureVisualRect } from '@/canvas/visual-rect';
+import { shapePositionNormalizationStyles, stripTranslateTransforms, neutralizeReplicaClears } from '@/shared/position-utils';
+import { composeTransformWithRotate } from '@/shared/motion-transform';
 import { styleHelperOps } from '@/canvas/selection/style-helper-store';
 import { resizeLiveOps } from '@/canvas/resize/resize-live-store';
 import { getInsetState, mergeVariantPinStyles } from '@/shared/pin-utils';
@@ -382,6 +390,22 @@ interface ResizeCallbacks {
  * '100vh' → 'vh', '50%' → '%', '320px' → 'px', 'auto'/'min-content' → 'px'
  * (no numeric value ⇒ treated as px so the resize commits a px size).
  */
+/**
+ * The px number a VIEWPORT-ROOT resize commits for one axis. `committed` is
+ * the unit-preserving style string the generic path built (`'1215px'`, but
+ * also `'135vh'` when the root's source height is `100vh`, or `'87%'`);
+ * `livePx` is the measured px the gesture tracked. Only a px string is
+ * trusted verbatim — any other unit falls back to the live px. The old
+ * height line did `parseInt(finalStyles.height)`: `'135vh'` → 135, written
+ * as a 135 px breakpoint height + `height: '135px'` on the root — the first
+ * drag on a `100vh` page "reverted" to ~150px and only a second (now px)
+ * drag stuck (live find 2026-09-06). Width already had this guard.
+ */
+export function viewportCommitPx(committed: string | undefined, livePx: number): number {
+  const px = committed && /^-?[\d.]+px$/.test(committed.trim()) ? parseFloat(committed) : 0;
+  return (Number.isFinite(px) && px > 0 ? Math.round(px) : 0) || Math.round(livePx);
+}
+
 export function parseDimUnit(value: string | undefined): string {
   const m = value?.trim().match(/^-?[\d.]+\s*([a-z%]+)\s*$/i);
   return m ? m[1].toLowerCase() : 'px';
@@ -409,6 +433,19 @@ export function formatResizeDimension(
   if (unit === '%') return parentCss > 0 ? `${Math.round((newPx / parentCss) * 100)}%` : pxFormat(newPx);
   if (unit !== 'px' && pxPerUnit > 0) return `${Math.round(newPx / pxPerUnit)}${unit}`;
   return pxFormat(newPx);
+}
+
+/** The px size the browser will actually resolve from `formatResizeDimension`'s
+ *  string — i.e. `newPx` snapped to the unit's grid (whole %, whole vh/rem…;
+ *  px unchanged). The transform compensation must be computed from THIS
+ *  value, not the raw drag px: pinning the opposite corner against an
+ *  unquantised width while the DOM gets the rounded one left the corner
+ *  oscillating ±(half a unit step) on a rotated %-wide element, while the
+ *  Dimensions input — which writes exact values — was rock steady (2026-09-09). */
+export function quantizeResizeDimension(newPx: number, unit: string, pxPerUnit: number, parentCss: number): number {
+  if (unit === '%') return parentCss > 0 ? (Math.round((newPx / parentCss) * 100) / 100) * parentCss : newPx;
+  if (unit !== 'px' && pxPerUnit > 0) return Math.round(newPx / pxPerUnit) * pxPerUnit;
+  return newPx;
 }
 
 /**
@@ -545,12 +582,36 @@ export function applyVectorAspectLock(
 }
 
 /**
+ * Aspect lock for the CUSTOM SVG resize loops (shape geometry bake / rotated
+ * group), which bypass startResize's shared lock. `forced` = a vector with the
+ * Dimensions lock on (isLockedVector): proportional from ANY handle, exactly
+ * like the main path's vector-set lock. Otherwise only Shift on a corner.
+ */
+/**
  * Shift-on-corner aspect lock for the CUSTOM SVG resize loops (rotated shape /
  * rotated group), which bypass startResize's shared `applyAspectRatioLock`.
  * Width drives height — identical semantics to the shared helper; the loops'
  * opposite-corner pin re-anchors left/top from the locked dims, so only the
  * height needs deriving. Returns the (possibly locked) height.
  */
+export function lockedLoopSize(
+  width: number, height: number,
+  shiftHeld: boolean,
+  forced: boolean,
+  xHandle: 'left' | 'right' | null,
+  yHandle: 'top' | 'bottom' | null,
+  ratio: number,
+): { width: number; height: number } {
+  if (forced && ratio > 0) {
+    // A vertical edge lets height drive; a corner or horizontal edge, width —
+    // applyVectorAspectLock's convention. The loops' opposite-point pin (an
+    // edge pins the opposite edge's MIDPOINT) re-anchors from these dims.
+    if (yHandle && !xHandle) return { width: Math.max(MIN_SIZE, height * ratio), height };
+    return { width, height: Math.max(MIN_SIZE, width / ratio) };
+  }
+  return { width, height: lockedShiftHeight(width, height, shiftHeld, xHandle, yHandle, ratio) };
+}
+
 export function lockedShiftHeight(
   width: number, height: number,
   shiftHeld: boolean,
@@ -585,6 +646,40 @@ export function applySymmetricResize(
 /**
  * Determine which CSS properties to commit after resize, based on pin state.
  */
+
+/** Is this node a component master's variant ROOT (a tile)? Top-level, not a
+ *  free canvas node, not an overlay — the rule the parser's variantConfig merge
+ *  and component-navigation's findRootId share. Pure; exported for tests. */
+export { isComponentVariantRootNode };
+
+
+/** Variant tiles that INHERIT the resized axis from the primary (no own
+ *  `width` / `height` in their variants entry) must move by the same delta the
+ *  primary's tile moved when a west/north handle kept the opposite corner
+ *  anchored — otherwise they grow from their own top-left and appear to grow
+ *  in the OPPOSITE direction ("synced variants resize the wrong way",
+ *  2026-09-06). Returns the shifted positions for every affected sibling.
+ *  Pure; exported for tests. */
+export function computeSiblingVariantShifts(
+  configs: { name: string; x: number; y: number }[],
+  motionVariants: Record<string, Record<string, unknown>> | undefined,
+  resizedName: string,
+  dx: number,
+  dy: number,
+): { variantName: string; x: number; y: number }[] {
+  if (resizedName !== 'default' || (dx === 0 && dy === 0)) return [];
+  const out: { variantName: string; x: number; y: number }[] = [];
+  for (const cfg of configs) {
+    if (cfg.name === resizedName) continue;
+    const entry = motionVariants?.[cfg.name] ?? {};
+    const shiftX = dx !== 0 && entry.width === undefined;
+    const shiftY = dy !== 0 && entry.height === undefined;
+    if (!shiftX && !shiftY) continue;
+    out.push({ variantName: cfg.name, x: cfg.x + (shiftX ? dx : 0), y: cfg.y + (shiftY ? dy : 0) });
+  }
+  return out;
+}
+
 export function getResizeCommitProperties(
   styles: { width: string; height: string; left: string; right: string; top: string; bottom: string },
   pins: { left: boolean; right: boolean; top: boolean; bottom: boolean },
@@ -665,6 +760,9 @@ interface RotatedSvgResizeArgs {
   shapeChild: NonNullable<ReturnType<typeof findSvgShapeChild>>;
   svgRotate: { angle: number; cx: number; cy: number };
   viewBoxAttr: string;
+  /** The Dimensions aspect lock is on (isLockedVector) — every handle keeps
+   *  the ratio, not just Shift on a corner. */
+  aspectLocked: boolean;
   /** The PARENT group's CSS rotation (deg). The shape's VISUAL rotation on
    *  screen is `svgRotate.angle + groupAngleDeg` — the screen delta must be
    *  un-rotated by that TOTAL so a resize handle follows the mouse inside a
@@ -856,12 +954,12 @@ function startRotatedSvgShapeResize(args: RotatedSvgResizeArgs): void {
       }
     }
 
-    const W = Math.max(MIN_SIZE, w);
-    // Shift — aspect-ratio lock on a corner drag (frame parity). Width drives
-    // height, mirroring the shared `applyAspectRatioLock`. The opposite-corner
-    // pin below re-anchors left/top FROM the locked dims, so no extra top
-    // compensation is needed here.
-    const H = lockedShiftHeight(W, Math.max(MIN_SIZE, h), e.shiftKey, curXHandle, curYHandle, shiftRatio);
+    // Aspect lock — the Dimensions lock (any handle) or Shift on a corner
+    // (frame parity). The opposite-corner pin below re-anchors left/top FROM
+    // the locked dims, so no extra compensation is needed here.
+    const { width: W, height: H } = lockedLoopSize(
+      Math.max(MIN_SIZE, w), Math.max(MIN_SIZE, h), e.shiftKey, args.aspectLocked, curXHandle, curYHandle, shiftRatio,
+    );
 
     // Geometry scale: original viewBox space → the new W×H box. viewBox is
     // set to "0 0 W H" so viewBoxToBox is uniform 1:1 → no skew.
@@ -1122,6 +1220,8 @@ function cumulativeSvgAncestorRotation(nodeId: string): number {
 
 interface RotatedGroupResizeArgs {
   nodeId: string; vpId: string; vpPrefix: string; direction: Direction;
+  /** See RotatedSvgResizeArgs.aspectLocked. */
+  aspectLocked: boolean;
   startEvent: PointerEvent; contentEl: HTMLElement;
   onInteracting: (active: boolean) => void;
   startWidth: number; startHeight: number; startLeft: number; startTop: number;
@@ -1195,10 +1295,11 @@ function startRotatedSvgGroupResize(args: RotatedGroupResizeArgs): void {
         curDirection = updateDirectionAfterCrossing(curXHandle ?? zc.xHandle, curYHandle ?? zc.yHandle, curDirection);
       }
     }
-    const W = Math.max(MIN_SIZE, w);
-    // Shift — corner aspect lock, width drives height (frame parity). The
-    // centre-pivot pin below re-anchors from the locked dims.
-    const H = lockedShiftHeight(W, Math.max(MIN_SIZE, h), e.shiftKey, curXHandle, curYHandle, shiftRatio);
+    // Aspect lock — the Dimensions lock (any handle) or Shift on a corner
+    // (frame parity). The centre-pivot pin below re-anchors from the locked dims.
+    const { width: W, height: H } = lockedLoopSize(
+      Math.max(MIN_SIZE, w), Math.max(MIN_SIZE, h), e.shiftKey, args.aspectLocked, curXHandle, curYHandle, shiftRatio,
+    );
 
     // Pin the opposite corner about the box CENTRE (the group rotates about its
     // centre). Identical math to the rotated-shape pin, pivot fraction = 0.5.
@@ -1266,7 +1367,7 @@ export function startResize(
   const vpPrefix = getViewportPrefix(vpId);
 
   // Read node data directly from internal cache (bypasses atom staleness after resize/drag)
-  const nodeData = getNodeFromCache(nodeId);
+  let nodeData = getNodeFromCache(nodeId);
 
   // Fixed overlays (modals) are NOT resizable — they always cover the full
   // viewport (the Renderer sizes them to the tile, not the user). Bail before any
@@ -1281,6 +1382,50 @@ export function startResize(
           return;
         }
       } catch { /* skip */ }
+    }
+  }
+
+  // A collaborator is dragging / resizing this node right now (collab-locks.ts).
+  // Before any resize state is installed, like the fixed-overlay bail above.
+  if (refusedByCollaboratorLock([nodeId], 'resize')) return;
+  beginLocalInteraction([nodeId]);
+
+  // SHAPE CANONICAL POSITION MODEL (reference parity, 2026-09-05). A top-level
+  // vector shape resizes stably ONLY in px left/top with no centering translate
+  // in either channel; a `-50%` shorthand (a % of the shape's OWN size) moved
+  // the shape by half the size delta every tick while the pin math thought the
+  // opposite corner was anchored. Normalise BEFORE the gesture reads its start
+  // styles: DOM first (invisible — same painted box, rotation kept), then the
+  // source write, flushed, so the whole gesture runs on the canonical model.
+  // A FIT-text wrapper is an `<svg>` too but a LAYOUT box (pins/insets/% top are
+  // its position model, like any text) — never a shape; skip the shape model.
+  const isFitWrapper = isFitTextSvgWrapper(nodeData, getDefaultStore().get(nodesAtom));
+  // FREE shapes only: a shape that is a FLOW child (flex/grid, position
+  // relative/static) has no left/top model at all — writing px insets there
+  // is a relative OFFSET from its slot, so the shape drifted on the first
+  // resize (live find 2026-09-06, shape inside a flex row).
+  const shapePos = nodeData?.type === 'svg' ? findNodeComputedStyles(nodeId, vpId, ['position']).position : '';
+  const isFreeShape = shapePos === 'absolute' || shapePos === 'fixed';
+  if (nodeData?.type === 'svg' && !isFitWrapper && isFreeShape && getNodeFromCache(nodeData.parentId ?? '')?.type !== 'svg') {
+    const rect = captureVisualRect(nodeId, vpId);
+    const mv = (nodeData.motionVariants ?? {}) as Record<string, Record<string, unknown>>;
+    // TILE-EFFECTIVE map: a stale `x`/`%` can live in an entry, not the base.
+    const merged: Record<string, unknown> = { ...(nodeData.styles ?? {}), ...(mv.default ?? {}), ...(isPrimaryViewport(vpId) ? {} : (mv[vpId] ?? {})) };
+    const mergedStr: Record<string, string> = {};
+    for (const [k, v] of Object.entries(merged)) if (v != null && v !== '') mergedStr[k] = String(v);
+    let norm = rect ? shapePositionNormalizationStyles(mergedStr, rect) : null;
+    // Variant tile: a '' clear only deletes the entry key and the default
+    // entry's value cascades back — write explicit neutrals instead.
+    if (norm && !isPrimaryViewport(vpId)) norm = neutralizeReplicaClears(norm, mergedStr);
+    if (norm) {
+      const rot = parseFloat(String(merged.rotate ?? '')) || 0;
+      const visuals = stripTranslateTransforms(typeof merged.transform === 'string' ? merged.transform : '');
+      const domTransform = rot ? composeTransformWithRotate({ ...merged, x: '', y: '', transform: visuals }, rot) : visuals;
+      patchNodeStyles(contentEl, nodeId, vpPrefix, { ...norm, transform: domTransform });
+      updateNodeStyles({ id: nodeId, styles: norm, contentEl });
+      flushNow();
+      nodeData = getNodeFromCache(nodeId) ?? nodeData;
+      trace.action('resize:shape-normalized', { nodeId, vpId, norm, domTransform });
     }
   }
 
@@ -1303,6 +1448,13 @@ export function startResize(
   // startLeft/startTop reading x/y).
   const parentForDims = nodeData?.parentId ? getNodeFromCache(nodeData.parentId) : null;
   const isNestedSvgForDims = nodeData?.type === 'svg' && parentForDims?.type === 'svg';
+  // A plain VECTOR with the Dimensions lock on (`aspectRatio` stored — its
+  // W/H are both px, so CSS ignores the ratio) resizes like a vector set:
+  // proportional from ANY handle, both axes committed (reference shape
+  // parity, Bug #17). Same scope as the panel's isPlainVector.
+  const isLockedVector = !isVectorSet && nodeData?.type === 'svg' && !isNestedSvgForDims
+    && !!nodeStyles.aspectRatio && nodeStyles.aspectRatio !== 'auto';
+  const isAspectForced = isVectorSet || isLockedVector;
   const attrW = parseFloat(nodeData?.attrs?.width ?? '');
   const attrH = parseFloat(nodeData?.attrs?.height ?? '');
   // VARIANT painting of a group child: the baseline is the PAINTED box, not
@@ -1469,7 +1621,9 @@ export function startResize(
   // resizes through here too means the wrapper always exits resize
   // with a `viewBox="0 0 W H"` matching width/height, so any later
   // rotation operates on a uniform base and looks rigid.
-  const svgShapeChild = nodeData?.type === 'svg'
+  // (FIT wrapper: its `foreignObject` child is in SVG_SHAPE_TAGS but it is text
+  // layout, not geometry — the standard inset/width resize below is the contract.)
+  const svgShapeChild = nodeData?.type === 'svg' && !isFitWrapper
     ? findSvgShapeChild(nodeData, getDefaultStore().get(nodesAtom))
     : null;
   const svgRotate = svgShapeChild ? parseSvgRotate(svgShapeChild.node.attrs?.transform) : null;
@@ -1531,6 +1685,7 @@ export function startResize(
       svgRotate: effectiveRotate,
       viewBoxAttr: vbAttr,
       groupAngleDeg,
+      aspectLocked: isLockedVector,
     });
     return;
   }
@@ -1550,6 +1705,7 @@ export function startResize(
         nodeId, vpId, vpPrefix, direction, startEvent, contentEl, onInteracting,
         startWidth, startHeight, startLeft, startTop,
         xHandle, yHandle, canvasScale, ownAngleDeg, ancestorAngleDeg,
+        aspectLocked: isLockedVector,
       });
       return;
     }
@@ -1839,6 +1995,26 @@ export function startResize(
   const isVpNode = nodeAttrs['data-viewport'] !== undefined
     || nodeId === 'root'
     || nodeId === 'layout::root';
+  // Component MASTER root = a variant tile even though `isVpNode` misses it
+  // (`data-viewport` is a paint-time DOM stamp, skipped by the parser). Its
+  // position lives in variantConfig; the commit must never write its insets.
+  const isVariantRootTile = isComponentFilePath(getActiveFilePath()) && isComponentVariantRootNode(getNodeFromCache(nodeId));
+  // Primary-tile resize: siblings that INHERIT the resized axis must follow
+  // the primary's position delta LIVE (not only at commit) — otherwise they
+  // grow from their own top-left during the drag and jump on mouse-up
+  // (2026-09-06). Captured once; `computeSiblingVariantShifts` does the math.
+  const siblingShiftInputs = (isVariantRootTile && isPrimaryViewport(vpId))
+    ? { configs: parseVariantConfig(projectFS.readFile(getActiveFilePath()) ?? ''), mv: getNodeFromCache(nodeId)?.motionVariants as Record<string, Record<string, unknown>> | undefined }
+    : null;
+  const patchSiblingTilesLive = (dx: number, dy: number): void => {
+    if (!siblingShiftInputs) return;
+    for (const sh of computeSiblingVariantShifts(siblingShiftInputs.configs, siblingShiftInputs.mv, 'default', dx, dy)) {
+      const styles: Record<string, string> = {};
+      if (dx !== 0) styles.left = `${sh.x}px`;
+      if (dy !== 0) styles.top = `${sh.y}px`;
+      patchNodeStyles(contentEl, nodeId, getViewportPrefix(sh.variantName), styles);
+    }
+  };
 
   trace.action('resize:start', { nodeId, vpId, direction, startWidth, startHeight, hasTransform, pins: inset.pins, insetMode: inset.mode, insetStyles, isCenteredX, isCenteredY, isPercentX, isPercentY });
   onInteracting(true);
@@ -2080,10 +2256,11 @@ export function startResize(
     );
 
     // Aspect ratio lock. A VECTOR SET is ALWAYS locked (any handle, intrinsic
-    // ratio) — the reference behaviour. Otherwise Shift on a corner locks to the current
+    // ratio) — the reference behaviour — and so is a plain vector with the
+    // Dimensions lock on (isLockedVector). Otherwise Shift on a corner locks to the current
     // ratio. `aspectRatio` == startWidth/startHeight (the vector's intrinsic ratio
     // when undistorted), so the lock keeps it proportional on every resize.
-    if (isVectorSet) {
+    if (isAspectForced) {
       const locked = applyVectorAspectLock(newWidth, newHeight, curWidth, curHeight, curLeft, curTop, aspectRatio, xHandle, yHandle, isInLayout);
       newWidth = locked.width;
       newHeight = locked.height;
@@ -2190,6 +2367,15 @@ export function startResize(
       callbacks.onSnapGuidesChange?.([]);
     }
 
+    // Snap the size to what the unit can EXPRESS before pinning the corner:
+    // a %/vh width is written as a whole number, so the DOM box is the
+    // rounded size — the compensation below must pin against that box, or
+    // the fixed corner wobbles by up to half a unit step every tick (the
+    // rotated %-wide frame "oscillating 1–2px", 2026-09-09). Only for
+    // non-inset axes (inset axes derive their size from the pins).
+    if (hasTransform && !inset.horizontalInset) newWidth = quantizeResizeDimension(newWidth, origWidthUnit, widthPxPerUnit, parentCssWidth);
+    if (hasTransform && !inset.verticalInset) newHeight = quantizeResizeDimension(newHeight, origHeightUnit, heightPxPerUnit, parentCssHeight);
+
     // ─── Transform compensation: pin opposite corner ─────────────────
     // Skipped during a symmetric (Alt) resize — that pins the centre,
     // not a corner, and re-doing the local box around a fixed centre
@@ -2256,10 +2442,10 @@ export function startResize(
     const prevH = parseFloat(liveStyles.height) || startHeight;
     // Preserve original unit during resize (% stays as %, px stays as px).
     // In inset mode, don't set width/height — CSS derives size from insets.
-    // A vector set is aspect-locked, so BOTH axes change on any handle — patch
+    // A vector set (or a locked vector) is aspect-locked, so BOTH axes change on any handle — patch
     // both live (not just the handle's own axis) so it doesn't distort during the
     // drag then snap proportional on mouseup.
-    if ((handleAffectsX || isVectorSet) && !inset.horizontalInset) {
+    if ((handleAffectsX || isAspectForced) && !inset.horizontalInset) {
       const w = formatResizeDimension(newWidth, origWidthUnit, widthPxPerUnit, parentCssWidth, posPx);
       // Baked group: the sandbox sets the group width atomically with viewBox +
       // children (below), so skip the standalone DOM patch (avoids a 1-frame
@@ -2311,7 +2497,7 @@ export function startResize(
         liveStyles.left = leftVal;
       }
     }
-    if ((handleAffectsY || isVectorSet) && !inset.verticalInset) {
+    if ((handleAffectsY || isAspectForced) && !inset.verticalInset) {
       const h = formatResizeDimension(newHeight, origHeightUnit, heightPxPerUnit, parentCssHeight, posPx);
       if (!isBakedGroup) patchNodeStyles(contentEl, nodeId, vpPrefix, { height: h });
       liveStyles.height = h;
@@ -2440,74 +2626,26 @@ export function startResize(
       // pinned sides from the compensated rect.
       // Same approach as old builder's create-resize-handler.tsx.
 
-      const pinnedCount = [inset.pins.left, inset.pins.right, inset.pins.top, inset.pins.bottom].filter(Boolean).length;
       const pW = parentWidth;
       const pH = parentHeight;
-
-      if (pinnedCount >= 2) {
-        // Multi-pin: recalculate ALL pinned sides from compensated rect
-        const pinStyles: Record<string, string> = {};
-        if (inset.pins.left) pinStyles.left = posPx(newLeft);
-        if (inset.pins.right) pinStyles.right = posPx(pW - newLeft - newWidth);
-        if (inset.pins.top) pinStyles.top = posPx(newTop);
-        if (inset.pins.bottom) pinStyles.bottom = posPx(pH - newTop - newHeight);
-        patchNodeStyles(contentEl, nodeId, vpPrefix, pinStyles);
-        Object.assign(liveStyles, pinStyles);
-      } else if (inset.pins.right) {
-        const rightVal = posPx(pW - newLeft - newWidth);
-        patchNodeStyles(contentEl, nodeId, vpPrefix, { right: rightVal });
-        liveStyles.right = rightVal;
-      } else if (inset.pins.bottom) {
-        const bottomVal = posPx(pH - newTop - newHeight);
-        patchNodeStyles(contentEl, nodeId, vpPrefix, { bottom: bottomVal });
-        liveStyles.bottom = bottomVal;
-      } else if (isFixedLeft) {
-        const leftVal = posPx(newLeft);
-        patchNodeStyles(contentEl, nodeId, vpPrefix, { left: leftVal });
-        liveStyles.left = leftVal;
-      } else if (isCenteredX && (handleAffectsX || hasTransform) && !symmetricResize && pW > 0) {
-        // Centered x (left:% + translateX(-50%)): reuse the transform-
-        // compensated `newLeft` (it already carries the FULL matrix coupling
-        // — a rotated element's height resize moves x too, which a
-        // handle-axis-only formula missed → per-resize drift, user report
-        // 2026-07-29 round 3) and correct for the one thing the compensation
-        // gets wrong: it pins against the CONSTANT start matrix (translate
-        // baked as −startWidth/2 px) while the browser re-derives −50% of
-        // the NEW width. The discrepancy is exactly (newWidth−startWidth)/2,
-        // rotation-independent (translation adds after rotation), so:
-        // cssLeft = newLeft + (newWidth−startWidth)/2. Continuous through
-        // zero-crossing. (Alt/symmetric pins the center — skip; the % stays.)
-        const leftVal = `${(((newLeft + (newWidth - startWidth) / 2) / pW) * 100).toFixed(4)}%`;
-        patchNodeStyles(contentEl, nodeId, vpPrefix, { left: leftVal });
-        liveStyles.left = leftVal;
-        wrotePctLeft = true;
-      } else if (isPercentX && (handleAffectsX || hasTransform) && pW > 0) {
-        // Plain-% left: `newLeft` maps 1:1 to the css value (no size-derived
-        // translate) — re-express as %. Also written on transform'd vertical
-        // drags: rotation couples height changes into x.
-        const leftVal = `${((newLeft / pW) * 100).toFixed(4)}%`;
-        patchNodeStyles(contentEl, nodeId, vpPrefix, { left: leftVal });
-        liveStyles.left = leftVal;
-        wrotePctLeft = true;
+      // Axis rules live in live-inset-writes.ts (pure, tested). X and Y are
+      // independent: a single bottom pin no longer swallows the X-axis write.
+      const w = liveInsetWrites({
+        pins: inset.pins, isFixedLeft: !!isFixedLeft, isFixedTop: !!isFixedTop,
+        isCenteredX, isCenteredY, isPercentX, isPercentY,
+        handleAffectsX, handleAffectsY, hasTransform, symmetricResize,
+        pW, pH, newLeft, newTop, newWidth, newHeight, startWidth, startHeight, posPx,
+      });
+      if (Object.keys(w.styles).length > 0) {
+        patchNodeStyles(contentEl, nodeId, vpPrefix, w.styles);
+        Object.assign(liveStyles, w.styles);
       }
-      if (!inset.pins.bottom && isFixedTop) {
-        const topVal = posPx(newTop);
-        patchNodeStyles(contentEl, nodeId, vpPrefix, { top: topVal });
-        liveStyles.top = topVal;
-      } else if (!inset.pins.bottom && isCenteredY && (handleAffectsY || hasTransform) && !symmetricResize && pH > 0) {
-        // Same correction form for a centered y axis (top:% + translateY(-50%)).
-        const topVal = `${(((newTop + (newHeight - startHeight) / 2) / pH) * 100).toFixed(4)}%`;
-        patchNodeStyles(contentEl, nodeId, vpPrefix, { top: topVal });
-        liveStyles.top = topVal;
-        wrotePctTop = true;
-      } else if (!inset.pins.bottom && isPercentY && (handleAffectsY || hasTransform) && pH > 0) {
-        // Plain-% top: same 1:1 re-expression for the vertical axis.
-        const topVal = `${((newTop / pH) * 100).toFixed(4)}%`;
-        patchNodeStyles(contentEl, nodeId, vpPrefix, { top: topVal });
-        liveStyles.top = topVal;
-        wrotePctTop = true;
-      }
+      if (w.wrotePctLeft) wrotePctLeft = true;
+      if (w.wrotePctTop) wrotePctTop = true;
     }
+
+    // Synced sibling variant tiles follow the primary's live position delta.
+    if (siblingShiftInputs) patchSiblingTilesLive(Math.round(newLeft - startLeft), Math.round(newTop - startTop));
 
     // Mirror live resize to all viewports via updateNodeStyles domOnly mode.
     // This syncs dimensions (and position for pages) to all replicas via bridge.
@@ -2519,10 +2657,21 @@ export function startResize(
     // live dimensions are already applied to its own element by the
     // patchNodeStyles calls above; the cross-viewport mirror would treat
     // the page root as a regular sibling that needs replicas in sync.
-    const isComp = isComponentFilePath(getActiveFilePath());
     const syncStyles: Record<string, string> = {};
     if (!isVpNode) {
-      if (!isComp && !isOverlayNode) {
+      // A COMPONENT MASTER's variant tiles were excluded here, so mid-resize
+      // they got the new width/height but kept STALE insets: the replicas grew
+      // around the wrong anchor, wandered off, and only snapped into place on
+      // mouse-up (user report 2026-09-20). The mirror already drops keys a
+      // variant owns and already treats position as live-only (node-ops.ts
+      // :2497 — "a synced replica must follow the primary in real time"), so a
+      // master's children belong in it like any page replica.
+      //
+      // The master ROOT stays out: each tile's root sits at its own
+      // variantConfig x/y, so mirroring the primary's insets would yank every
+      // tile onto the primary's spot — the glitch the commit-time skip exists
+      // to prevent.
+      if (!isOverlayNode && !isVariantRootTile) {
         if (liveStyles.left) syncStyles.left = liveStyles.left;
         if (liveStyles.right) syncStyles.right = liveStyles.right;
         if (liveStyles.top) syncStyles.top = liveStyles.top;
@@ -2638,19 +2787,30 @@ export function startResize(
           !!isFixedTop,
           !!inset.horizontalInset,
           !!inset.verticalInset,
-          isVpNode,
+          isVpNode || isVariantRootTile,
           direction,
           wrotePctLeft,
           wrotePctTop,
         );
 
-    // A VECTOR SET stays aspect-locked, so even an EDGE drag changed BOTH width
-    // and height (`applyVectorAspectLock`). `getResizeCommitProperties` only keeps
+    // A VECTOR SET (or a locked vector) stays aspect-locked, so even an EDGE
+    // drag changed BOTH width and height (`applyVectorAspectLock`). `getResizeCommitProperties` only keeps
     // the handle's own axis, so force-commit the OTHER dimension too — else the
     // locked dimension snaps back on mouseup.
-    if (isVectorSet) {
+    if (isAspectForced) {
       if (liveStyles.width) finalStyles.width = liveStyles.width;
       if (liveStyles.height) finalStyles.height = liveStyles.height;
+    }
+    if (isVectorSet) {
+      // "Both rows on Fit" means the variant's NATURAL size — a hand resize just
+      // left it, so the panel would go on showing auto / auto over a size that
+      // is no longer automatic. A single Fit row survives: the handles keep the
+      // aspect, which is all that row promises.
+      const nextFit = fitModeAfterHandResize(readFitDim(nodeData?.attrs));
+      if (nextFit !== undefined) {
+        trace.action('resize:vector-set-fit-cleared', { nodeId, vpId });
+        queueMutation({ type: 'updateHtmlAttrs', nodeId, attrs: { [FIT_DIM_ATTR]: nextFit } });
+      }
     }
 
     // Commit the box-centre pivot for a rotated single-shape svg so a baked-px
@@ -2682,12 +2842,13 @@ export function startResize(
       // the page root's base width is '100%' and parseInt('100%') is 100 —
       // a % that leaks this far must fall back to the measured width, not
       // become a 100px breakpoint.
-      const newWidth = (finalStyles.width?.endsWith('px') ? parseInt(finalStyles.width) : 0) || curWidth;
+      const newWidth = viewportCommitPx(finalStyles.width, curWidth);
       // Height: only forward when the handle actually resizes Y. The
       // callback's contract is that height === 0 means "leave alone";
       // sending the live curHeight on a width-only drag would clobber the
-      // user's auto/px choice.
-      const newHeight = handleAffectsY ? (parseInt(finalStyles.height) || curHeight) : 0;
+      // user's auto/px choice. px-guarded like width: a `100vh` root commits
+      // its height as `'<n>vh'`, which must NOT be read as pixels.
+      const newHeight = handleAffectsY ? viewportCommitPx(finalStyles.height, curHeight) : 0;
       // Final tile x — a west-edge (or zero-crossing-flipped) drag moved the
       // tile's `left` live; persist it into @canvas positions or the commit
       // re-render snaps the tile back to its old x. East drags pass the
@@ -2712,8 +2873,17 @@ export function startResize(
     setVpHeadersHidden(false);
 
     // Capture variant position BEFORE committing (liveStyles has the updated left/top from resize)
+    //
+    // A component MASTER root is a variant tile whether or not `isVpNode` says
+    // so: `isVpNode` reads `data-viewport` from PARSED attrs, but that attribute
+    // is stamped by the Renderer at paint time only (and the parser skips it),
+    // so a master root failed the check, fell through as a plain absolute box,
+    // committed its live `left`/`top` INTO the file and never updated
+    // variantConfig. Every live instance then rendered shifted by the tile
+    // offset (live find 2026-09-06). Detect the root by shape instead — the
+    // same rule the parser's variantConfig merge and component-navigation use.
     let pendingVariantPos: { variantName: string; x: number; y: number } | null = null;
-    if (isCompFile && isVpNode && callbacks.onVariantPositionUpdate) {
+    if (isCompFile && (isVpNode || isVariantRootTile) && callbacks.onVariantPositionUpdate) {
       const variantVpId = nodeAttrs['data-viewport'] || vpId;
       pendingVariantPos = {
         variantName: variantVpId === 'desktop' ? 'default' : variantVpId,
@@ -2809,6 +2979,14 @@ export function startResize(
     // Update variantConfig position AFTER cleanup so re-renders don't interrupt resize state
     if (pendingVariantPos && callbacks.onVariantPositionUpdate) {
       callbacks.onVariantPositionUpdate(pendingVariantPos.variantName, pendingVariantPos.x, pendingVariantPos.y);
+      // Siblings that inherit the resized axis move by the same delta (see
+      // computeSiblingVariantShifts) so every synced tile grows the same way.
+      const dx = pendingVariantPos.x - Math.round(startLeft);
+      const dy = pendingVariantPos.y - Math.round(startTop);
+      const configs = parseVariantConfig(projectFS.readFile(getActiveFilePath()) ?? '');
+      const shifts = computeSiblingVariantShifts(configs, getNodeFromCache(nodeId)?.motionVariants as any, pendingVariantPos.variantName, dx, dy);
+      for (const sh of shifts) callbacks.onVariantPositionUpdate(sh.variantName, sh.x, sh.y);
+      if (shifts.length) trace.action('resize:sibling-variant-shift', { nodeId, dx, dy, shifts });
     }
   };
 

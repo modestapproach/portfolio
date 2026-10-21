@@ -5,20 +5,24 @@
 // Pin buttons: T/L/R/B with blue highlight when active, center = pin/unpin all.
 // Inputs always visible, disabled when pin is inactive.
 
-import { useCallback, useMemo, useEffect } from 'react';
+import { useCallback, useMemo, useEffect, useRef } from 'react';
 import { useLivePreview } from '../../hooks/useLivePreview';
 import { useAtomValue } from 'jotai';
-import { canvasInteractingAtom, getNodesSnapshot, getNodeFromCache } from '@/code/stores/store';
+import { canvasInteractingAtom, getNodeFromCache } from '@/code/stores/store';
 import { containerOverridesAtom } from '@/code/stores/container-query-store';
 import { viewportsConfigAtom } from '@/code/stores/viewport-store';
 import { ToolInput } from '../../controls';
-import { getPinState, parsePx, mergeVariantPinStyles, type PinSide } from '@/shared/pin-utils';
+import { getPinState, mergeVariantPinStyles, type PinSide } from '@/shared/pin-utils';
 import { isPrimaryViewport } from '@/shared/constants';
-import { findNodeRect, findNodeComputedStyles, findNodeParentInnerSize } from '@/canvas/node-ops';
-import { transformManager } from '@/canvas/transform';
-import { type VisualRect, toPercentageCenter, toFixedPin, toInsetMode, fromInsetMode, stripTranslateTransforms, buildAxisCenterTransform } from '@/shared/position-utils';
+import { type VisualRect, toPercentageCenter, toFixedPin, toInsetMode, fromInsetMode, stripTranslateTransforms, buildAxisCenterTransform, centeringChannel, extractAxisTranslate } from '@/shared/position-utils';
 import { applyReplicaClearSemantics } from './replica-clears';
 import { trace } from '@/shared/debug-trace';
+import { captureVisualRect } from '@/canvas/visual-rect';
+import { findNodeComputedStyle } from '@/canvas/node-ops';
+import { livePinValues } from './live-pin-values';
+import { pinFieldDisplayPx, pinFieldCommitValue, paintedPinPx } from './pin-field-units';
+import { translateOffsetPx } from '@/canvas/resize/size-input-compensation';
+import { pinFieldEditWrite, isHorizontalSide } from './pin-field-resize';
 import { queueMutation } from '@/code/mutation/mutation-queue';
 
 /** Mark a node as user-pinned so AbsoluteInFrameStrategy stops auto-
@@ -66,38 +70,17 @@ export default function PinControl({ styles, nodeId, vpId, onUpdate, onUpdateMul
     if (!isInteracting) return;
     let rafId: number;
     const poll = () => {
-      const node = getNodesSnapshot().get(nodeId);
-      const parentId = node?.parentId ?? null;
-      const elScreen = findNodeRect(nodeId, vpId);
-      const parentScreen = parentId ? findNodeRect(parentId, vpId) : null;
-      if (elScreen && parentScreen && parentId) {
-        const scale = transformManager.getTransform().scale || 1;
-        // ALL dimensions derived from the live rectCache, NOT from
-        // computedCache. Reason: during inset resize the strategy
-        // writes `right`/`bottom` per frame; the rectCache picks that
-        // up immediately (it's polled from getBoundingClientRect every
-        // render cycle), but the computedCache only refreshes when
-        // canvasInteractingAtom releases — so `findNodeComputedStyles`
-        // returns the PRE-RESIZE width/height during the drag.
-        // Falling back to that stale width here meant `right = parentW
-        // - left - staleW` was wrong → the right/bottom inputs froze
-        // while only left/top updated. Using `elScreen.width / scale`
-        // gives the live width on every frame.
-        const elW = elScreen.width / scale;
-        const elH = elScreen.height / scale;
-        const parentInner = findNodeParentInnerSize(nodeId, vpId);
-        const parentW = parentInner.width || parentScreen.width / scale;
-        const parentH = parentInner.height || parentScreen.height / scale;
-        const parentBorders = findNodeComputedStyles(parentId, vpId, ['borderLeftWidth', 'borderTopWidth']);
-        const borderL = parseFloat(parentBorders.borderLeftWidth) || 0;
-        const borderT = parseFloat(parentBorders.borderTopWidth) || 0;
-        const left = Math.round((elScreen.left - parentScreen.left) / scale - borderL);
-        const top = Math.round((elScreen.top - parentScreen.top) / scale - borderT);
-        const right = Math.round(parentW - left - elW);
-        const bottom = Math.round(parentH - top - elH);
-        const pos = { left: `${left}px`, top: `${top}px`, right: `${right}px`, bottom: `${bottom}px` };
+      // Live position values: the LAYOUT box (rotation undone), each side in
+      // the SOURCE's own unit, only for the sides the source declares — so a
+      // pan shows the same numbers as rest and a drag ends where it lands
+      // (see live-pin-values.ts). Source styles are read from the cache so a
+      // mid-gesture inset write (resize) is reflected.
+      const liveStylesNow = getNodeFromCache(nodeId)?.styles ?? styles;
+      const rect = captureVisualRect(nodeId, vpId);
+      if (rect) {
+        const pos = livePinValues({ styles: liveStylesNow, rect, parentWidth: rect.parentWidth, parentHeight: rect.parentHeight });
         setLivePos((prev) =>
-          prev?.left === pos.left && prev?.top === pos.top && prev?.right === pos.right && prev?.bottom === pos.bottom
+          prev && prev.left === pos.left && prev.top === pos.top && prev.right === pos.right && prev.bottom === pos.bottom
             ? prev
             : pos,
         );
@@ -169,6 +152,31 @@ export default function PinControl({ styles, nodeId, vpId, onUpdate, onUpdateMul
   const displayBottom = livePos?.bottom || styles.bottom || '';
   const allPinned = pins.left && pins.top && pins.right && pins.bottom;
 
+  // Parent box for percent↔px on the fields. A percent side has to be resolved
+  // against it or the field shows the percent NUMBER as px and commits it back
+  // as px (see pin-field-units.ts). Re-read whenever a displayed value changes
+  // — captureVisualRect is a rect-cache read, no iframe round trip.
+  const parentBox = useMemo(
+    () => captureVisualRect(nodeId, vpId),
+    [nodeId, vpId, displayLeft, displayTop, displayRight, displayBottom],
+  );
+  const parentW = parentBox?.parentWidth ?? 0;
+  const parentH = parentBox?.parentHeight ?? 0;
+
+  // A side the source does not declare still has a real painted distance. Show
+  // it, or the field reads 0 and the first chevron throws the element against
+  // that edge (see paintedPinPx).
+  const painted = useMemo(
+    () => parentBox
+      ? paintedPinPx(parentBox,
+          translateOffsetPx(styles.transform, 'x', parentBox.width),
+          translateOffsetPx(styles.transform, 'y', parentBox.height))
+      : null,
+    [parentBox, styles.transform],
+  );
+  const fieldPx = (side: PinSide, source: string, total: number): number =>
+    source ? pinFieldDisplayPx(source, total) : (painted?.[side] ?? 0);
+
   /**
    * Capture the element's visual rect via the bridge — works in iframe mode
    * where the canvas DOM lives in the sandbox. Returns parent-relative px
@@ -185,67 +193,9 @@ export default function PinControl({ styles, nodeId, vpId, onUpdate, onUpdateMul
    *     already shows the visually centered position, so no further fix needed
    *     for non-rotated parents. Rotated parents fall back to inline-style math.
    */
-  const captureRectViaBridge = useCallback((): VisualRect | null => {
-    const node = getNodesSnapshot().get(nodeId);
-    const parentId = node?.parentId;
-    if (!parentId) return null;
-    const scale = transformManager.getTransform().scale || 1;
-
-    const elScreen = findNodeRect(nodeId, vpId);
-    const parentScreen = findNodeRect(parentId, vpId);
-    if (!elScreen || !parentScreen) return null;
-
-    const computed = findNodeComputedStyles(nodeId, vpId, ['width', 'height']);
-    const width = parseFloat(computed.width) || elScreen.width / scale;
-    const height = parseFloat(computed.height) || elScreen.height / scale;
-
-    const parentInner = findNodeParentInnerSize(nodeId, vpId);
-    const parentWidth = parentInner.width || parentScreen.width / scale;
-    const parentHeight = parentInner.height || parentScreen.height / scale;
-
-    // CSS `left`/`right` for absolute children resolve against the parent's
-    // PADDING box, not the border box. The BCR delta gives us offset from the
-    // border edge, so subtract parent border widths to land in padding-box
-    // coordinates. Skipping this caused inset values to drift each toggle on
-    // parents with borders.
-    const parentBorders = findNodeComputedStyles(parentId, vpId, ['borderLeftWidth', 'borderTopWidth']);
-    const borderL = parseFloat(parentBorders.borderLeftWidth) || 0;
-    const borderT = parseFloat(parentBorders.borderTopWidth) || 0;
-
-    // Parent-relative LAYOUT-BOX top-left (not the AABB top-left).
-    // `elScreen` is the rotated/scaled SCREEN AABB — for a rotated
-    // element the AABB is shifted from the layout box by
-    // `(aabbW - layoutW) / 2` on each axis (with default `transform-
-    // origin: 50% 50%` the AABB centre coincides with the layout-box
-    // centre). Treating `elScreen.left` as the layout-box left would
-    // place the layout box at the AABB edge after a pin commit —
-    // since the transform reapplies on top, the painted AABB then
-    // shifts again, producing the jump-on-toggle the user reported.
-    // The fix: derive layout-box top-left from the AABB centre via
-    // `layoutLeft = aabbCenterX - layoutW / 2`. Collapses to the
-    // original formula for non-rotated elements (aabbW = layoutW).
-    const aabbCssW = elScreen.width / scale;
-    const aabbCssH = elScreen.height / scale;
-    const aabbLeft = (elScreen.left - parentScreen.left) / scale - borderL;
-    const aabbTop = (elScreen.top - parentScreen.top) / scale - borderT;
-    const left = aabbLeft + (aabbCssW - width) / 2;
-    const top = aabbTop + (aabbCssH - height) / 2;
-
-    const centerX = left + width / 2;
-    const centerY = top + height / 2;
-    const centerXPercent = parentWidth > 0 ? (centerX / parentWidth) * 100 : 50;
-    const centerYPercent = parentHeight > 0 ? (centerY / parentHeight) * 100 : 50;
-
-    trace.action('pin:capture-rect', {
-      nodeId, vpId, parentId,
-      elScreen: { left: elScreen.left, top: elScreen.top, width: elScreen.width, height: elScreen.height },
-      parentScreen: { left: parentScreen.left, top: parentScreen.top, width: parentScreen.width, height: parentScreen.height },
-      scale, borderL, borderT, parentWidth, parentHeight,
-      result: { left, top, width, height },
-    });
-
-    return { left, top, width, height, parentWidth, parentHeight, centerXPercent, centerYPercent };
-  }, [nodeId, vpId]);
+  // Shared implementation — see canvas/visual-rect.ts (also used by the shape
+  // position model in resize start / align / X-Y fields).
+  const captureRectViaBridge = useCallback((): VisualRect | null => captureVisualRect(nodeId, vpId), [nodeId, vpId]);
 
   const handlePinToggle = useCallback((side: PinSide) => {
     // Capture visual rect BEFORE any changes (bridge-aware, works in iframe mode)
@@ -376,6 +326,20 @@ export default function PinControl({ styles, nodeId, vpId, onUpdate, onUpdateMul
     // re-exposes the base value — unpinning R/B on a variant kept them
     // pinned (user report 2026-08-26).
     newStyles = applyReplicaClearSemantics(nodeId, vpId, newStyles);
+    // MOTION-SHORTHAND CENTERING: this node centres via motion `x`/`y`, not a
+    // CSS translate string (how the rotation commit stores a pin). Route the
+    // toggled axis into that channel and never emit `transform` for it — on a
+    // motion element `transform: ''` is the rotation RESET (wipes the entry's
+    // rotate), and mixing channels doubles the shift (Renderer folds string
+    // then shorthands; live find 2026-09-05). The generators evict any stale
+    // string translate on the x/y write.
+    if (centeringChannel(styles) === 'shorthand' && typeof newStyles.transform === 'string') {
+      const axis = isHoriz ? 'x' : 'y';
+      const part = extractAxisTranslate(newStyles.transform, axis);
+      newStyles[axis] = part ? part.replace(/^translate[XY]\(\s*|\s*\)$/g, '') : '';
+      const visuals = stripTranslateTransforms(newStyles.transform);
+      if (visuals) newStyles.transform = visuals; else delete newStyles.transform;
+    }
     trace.action('pin:toggle', { nodeId, side, wasPinned, newStyles, rect, elTransform: styles.transform, elLeft: styles.left, elTop: styles.top });
     onUpdateMultiple(newStyles);
     // Lock dynamic pinning — user has expressed an explicit pin choice.
@@ -405,11 +369,65 @@ export default function PinControl({ styles, nodeId, vpId, onUpdate, onUpdateMul
     lockNodePinning(nodeId);
   }, [allPinned, nodeId, vpId, styles.transform, captureRectViaBridge, onUpdateMultiple]);
 
-  const handleValueChange = useCallback((side: PinSide, value: string) => {
-    onUpdate(side, value);
+  // A chevron drag is ONE gesture, anchored to the state it started from —
+  // exactly what `resize:start` captures (startWidth/startHeight) and what
+  // every frame of a handle drag measures against. Deriving each frame from the
+  // PREVIOUS one instead makes the zero crossing oscillate: the box mirrors to
+  // 1px, the next step shrinks that 1px back to 0, and it ping-pongs 0-1-0-1
+  // instead of growing back out (user report 2026-09-20). Anchored to the
+  // start, the size is `startSize − totalDelta`, which passes through zero and
+  // keeps going.
+  const gesture = useRef<{ side: PinSide; startValue: number; box: VisualRect | null } | null>(null);
+  useEffect(() => { gesture.current = null; }, [nodeId, vpId]);
+
+  /** What the field reads right now, in px — the base of a fresh gesture. */
+  const currentFieldPx = useCallback((side: PinSide) => fieldPx(
+    side,
+    side === 'left' ? displayLeft : side === 'right' ? displayRight : side === 'top' ? displayTop : displayBottom,
+    isHorizontalSide(side) ? parentW : parentH,
+  ), [displayLeft, displayRight, displayTop, displayBottom, parentW, parentH, painted]);
+
+  const writeField = useCallback((side: PinSide, value: string, live: boolean) => {
+    const valuePx = parseFloat(value);
+    if (!Number.isFinite(valuePx)) { onUpdate(side, value); lockNodePinning(nodeId); return; }
+
+    // A live frame continues the gesture; anything else (arrow key, typed
+    // value) is its own one-shot measured from the current state.
+    let g = gesture.current;
+    if (!live || !g || g.side !== side) {
+      g = { side, startValue: currentFieldPx(side), box: captureRectViaBridge() };
+      if (live) gesture.current = g; else gesture.current = null;
+    }
+
+    const write = pinFieldEditWrite({
+      side, valuePx, basePx: g.startValue, styles, box: g.box,
+      parentWidth: g.box?.parentWidth ?? 0,
+      parentHeight: g.box?.parentHeight ?? 0,
+      matrixStr: findNodeComputedStyle(nodeId, vpId, 'transform') || 'none',
+    });
+    const keys = Object.keys(write);
+    if (keys.length === 1 && keys[0] === side) {
+      // A plain move: keep the caller's own unit handling (a % source stays %).
+      onUpdate(side, value);
+    } else {
+      // Same clear semantics as handlePinToggle — on a variant/band channel a
+      // '' would re-expose the base value instead of removing the property.
+      const newStyles = applyReplicaClearSemantics(nodeId, vpId, write);
+      trace.action('pin:field-edge-resize', { nodeId, side, value, live, startValue: g.startValue, newStyles });
+      onUpdateMultiple(newStyles);
+    }
     // Typing a value into a pin field counts as a manual pin choice.
     lockNodePinning(nodeId);
-  }, [onUpdate, nodeId]);
+  }, [onUpdate, onUpdateMultiple, nodeId, vpId, styles, captureRectViaBridge, currentFieldPx]);
+
+  const handleValueChange = useCallback((side: PinSide, value: string) => writeField(side, value, false), [writeField]);
+  const handleValueLive = useCallback((side: PinSide, value: string) => writeField(side, value, true), [writeField]);
+  // The release value, written as the gesture's last frame so the committed
+  // state matches the number the field ends on, then the gesture closes.
+  const handleValueCommit = useCallback((side: PinSide, value: string) => {
+    writeField(side, value, true);
+    gesture.current = null;
+  }, [writeField]);
 
   // Pin button component
   const PinBtn = ({ side }: { side: PinSide }) => {
@@ -432,9 +450,14 @@ export default function PinControl({ styles, nodeId, vpId, onUpdate, onUpdateMul
       {/* Top input — centered, 80px */}
       <div className="flex justify-center mt-2">
         <div style={{ width: 80 }}>
+          {/* Whole numbers on display; the source keeps its precision (see
+              ToolInput.roundLengthForDisplay — these fields pass a bare number,
+              so they round here). */}
           <ToolInput
-            value={`${parsePx(displayTop)}`}
-            onChange={(v) => handleValueChange('top', v.includes('px') ? v : `${v}px`)}
+            value={`${Math.round(fieldPx('top', displayTop, parentH))}`}
+            onChange={(v) => handleValueChange('top', pinFieldCommitValue(v, displayTop, parentH))}
+            onChangeLive={(v) => handleValueLive('top', pinFieldCommitValue(v, displayTop, parentH))}
+            onCommit={(v) => handleValueCommit('top', pinFieldCommitValue(v, displayTop, parentH))}
           />
         </div>
       </div>
@@ -444,8 +467,10 @@ export default function PinControl({ styles, nodeId, vpId, onUpdate, onUpdateMul
         {/* Left input */}
         <div style={{ width: 80 }}>
           <ToolInput
-            value={`${parsePx(displayLeft)}`}
-            onChange={(v) => handleValueChange('left', v.includes('px') ? v : `${v}px`)}
+            value={`${Math.round(fieldPx('left', displayLeft, parentW))}`}
+            onChange={(v) => handleValueChange('left', pinFieldCommitValue(v, displayLeft, parentW))}
+            onChangeLive={(v) => handleValueLive('left', pinFieldCommitValue(v, displayLeft, parentW))}
+            onCommit={(v) => handleValueCommit('left', pinFieldCommitValue(v, displayLeft, parentW))}
           />
         </div>
 
@@ -469,8 +494,10 @@ export default function PinControl({ styles, nodeId, vpId, onUpdate, onUpdateMul
         {/* Right input */}
         <div style={{ width: 80 }}>
           <ToolInput
-            value={`${parsePx(displayRight)}`}
-            onChange={(v) => handleValueChange('right', v.includes('px') ? v : `${v}px`)}
+            value={`${Math.round(fieldPx('right', displayRight, parentW))}`}
+            onChange={(v) => handleValueChange('right', pinFieldCommitValue(v, displayRight, parentW))}
+            onChangeLive={(v) => handleValueLive('right', pinFieldCommitValue(v, displayRight, parentW))}
+            onCommit={(v) => handleValueCommit('right', pinFieldCommitValue(v, displayRight, parentW))}
           />
         </div>
       </div>
@@ -479,8 +506,10 @@ export default function PinControl({ styles, nodeId, vpId, onUpdate, onUpdateMul
       <div className="flex justify-center">
         <div style={{ width: 80 }}>
           <ToolInput
-            value={`${parsePx(displayBottom)}`}
-            onChange={(v) => handleValueChange('bottom', v.includes('px') ? v : `${v}px`)}
+            value={`${Math.round(fieldPx('bottom', displayBottom, parentH))}`}
+            onChange={(v) => handleValueChange('bottom', pinFieldCommitValue(v, displayBottom, parentH))}
+            onChangeLive={(v) => handleValueLive('bottom', pinFieldCommitValue(v, displayBottom, parentH))}
+            onCommit={(v) => handleValueCommit('bottom', pinFieldCommitValue(v, displayBottom, parentH))}
           />
         </div>
       </div>

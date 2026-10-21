@@ -79,10 +79,17 @@ function checkScrollDialect(ast: t.File, v: OracleViolation[]): void {
             for (const p of arg.properties) {
               if (!t.isObjectProperty(p) || !t.isIdentifier(p.key)) continue;
               if (p.key.name === 'target') {
+                // Plain ref, or variant-gated `cond ? heroRef : undefined` — the
+                // element is not rendered in some variants and an unhydrated
+                // target ref throws (see shared/scroll-target).
+                const gated = t.isConditionalExpression(p.value)
+                  && t.isIdentifier(p.value.consequent)
+                  && t.isIdentifier(p.value.alternate, { name: 'undefined' });
                 if (t.isIdentifier(p.value)) targetRefs.push({ name: p.value.name, line });
+                else if (gated) targetRefs.push({ name: (p.value as t.ConditionalExpression & { consequent: t.Identifier }).consequent.name, line });
                 else v.push({
                   code: 'SCROLL_USESCROLL_SHAPE', tier: 2, line,
-                  message: `useScroll target (line ${line}) must be a ref variable (target: heroRef).`,
+                  message: `useScroll target (line ${line}) must be a ref variable (target: heroRef), or one gated on the variants that render it (target: variant !== 'mobile' ? heroRef : undefined).`,
                 });
               } else if (p.key.name === 'offset' && !t.isArrayExpression(p.value)) {
                 v.push({
@@ -217,6 +224,16 @@ function checkScrollDialect(ast: t.File, v: OracleViolation[]): void {
           t.isIdentifier(n.callee.property, { name: 'querySelector' }) &&
           n.arguments.length > 0 && t.isStringLiteral(n.arguments[0]) &&
           n.arguments[0].value.includes('data-id')
+        ) selectsDataId = true;
+        // Section-in-View resolves its target by ANCHOR id — the shape
+        // updateScrollAnimInCode writes (`xRef.current = document.getElementById('about') || document.body`)
+        // and the scroll parser reads back. The anchor is the link, the same
+        // way the data-id selector is above; the first rule only knew the
+        // selector form and flagged the builder's own section transforms.
+        if (
+          t.isCallExpression(n) && t.isMemberExpression(n.callee) &&
+          t.isIdentifier(n.callee.property, { name: 'getElementById' }) &&
+          n.arguments.length > 0 && t.isStringLiteral(n.arguments[0])
         ) selectsDataId = true;
       });
       if (selectsDataId && refAttachments.get(left.object.name) !== true) {

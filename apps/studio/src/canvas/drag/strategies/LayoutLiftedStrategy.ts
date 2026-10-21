@@ -13,11 +13,12 @@
 // Placeholders created via bridge.createPlaceholder, nodes lifted via bridge.liftNode.
 
 import type { Point, PendingUpdate, Rect, NewNodeDescriptor } from '@/shared/types';
+import { isInstanceOwnedNode } from '@/canvas/drag/instance-drop-guard';
 import { nextFrames } from '@/shared/dom-utils';
 import { buildCanvasCloneDescriptor } from '../clone-descriptor';
 import { queueBorderOverlayDuplicates } from '@/canvas/creators/creator-utils';
 import type { DragContext, DragStrategy, DragMoveResult } from '../types';
-import { detectParentLayoutById, getFlexDirectionById } from '../types';
+import { detectParentLayoutById, getFlexDirectionById, resolveParentDisplay } from '../types';
 import { getCanvasDelta, isInsideRect, getAbsoluteCanvasRectById, screenToPct } from '@/canvas/canvas-math';
 import { isPrimaryViewport, vpIdFromPrefix, getActiveFilePath, getViewportPrefix, patchNodeStyles, findNodeRect, findNodeComputedStyle, findNodeComputedStyles, findVisibleChildRects, getNodeHitsAtPoint, injectCanvasCSS, removeCanvasCSS, parseRectCacheKey } from '@/canvas/node-ops';
 import { getScreenCornersById, nodeOrAncestorHasRotationOrSkewById, type ScreenCorners } from '@/canvas/resize/geometry-utils';
@@ -41,6 +42,7 @@ import { calculateLayoutInsertIndexById, computeReorderAssignments } from '../re
 import { rankToOrder, pickPlaceholderOrder, normalizeFlowSpans } from './order-positioning';
 import { commitOrderAssignments, computeLayoutBrackets } from './order-commit';
 import { queueMutation, flushNow, getCurrentCode, hasPendingDeferredFanOut } from '@/code/mutation/mutation-queue';
+import { exitSizes, isTextExitNode } from '../exit-size';
 import { commitExitToCanvas, flushExitToCanvas } from '../exit-commit';
 import { registerDragEndRestore } from '../drag-end-restores';
 import { computeExitCanvasPosition } from '../transform-reparent';
@@ -126,6 +128,24 @@ export function computeMergedTemplatedOrder(mergedChildren: string[], pageSectio
 }
 
 
+
+/** The `collectionList` container whose TEMPLATE ROW contains `draggedId`
+ *  (the row itself, or any descendant of it), walking up from `parentId`.
+ *  Null when the drag is not inside a collection row. Single source for the
+ *  ghost-hide AND the live-size-read skip so the two can never drift. */
+export function findCollectionGhostContainer(draggedId: string, parentId: string): { containerId: string; isRow: boolean } | null {
+  let rowId = draggedId;
+  let cur = getNodeFromCache(parentId);
+  for (let i = 0; cur && i < 50; i++) {
+    if (cur.collectionList) {
+      if (!Object.values(cur.collectionList.templateIds).includes(rowId)) return null;
+      return { containerId: cur.id, isRow: rowId === draggedId };
+    }
+    rowId = cur.id;
+    cur = cur.parentId ? getNodeFromCache(cur.parentId) : undefined;
+  }
+  return null;
+}
 
 export class LayoutLiftedStrategy implements DragStrategy {
   readonly name = 'layout-lifted';
@@ -273,6 +293,8 @@ export class LayoutLiftedStrategy implements DragStrategy {
    *  would otherwise persist). Null when the drag isn't inside a collection. */
   private hiddenGhostsContainerId: string | null = null;
   private hiddenGhostsVpPrefix: string = '';
+  /** Set when only ONE node's ghost copies are hidden (drag inside a row). */
+  private hiddenGhostsNodeId: string | null = null;
   /** Set when the drag happened ANYWHERE inside a collection-list template row
    *  (not just ON the row — `hiddenGhostsContainerId` covers that narrower
    *  case). The DOM-only ghost rows are clones of the template, and the
@@ -352,8 +374,9 @@ export class LayoutLiftedStrategy implements DragStrategy {
     // Effective parent display — same rationale as the child position
     // check above (replica @container can override base flex/grid with
     // a `display: 'block'` from LayoutTool's remove-layout).
-    const parentComputedDisplay = findNodeComputedStyle(firstNode.startParentId, vpId, 'display');
-    const parentDisplay = parentComputedDisplay || parentNode.styles?.display || '';
+    // (`resolveParentDisplay` lets the authored flex/grid win on the PRIMARY
+    // viewport, where a mismatch is always a stale computed cache.)
+    const parentDisplay = resolveParentDisplay(firstNode.startParentId, vpId, parentNode);
     const parentIsFlex = parentDisplay === 'flex' || parentDisplay === 'inline-flex';
 
     // A computed `absolute`/`fixed` normally routes to AbsoluteInFrameStrategy.
@@ -862,15 +885,28 @@ export class LayoutLiftedStrategy implements DragStrategy {
     // Will this drag hide the parent's collection ghosts? Same test the
     // ghost-hide below performs, hoisted because the live-size read has to know
     // BEFORE it issues (see the skip inside the loop).
-    const ghostParentForRead = getNodeFromCache(parentId);
-    const hidesCollectionGhosts = !!ghostParentForRead?.collectionList
-      && Object.values(ghostParentForRead.collectionList.templateIds).includes(draggedNodes[0]?.id ?? '');
+    // Only a ROW drag hides whole ghost rows (and reflows the template — the
+    // reason for the read skip). A node inside the row hides just its own
+    // ghost copies with `visibility`, so the rows keep their layout.
+    const ghostScope = findCollectionGhostContainer(draggedNodes[0]?.id ?? '', parentId);
+    const hidesCollectionGhosts = !!ghostScope?.isRow;
 
     const liveSizeReads = new Map<string, Promise<DOMRect | null>>();
     if ('getRectAsync' in bridge) {
       for (const node of draggedNodes) {
         const ns0 = getNodeFromCache(node.id)?.styles ?? {};
         if (ns0.transform || ns0.rotate) continue;
+        // ANCESTOR rotation/skew too: a flow child of a `rotate(90deg)` flex
+        // frame carries no transform of its own, but getRectAsync still
+        // returns its PAINTED AABB — here the 120×40 chip's 40×120 box. The
+        // "correction" swapped the lifted overlay's width/height in place
+        // (left/top untouched), so its centre jumped 40px off the cursor
+        // for the whole drag (user repro 2026-09-09, transformed frame with
+        // layout). The cached css size from the lift is the right one.
+        if (nodeOrAncestorHasRotationOrSkewById(node.id, vpIdFromPrefix(vpPrefix))) {
+          trace.action('layout-lifted:live-size-skip-rotated-ancestor', { nodeId: node.id });
+          continue;
+        }
         // COLLECTION-LIST TEMPLATE rows are skipped. Dragging one hides its
         // ghost siblings (`setCollectionGhostsHidden`, below) so a single row
         // drags cleanly — which leaves the template as the ONLY flex child and
@@ -1122,23 +1158,27 @@ export class LayoutLiftedStrategy implements DragStrategy {
       (bridge as PostMessageBridge).setDragLockedNodeIds(allLockedIds);
     }
 
-    // CMS collection list: collapse the DOM-only ghost copies ONLY while the
-    // dragged node IS a collection ITEM (the data-index-0 template node) — so
-    // that one item drags cleanly without the repeated rows. Dragging a child
-    // INSIDE the item, or any sibling node, must leave the list intact, so this
-    // checks the DIRECT parent (the `collectionList` container) and that the
-    // dragged node is one of its template nodes — NOT an ancestor walk.
-    this.hiddenGhostsContainerId = null;
-    const ghostParent = getNodeFromCache(parentId);
-    if (
-      ghostParent?.collectionList &&
-      Object.values(ghostParent.collectionList.templateIds).includes(draggedNodes[0]?.id ?? '')
-    ) {
-      this.hiddenGhostsContainerId = parentId;
-    }
+    // CMS collection list: collapse the DOM-only ghost copies while the dragged
+    // node is the collection ITEM (the data-index-0 template row) OR any node
+    // INSIDE it — a title, an image. The ghosts are clones of the template
+    // row whose inline styles are re-synced from it by the Renderer; mid-drag
+    // that copies the LIFTED geometry (position/left/top at the cursor) onto
+    // every ghost's copy of the dragged node, which then paints offset far
+    // from its row (2026-09-08: dragging a row title showed the other rows'
+    // titles floating bottom-right). Hiding the ghosts for the whole gesture
+    // leaves exactly one element under the cursor. Sibling nodes OUTSIDE the
+    // row leave the list intact (the walk stops at the first collection
+    // container and requires the row to be one of its template nodes).
+    // Row drag → whole ghost rows collapse (`display:none`). Node INSIDE the
+    // row → only that node's ghost copies hide (`visibility`), every other
+    // row stays exactly where it is (2026-09-08 follow-up: hiding the rows
+    // for a title drag emptied the whole list under the cursor).
+    const ghostHide = findCollectionGhostContainer(draggedNodes[0]?.id ?? '', parentId);
+    this.hiddenGhostsContainerId = ghostHide?.containerId ?? null;
+    this.hiddenGhostsNodeId = ghostHide && !ghostHide.isRow ? (draggedNodes[0]?.id ?? null) : null;
     if (this.hiddenGhostsContainerId && 'setCollectionGhostsHidden' in bridge) {
       this.hiddenGhostsVpPrefix = vpPrefix;
-      (bridge as PostMessageBridge).setCollectionGhostsHidden(this.hiddenGhostsContainerId, vpPrefix, true);
+      (bridge as PostMessageBridge).setCollectionGhostsHidden(this.hiddenGhostsContainerId, vpPrefix, true, this.hiddenGhostsNodeId ?? undefined);
     }
 
     // Was this drag anywhere inside a collection-list row? Walk the ANCESTORS
@@ -1425,6 +1465,7 @@ export class LayoutLiftedStrategy implements DragStrategy {
           if (originalAncestors.has(hit.id)) continue;
           const node = context.nodes.get(hit.id);
           if (!node) continue;
+          if (isInstanceOwnedNode(hit.id, node as any)) continue; // master-owned — never a parent
           const tag = (node as any).tag || node.type || 'div';
           if (!nodeAcceptsChildren(node)) continue;
           foundNewParent = hit.id;
@@ -1476,8 +1517,16 @@ export class LayoutLiftedStrategy implements DragStrategy {
               top: `${Math.round(canvasTop)}px`,
             };
             if (lifted) {
-              ms.width = `${Math.round(lifted.width)}px`;
-              ms.height = `${Math.round(lifted.height)}px`;
+              // Same size rule as the drop-on-canvas branch — an auto text
+              // passing through the canvas into another frame stays auto.
+              const sizes = exitSizes(
+                context.nodes.get(node.id)?.styles,
+                `${Math.round(lifted.width)}px`,
+                `${Math.round(lifted.height)}px`,
+                isTextExitNode(context.nodes.get(node.id)),
+              );
+              ms.width = sizes.width;
+              ms.height = sizes.height;
             }
 
             // REPLICA SPLIT — the mid-drag half of the drop path's rule (its
@@ -1801,6 +1850,7 @@ export class LayoutLiftedStrategy implements DragStrategy {
       for (const [candidateId, candidateNode] of context.nodes) {
         if (draggedIds.has(candidateId)) continue;
         if (candidateId === this.parentNodeId) continue;
+        if (isInstanceOwnedNode(candidateId, candidateNode as any)) continue; // master-owned
         const tag = candidateNode.type || 'div';
         if (!nodeAcceptsChildren(candidateNode)) continue;
 
@@ -2024,8 +2074,13 @@ export class LayoutLiftedStrategy implements DragStrategy {
         const cn = getNodeFromCache(id);
         if (!cn) return false;
         if (cn.isCanvasNode) return false;
-        const pos = cn.styles?.position || '';
-        if (pos === 'absolute' || pos === 'fixed') return false;
+        // Viewport-resolved, like the two reads above — the COMMIT had its own
+        // copy of this filter, so on a viewport whose layout lives in an @media
+        // rule every sibling dropped out here and `desiredOrder` carried only
+        // the dragged node. Its `order` was rewritten alone, against siblings
+        // that all still read `order: 0`, so the tie fell back to DOM order and
+        // the drop appeared to do nothing (user report 2026-09-21).
+        if (!this.isLayoutParticipant(id, cn)) return false;
         if (draggedIdSet.has(id)) return false;
         return true;
       }) : [];
@@ -2456,8 +2511,8 @@ export class LayoutLiftedStrategy implements DragStrategy {
           const cn = getNodeFromCache(id);
           if (!cn) return false;
           if (cn.isCanvasNode) return false;
-          const pos = cn.styles?.position || '';
-          if (pos === 'absolute' || pos === 'fixed') return false;
+          // Viewport-resolved, see isLayoutParticipant.
+          if (!this.isLayoutParticipant(id, cn)) return false;
           if (draggedIdSet.has(id)) return false;
           return true;
         }) : [];
@@ -2568,8 +2623,23 @@ export class LayoutLiftedStrategy implements DragStrategy {
           currentLeft = lifted ? `${Math.round(lifted.left)}px` : '0px';
           currentTop = lifted ? `${Math.round(lifted.top)}px` : '0px';
         }
-        const currentWidth = lifted ? `${Math.round(lifted.width)}px` : '';
-        const currentHeight = lifted ? `${Math.round(lifted.height)}px` : '';
+        // A node that sized itself to its CONTENT keeps doing so on the
+        // canvas. `lifted.width` is a MEASUREMENT of the box it happened to
+        // fill inside its parent, so committing it as px turns an auto-width
+        // text into a frozen 123px box — the Dimensions panel then reads
+        // "123" where it read "auto" a moment earlier, and editing the text
+        // no longer resizes it (user report 2026-10-05). Content sizes carry
+        // over, and a text with no width of its own counts as auto — it
+        // lands as `max-content` (see exit-size.ts; 2026-10-16). A percentage
+        // or stretch was resolved AGAINST THE PARENT, which the node no
+        // longer has, so for those the measured px really is the honest
+        // preservation of what the user saw.
+        const { width: currentWidth, height: currentHeight } = exitSizes(
+          context.nodes.get(node.id)?.styles,
+          lifted ? `${Math.round(lifted.width)}px` : '',
+          lifted ? `${Math.round(lifted.height)}px` : '',
+          isTextExitNode(context.nodes.get(node.id)),
+        );
 
         // Replica drag-out: two sub-paths, mirroring AbsoluteInFrameStrategy's
         // replica exit:
@@ -2924,8 +2994,8 @@ export class LayoutLiftedStrategy implements DragStrategy {
       const cn = getNodeFromCache(childId);
       if (!cn) continue;
       if (cn.isCanvasNode) continue;
-      const pos = cn.styles?.position || '';
-      if (pos === 'absolute' || pos === 'fixed') continue;
+      // Viewport-resolved, see isLayoutParticipant.
+      if (!this.isLayoutParticipant(childId, cn)) continue;
       locked.push(childId);
     }
     const bridge = getCanvasBridge();
@@ -2971,8 +3041,8 @@ export class LayoutLiftedStrategy implements DragStrategy {
       const cn = getNodeFromCache(childId);
       if (!cn) continue;
       if (cn.isCanvasNode) continue;
-      const pos = cn.styles?.position || '';
-      if (pos === 'absolute' || pos === 'fixed') continue;
+      // Viewport-resolved, see isLayoutParticipant.
+      if (!this.isLayoutParticipant(childId, cn)) continue;
       const rank = this.originalChildIndices.get(childId);
       let orderValue: string;
       if (rank !== undefined) {
@@ -3327,8 +3397,8 @@ export class LayoutLiftedStrategy implements DragStrategy {
         const cn = getNodeFromCache(id);
         if (!cn) return false;
         if (cn.isCanvasNode) return false;
-        const pos = cn.styles?.position || '';
-        if (pos === 'absolute' || pos === 'fixed') return false;
+        // Viewport-resolved, see isLayoutParticipant.
+        if (!this.isLayoutParticipant(id, cn)) return false;
         if (draggedIds.has(id)) return false;
         return true;
       }) : [];
@@ -3697,9 +3767,9 @@ export class LayoutLiftedStrategy implements DragStrategy {
       if (child.id.startsWith('layout::')) continue;
       const childNode = getNodeFromCache(child.id);
       if (childNode?.isCanvasNode) continue;
-      // Skip absolute/fixed children (not layout participants)
-      const pos = childNode?.styles?.position || '';
-      if (pos === 'absolute' || pos === 'fixed') continue;
+      // Skip absolute/fixed children (not layout participants) — resolved for
+      // THIS viewport, see isLayoutParticipant.
+      if (!this.isLayoutParticipant(child.id, childNode)) continue;
       rects.push(child);
     }
     // When editing the TEMPLATE itself (LayoutClient.tsx), the `{children}`
@@ -3809,10 +3879,59 @@ export class LayoutLiftedStrategy implements DragStrategy {
       const childNode = getNodeFromCache(childId);
       if (!childNode) return false;
       if (childNode.isCanvasNode) return false;
-      const pos = childNode.styles?.position || '';
-      if (pos === 'absolute' || pos === 'fixed') return false;
-      return true;
+      return this.isLayoutParticipant(childId, childNode);
     });
+  }
+
+  /** Is this child laid out by the parent ON THE DRAG VIEWPORT?
+   *
+   *  `position` is read from the BASE style everywhere else, but a frame given
+   *  a layout on ONE viewport writes its children's `position: relative` into
+   *  THAT viewport's @media rule — the base keeps the `absolute` they had
+   *  before. Every child then failed the filter on the very viewport where the
+   *  layout exists, and the strategy saw no layout children: no reorder between
+   *  siblings, just the snap bands of a free drag (user report 2026-09-21,
+   *  "layout only on mobile, drag reorder not working AT ALL").
+   *
+   *  Shared by `getLayoutChildIds` and `getLayoutSiblingRects` — they had the
+   *  same check written twice and a comment claiming they match, so fixing one
+   *  left the other reporting `siblingCount: 0`. Same store the `order` read at
+   *  drag start consults, for the same reason: an override wins at render time
+   *  but never reaches the inline style. */
+  private isLayoutParticipant(
+    childId: string,
+    childNode: {
+      styles?: Record<string, string>;
+      motionVariants?: Record<string, Record<string, string>> | null;
+      conditionalStyles?: Record<string, Record<string, string>> | null;
+    } | null | undefined,
+  ): boolean {
+    let effective: string | undefined;
+    if (isComponentFilePath(getActiveFilePath())) {
+      // DESIGN COMPONENT: a master stores per-variant position in the variants
+      // OBJECT (and layout props as inline ternaries), not in an @media rule.
+      // Reading only the container overrides missed it, so a frame given a
+      // layout on ONE VARIANT filtered both its children out on that tile and
+      // the reorder had nothing to work with — the @media bug again, third
+      // channel (user report 2026-09-21). Renderer precedence: base, then the
+      // always-on `default` entry, then this tile's own.
+      const variantKey = isPrimaryViewport(this.currentVpId) ? 'default' : this.currentVpId;
+      const mv = childNode?.motionVariants;
+      const cond = childNode?.conditionalStyles;
+      effective = mv?.[variantKey]?.position
+        ?? cond?.position?.[variantKey]
+        ?? mv?.default?.position
+        ?? cond?.position?.['default']
+        ?? undefined;
+    } else if (!isPrimaryViewport(this.currentVpId)) {
+      try {
+        const overrides = getDefaultStore().get(containerOverridesAtom);
+        const vpWidth = getViewportWidths()[this.currentVpId] ?? 0;
+        if (overrides && vpWidth > 0) effective = getOverrideValue(overrides, childId, 'position', vpWidth) ?? undefined;
+      } catch { /* jotai graph unstubbed in tests — fall back to inline */ }
+    }
+    const pos = (effective ?? childNode?.styles?.position ?? '').trim();
+    return pos !== 'absolute' && pos !== 'fixed';
   }
 
   /**
@@ -3910,9 +4029,10 @@ export class LayoutLiftedStrategy implements DragStrategy {
     // Re-show the collection-list ghosts hidden on lift (ghost elements are
     // reused across renders, so their inline visibility must be cleared here).
     if (this.hiddenGhostsContainerId && 'setCollectionGhostsHidden' in bridge) {
-      (bridge as PostMessageBridge).setCollectionGhostsHidden(this.hiddenGhostsContainerId, this.hiddenGhostsVpPrefix, false);
+      (bridge as PostMessageBridge).setCollectionGhostsHidden(this.hiddenGhostsContainerId, this.hiddenGhostsVpPrefix, false, this.hiddenGhostsNodeId ?? undefined);
     }
     this.hiddenGhostsContainerId = null;
+    this.hiddenGhostsNodeId = null;
     this.hiddenGhostsVpPrefix = '';
     // Collection-list ghosts are clones of the template row, re-synced by the
     // Renderer's patch only when the row's DOM structure or CMS bindings move.

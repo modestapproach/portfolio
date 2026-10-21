@@ -3,6 +3,7 @@
 // Each command composes low-level operations from node-ops.ts.
 
 import type { CanvasNode } from '@/code/parsing/parser';
+import { unfoldFlowStyles } from './unfold-flow-sizing';
 import { TRANSPARENT_FILL } from '@/shared/css-utils';
 import { getDefaultStore } from 'jotai';
 import { removeNode, updateNodeStyles, isPrimaryViewport, getInteractingViewport, getActiveFilePath, patchNodeStyles, getViewportPrefix, vpIdFromPrefix, parseRectCacheKey, findNodeRect, findNodeComputedStyles } from './node-ops';
@@ -14,8 +15,12 @@ import { parseIconSetConfig } from '@/code/icons/icon-set-config';
 import { removeIconFromSet } from '@/code/icons/icon-set-ops';
 import { projectFS } from '@/code/project/project-fs';
 import { getViewportWidths } from '@/code/stores/viewport-store';
+import { isViewerMode } from '@/code/stores/viewer-mode-store';
+import { refusedByCollaboratorLock } from './collab/collab-locks';
 import { parseCanvasConfig, updateCanvasConfigInCode } from '@/code/project/canvas-config';
 import { clearContainerStylesForWidth, removeResponsiveBreakpoint } from '@/code/generation/generator-styles';
+import { isStartModelLadder } from '@/code/project/breakpoint-ladder';
+import { commitBreakpointRemove } from './helpers/breakpoint-commit';
 import { modifyProjectFile } from '@/code/project/modify-file';
 import { getReplicaContext } from '@/canvas/drag/replica-context';
 import { parseOverlayCalls, parseOverlayTriggerCalls } from '@/code/parsing/overlay-parser';
@@ -200,6 +205,9 @@ export function deleteNode(nodeIdOrIds: string | string[], contentEl: HTMLElemen
   // Filter out layout nodes and placeholder — they can't be deleted from page context
   const filteredIds = ids.filter(id => !id.startsWith('layout::') && id !== 'children-slot');
   if (filteredIds.length === 0) return;
+  // A collaborator is dragging / resizing one of these right now — deleting it
+  // under them throws their gesture away (collab-locks.ts).
+  if (refusedByCollaboratorLock(filteredIds, 'delete')) return;
 
   trace.action('commands:delete', { nodeIds: filteredIds, vpId, isPrimary });
 
@@ -413,14 +421,38 @@ export function deleteNode(nodeIdOrIds: string | string[], contentEl: HTMLElemen
   }
 }
 
-/** Toggle lock on a node (prevents selection/drag) */
+/** Toggle lock on a node (prevents selection/drag).
+ *
+ *  Lock is a WHOLE-NODE property — never per viewport or per variant. It used
+ *  to go through `updateNodeStyles`, whose routing sends a write made while a
+ *  REPLICA row is active into that viewport's @media band (component master:
+ *  the variant's styles). The padlock (`node.styles.pointerEvents`) and the
+ *  hit-test (`isNodeLockedById`) both read the BASE, so a lock pressed on the
+ *  tablet row flipped nothing and locked nothing (2026-09-09). Write the base
+ *  inline style directly, then mirror it into the cache and every painted tile
+ *  so the icon and the hit-test agree immediately. */
 export function toggleLock(nodeId: string, contentEl: HTMLElement, nodesMap: Map<string, CanvasNode>): void {
+  if (isViewerMode()) return;
   const node = nodesMap.get(nodeId);
   if (!node) return;
   const isLocked = node.styles.pointerEvents === 'none';
   const newValue = isLocked ? '' : 'none';
   trace.action('node-ops:toggle-lock', { nodeId, locked: !isLocked });
-  updateNodeStyles({ id: nodeId, styles: { pointerEvents: newValue }, contentEl });
+  queueMutation({ type: 'updateStyles', nodeId, styles: { pointerEvents: newValue } });
+  // PER-TILE VALUES ARE LEFT ALONE. `pointerEvents` is also a first-class panel
+  // row (Styles > Pointer Events), which on a replica writes an @media band —
+  // and nothing distinguishes such an authored `none` from one the old
+  // viewport-routed lock wrote there. Clearing on lock (or unlock) silently
+  // destroyed the user's own per-breakpoint setting, so we never touch bands:
+  // the padlock owns the base, the Pointer row owns the tiles, and a leftover
+  // from the old bug shows up in that row (accented, with Reset Override).
+  const vpWidths = getViewportWidths();
+  // Cache + every painted copy NOW: the padlock and the hit-test read the
+  // cache, and no tile should wait for the flush render.
+  updateNodeInCache(nodeId, { pointerEvents: newValue });
+  for (const vpId of Object.keys(vpWidths)) {
+    patchNodeStyles(contentEl, nodeId, getViewportPrefix(vpId), { pointerEvents: newValue });
+  }
 }
 
 /** Toggle visibility on a node */
@@ -468,11 +500,12 @@ export function wrapInFrame(
 }
 
 /**
- * Like `wrapInFrame` but the new frame is a flex column with center
- * alignment. Children move into the frame as flow items (their inline
- * `position`/`left`/`top` are cleared) so the layout engine takes over —
- * matches the user expectation that "Create Layout" reorganizes the
- * selection into a stack.
+ * Like `wrapInFrame` but the new frame is a centered flex stack. Children move
+ * into the frame as flow items (their inline `position`/`left`/`top` are
+ * cleared) so the layout engine takes over — matches the user expectation that
+ * "Create Layout" reorganizes the selection into a stack. A free-positioned
+ * selection (canvas / absolute) stacks along its own axis — side by side →
+ * row, stacked → column; everything else is a column.
  */
 export function wrapInLayout(
   nodeIds: string[],
@@ -606,6 +639,23 @@ function unionBoxes(boxes: BoundingBox[]): BoundingBox | null {
 }
 
 /**
+ * Stack axis for Create Layout on a free-positioned selection: how far the
+ * selection reaches past its biggest box on each axis. Side-by-side boxes
+ * extend the union sideways and barely at all vertically → `row`; stacked
+ * boxes the other way round → `column`. Measured against the biggest box, not
+ * box centers, so a tall box top-aligned next to a short one still reads as
+ * side by side (their centers are further apart vertically than horizontally).
+ * Ties keep the old default, `column`.
+ */
+function inferStackDirection(boxes: BoundingBox[]): 'row' | 'column' {
+  const union = unionBoxes(boxes);
+  if (!union || boxes.length < 2) return 'column';
+  const reachX = union.width - Math.max(...boxes.map((b) => b.width));
+  const reachY = union.height - Math.max(...boxes.map((b) => b.height));
+  return reachX > reachY ? 'row' : 'column';
+}
+
+/**
  * Shared body for `wrapInFrame` and `wrapInLayout`. Builds the bounding
  * box, validates that all selected nodes share the same encapsulation
  * context (all canvas OR all same-parent absolute), then queues the
@@ -700,13 +750,18 @@ function wrapInternal(
   // flow children already uses. All-or-nothing so the union stays in one space.
   let bbox: BoundingBox | null = null;
   let measuredBoxes: Map<string, BoundingBox> | null = null;
+  // Every selected node's box from whichever source built the bbox — the same
+  // space, so Create Layout can read the selection's direction off it.
+  let nodeBoxes: Map<string, BoundingBox> | null = null;
   if ((allCanvas || allSameParentAbsolute) && !singleAbsChild) {
     const inline = nodes.map(readNodeBox);
     if (inline.every((b): b is BoundingBox => !!b)) {
       bbox = unionBoxes(inline as BoundingBox[]);
+      nodeBoxes = new Map(nodes.map((n, i) => [n.id, inline[i]!]));
     } else {
       measuredBoxes = measureAbsoluteBoxes(nodeIds, allCanvas ? null : sharedParentId!);
       bbox = measuredBoxes ? unionBoxes([...measuredBoxes.values()]) : null;
+      nodeBoxes = measuredBoxes;
       trace.action('commands:wrap-in-frame:bbox-measured', {
         ids: nodeIds,
         unreadable: nodes.filter((n, i) => !inline[i]).map((n) => n.id),
@@ -718,6 +773,23 @@ function wrapInternal(
       return null;
     }
   }
+
+  // CREATE LAYOUT FOLLOWS THE CANVAS. Free-positioned boxes (canvas nodes,
+  // absolute siblings) already have a direction on screen; a fixed column
+  // stacked two frames sitting side by side on top of each other (user report
+  // 2026-10-19). The children also enter in visual order along that axis, not
+  // selection order — otherwise picking right-to-left would swap them.
+  const stackBoxes = layout ? nodeBoxes : null;
+  const stackDirection = stackBoxes ? inferStackDirection([...stackBoxes.values()]) : 'column';
+  const moveOrder = stackBoxes
+    ? [...nodes].sort((a, b) => {
+        const ba = stackBoxes.get(a.id)!;
+        const bb = stackBoxes.get(b.id)!;
+        return stackDirection === 'row'
+          ? ba.left - bb.left || ba.top - bb.top
+          : ba.top - bb.top || ba.left - bb.left;
+      })
+    : nodes;
 
   const frameId = generateNodeId();
   // A frame that wraps TEXT must CLIP its overflow. Text with `line-height < 1`
@@ -767,7 +839,16 @@ function wrapInternal(
         if (v != null && v !== '') flowPlacement[k] = v;
       }
     }
+    // A flow child must never shrink (FLEX_CHILD_SHRINKS). With several
+    // children nothing above sets a flex on the wrapper, so it sat on the CSS
+    // default and collapsed in a constrained column — the editor's own drop
+    // path writes `0 0 auto` on every flow child, and the wrapper is one.
+    if (!flowPlacement.flex && !flowPlacement.flexShrink) flowPlacement.flex = '0 0 auto';
   }
+  // No `backgroundColor` on any wrapper: CSS already paints it see-through, and a
+  // written `rgba(0, 0, 0, 0)` made the Fill row read "Add" while its picker
+  // opened at 0% alpha — every colour picked stayed invisible (user report
+  // 2026-10-15). With no fill, Add starts from an opaque colour like any frame.
   let baseFrameStyles: Record<string, string>;
   if (allSameParentFlow) {
     // Flow wrapper: parent is flex/grid/static and the selected children
@@ -784,7 +865,6 @@ function wrapInternal(
           // won't shrink-to-content under `auto`, but does under min-content.
           width: FIT_SIZE,
           height: FIT_SIZE,
-          backgroundColor: TRANSPARENT_FILL,
           overflow: wrapOverflow,
           ...flowPlacement,
         }
@@ -799,7 +879,6 @@ function wrapInternal(
           width: `${Math.round(flowBbox!.width)}px`,
           height: `${Math.round(flowBbox!.height)}px`,
           flex: '0 0 auto',
-          backgroundColor: TRANSPARENT_FILL,
           overflow: wrapOverflow,
           ...flowPlacement,
         }
@@ -809,7 +888,6 @@ function wrapInternal(
           // it never collapses.
           width: 'auto',
           height: 'auto',
-          backgroundColor: TRANSPARENT_FILL,
           overflow: wrapOverflow,
           ...flowPlacement,
         };
@@ -835,7 +913,6 @@ function wrapInternal(
           flexDirection: 'column',
           alignItems: 'center',
           justifyContent: 'center',
-          backgroundColor: TRANSPARENT_FILL,
           overflow: wrapOverflow,
         }
       : {
@@ -843,27 +920,30 @@ function wrapInternal(
           // Plain frame: take the child's own box so the child sits at 0,0 inside.
           // Real absolute elements always carry explicit width/height; fall back
           // to `auto` (hug) on the rare element that doesn't (no bbox here).
-          width: cs.width || 'auto',
-          height: cs.height || 'auto',
-          backgroundColor: TRANSPARENT_FILL,
+          // keepFlowChildren (Make Component on a bare text): the child becomes a
+          // FLOW item below, so the wrapper must HUG it — a px box + an absolute
+          // child measured 0×0 under `overflow: hidden` and the master's text was
+          // invisible (live find 2026-09-07).
+          width: !bakeFlowToAbsolute ? 'auto' : (cs.width || 'auto'),
+          height: !bakeFlowToAbsolute ? 'auto' : (cs.height || 'auto'),
           overflow: wrapOverflow,
         };
   } else if (layout) {
-    // Layout container at bounding box: hug the content. Children flow
-    // vertically and center; the wrapper sizes to whatever the flex column
-    // resolves to. Matches Figma's "Create Auto Layout" gesture.
+    // Layout container at bounding box: hug the content. Children flow along
+    // the selection's own axis (`stackDirection`) and center; the wrapper sizes
+    // to whatever the flex stack resolves to. Matches Figma's "Create Auto
+    // Layout" gesture.
     baseFrameStyles = {
       position: 'absolute',
       left: `${Math.round(bbox!.left)}px`,
       top: `${Math.round(bbox!.top)}px`,
-      // Fit = min-content so the flex column hugs its content (auto won't shrink).
+      // Fit = min-content so the flex stack hugs its content (auto won't shrink).
       width: FIT_SIZE,
       height: FIT_SIZE,
       display: 'flex',
-      flexDirection: 'column',
+      flexDirection: stackDirection,
       alignItems: 'center',
       justifyContent: 'center',
-      backgroundColor: TRANSPARENT_FILL,
       overflow: wrapOverflow,
     };
   } else {
@@ -876,14 +956,13 @@ function wrapInternal(
       top: `${Math.round(bbox!.top)}px`,
       width: `${Math.round(bbox!.width)}px`,
       height: `${Math.round(bbox!.height)}px`,
-      backgroundColor: TRANSPARENT_FILL,
       overflow: wrapOverflow,
     };
   }
 
   trace.action('commands:wrap-in-frame:plan', {
     frameId, childIds: nodeIds, layout, allCanvas, parentId: sharedParentId,
-    bbox,
+    bbox, ...(stackBoxes ? { stackDirection } : {}),
   });
 
   // Queue create + moves. The mutation queue applies them in order against
@@ -919,7 +998,7 @@ function wrapInternal(
   //     takes over (Create Layout on absolute selection).
   //   • Plain frame at bbox: rewrite left/top frame-relative (Create Frame
   //     on absolute or canvas selection).
-  for (const node of nodes) {
+  for (const node of moveOrder) {
     let styles: Record<string, string> | undefined;
     if (flowToAbsolute) {
       // Flow → absolute inside the new frame. Position is the child's measured
@@ -977,7 +1056,11 @@ function wrapInternal(
       // it; leaving it on the child too would double-shift.
       styles = layout
         ? { position: '', left: '', top: '', right: '', bottom: '', transform: '' }
-        : { position: 'absolute', left: '0px', top: '0px', right: '', bottom: '', transform: '' };
+        : !bakeFlowToAbsolute
+          // keepFlowChildren: the wrapper hugs, so the child is a flow item
+          // (explicit `relative` — every node carries a position).
+          ? { position: 'relative', left: '', top: '', right: '', bottom: '', transform: '' }
+          : { position: 'absolute', left: '0px', top: '0px', right: '', bottom: '', transform: '' };
     } else if (layout) {
       styles = {
         position: '',
@@ -1167,12 +1250,21 @@ export function unfoldChildren(
         flex: '0 0 auto',
       };
     } else if (frameHasLayout && gpHasLayout) {
-      // CASE 3: both layout. Children stay flow; just clear stale absolute
-      // positioning that may have leaked in.
-      styles = {
-        position: 'relative',
-        left: '', top: '',
-      };
+      // CASE 3: both layout. Children stay flow — but their sizing was
+      // written against the FRAME (fill/percent/stretch), and in the
+      // grandparent's layout those declarations resolve differently (a
+      // column-fill child in a row parent: grow now fights for width,
+      // height → auto → 0px, the water-image frame vanished, 2026-09-09).
+      // See unfold-flow-sizing.ts: a single child takes the frame's slot,
+      // several keep the size they painted.
+      const childRect = findNodeRect(childId, vpId);
+      styles = unfoldFlowStyles({
+        frameStyles: node.styles ?? {},
+        childStyles: child.styles ?? {},
+        measured: childRect ? { width: childRect.width / scale, height: childRect.height / scale } : null,
+        siblingCount: node.children.length,
+      });
+      trace.action('commands:unfold-children:flow-sizing', { childId, styles });
     } else {
       // CASE 4: no-layout → no-layout. Add frame offset to child position.
       // Bridge rects are most accurate (handles transforms); inline-style
@@ -1382,7 +1474,18 @@ function unfoldToCanvas(
  * Other viewports (primary + other replicas) are untouched. The primary
  * viewport is rejected upstream in `deleteNode`.
  */
-function removeReplicaViewport(filePath: string, vpId: string): void {
+export function removeReplicaViewport(filePath: string, vpId: string): void {
+  // START MODEL: the next narrower breakpoint takes the removed one's range (breakpoint-ladder.ts).
+  const current = parseCanvasConfig(projectFS.readFile(filePath) ?? '')?.viewports;
+  if (current && isStartModelLadder(current)) {
+    const vp = current.find(v => v.id === vpId);
+    if (!vp || vp.isPrimary) {
+      trace.error('commands:remove-replica-viewport-not-found-or-primary', { vpId });
+      return;
+    }
+    commitBreakpointRemove(filePath, vpId);
+    return;
+  }
   modifyProjectFile(filePath, (code) => {
     const cfg = parseCanvasConfig(code);
     if (!cfg) return code;

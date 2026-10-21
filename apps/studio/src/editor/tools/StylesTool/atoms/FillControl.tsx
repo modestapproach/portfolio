@@ -4,12 +4,13 @@
 import { useState, useRef, useEffect, useCallback } from 'react';
 import { useLivePreview } from '../../../hooks/useLivePreview';
 import { useAtomValue, useSetAtom } from 'jotai';
+import { cmsPageMetaAtom } from '@/code/stores/cms-page-store';
 import LocaleBoundPill, { useLocaleStyleOverrides } from '@/editor/controls/LocaleBoundPill';
 import { UnifiedControlProvider, useControlContext, useControlContextOptional, ShowControlLabels } from '../../../controls/unified';
 import { UsedByRow } from '../../../controls/unified/UsedByRow';
 import { VariableBoundPill, LegacyVariableBoundPill } from '../../../controls/VariableBoundPill';
 import { useControlOptional } from '../../../controls/ControlProvider';
-import { CmsBoundPill, CmsMissingPill } from '../../../controls/CmsBoundPill';
+import { CmsBoundPill, CmsMissingPill, cmsOrphanInScope } from '../../../controls/CmsBoundPill';
 import type { MenuItem } from '../../../controls/control-menu-items';
 import { createDefaultGradient, formatGradient } from '@/shared/gradient-utils';
 import { toHexDisplay } from '../../../ui/color-utils';
@@ -31,6 +32,9 @@ import EditAssetPresetPanel from '../../../ui/EditAssetPresetPanel';
 import ColorPresetEditPanel from '../../../ui/ColorPresetEditPanel';
 import { getCanvasBridge } from '@/canvas/canvas-bridge';
 import { isComponentFileAtom, selectedIdsAtom } from '@/code/stores/store';
+import { forSelectionTargets } from '../../../controls/multi-select-targets';
+import { isComponentVariantViewportAtom, activeComponentVariantAtom } from '@/code/stores/viewport-store';
+import { fillClearStyles, isTransparentColor } from './fill-clear';
 import { getContentRoot, updateNodeStyles } from '@/canvas/node-ops';
 import { activeCodeAtom } from '@/code/project/active-file-store';
 import { getPropType } from '@/code/components/prop-meta';
@@ -298,6 +302,13 @@ function detectFillTab(styles: Record<string, string>, node?: CanvasNode | null)
   return 'color';
 }
 
+/** The tab of a fill the node actually HAS — null when it has none. */
+function filledFillTab(styles: Record<string, string>, node?: CanvasNode | null): FillTab | null {
+  const tab = detectFillTab(styles, node);
+  if (tab !== 'color') return tab;
+  return styles.backgroundColor ? 'color' : null;
+}
+
 /** Transparent-checker pattern for the empty poster swatch — matches the
  *  alpha-checker visual the rest of the editor uses for "no value yet". */
 const ALPHA_CHECKER_STYLE: React.CSSProperties = {
@@ -339,7 +350,7 @@ function VideoFillTab({ node }: { node: CanvasNode | null }) {
   // Partial-update wrapper — every toggle/select calls this with one field.
   const patchVideo = useCallback((opts: Parameters<typeof queueMutation>[0] extends infer _ ? Record<string, unknown> : never) => {
     if (!nodeId) return;
-    queueMutation({ type: 'setVideoFill', nodeId, opts: opts as any });
+    forSelectionTargets(nodeId, (tid) => queueMutation({ type: 'setVideoFill', nodeId: tid, opts: opts as any }));
     trace.action('fill:video-patched', { nodeId, fields: Object.keys(opts) });
   }, [nodeId]);
 
@@ -347,13 +358,15 @@ function VideoFillTab({ node }: { node: CanvasNode | null }) {
   // clears competing fills that may be set on the host.
   const applyVideoSrc = useCallback((url: string) => {
     if (!nodeId) return;
-    queueMutation({ type: 'setVideoFill', nodeId, opts: { src: url } });
-    queueMutation({ type: 'updateStyles', nodeId, styles: {
-      backgroundColor: '',
-      background: '',
-      backgroundImage: '',
-      backgroundVideo: '',
-    } });
+    forSelectionTargets(nodeId, (tid) => {
+      queueMutation({ type: 'setVideoFill', nodeId: tid, opts: { src: url } });
+      queueMutation({ type: 'updateStyles', nodeId: tid, styles: {
+        backgroundColor: '',
+        background: '',
+        backgroundImage: '',
+        backgroundVideo: '',
+      } });
+    });
     trace.action('fill:video-src-applied', { nodeId, urlLength: url.length });
   }, [nodeId]);
 
@@ -538,7 +551,7 @@ function VideoFillTab({ node }: { node: CanvasNode | null }) {
   );
 }
 
-function SingleModeFillContent({ styles, onUpdate, onLivePreview, solidOnly }: { styles: Record<string, string>; onUpdate: (k: string, v: string) => void; onLivePreview?: (color: string | null) => void; solidOnly?: boolean }) {
+export function SingleModeFillContent({ styles, onUpdate, onLivePreview, solidOnly }: { styles: Record<string, string>; onUpdate: (k: string, v: string) => void; onLivePreview?: (color: string | null) => void; solidOnly?: boolean }) {
   const ctx = useControlContextOptional();
   // Legacy control ctx exposes `updateStyleLive` — the fast canvas-only DOM
   // patch used for smooth drags (commit via onUpdate on release).
@@ -557,11 +570,33 @@ function SingleModeFillContent({ styles, onUpdate, onLivePreview, solidOnly }: {
     trace.action('fill-control:create-preset-panel', { color });
   }, [pushPanel, popPanel]);
 
+  // The Gradient tab's one commit path — shared by the editor and the tab
+  // switch. Clear conflicting props FIRST: `background: ''` wipes every
+  // background-* longhand from the inline DOM (CSSOM shorthand semantics), so
+  // it must precede the backgroundImage write.
+  const commitGradient = (css: string) => {
+    if (styles.background) onUpdate('background', '');
+    if (styles.backgroundColor) onUpdate('backgroundColor', '');
+    onUpdate('backgroundImage', css);
+  };
+
   // Re-detect tab ONLY when selected node changes (not during editing)
   useEffect(() => {
     setTab(solidOnly ? 'color' : detectFillTab(styles, node));
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [nodeId, solidOnly]);
+
+  // …and when the node's fill turns into a DIFFERENT kind from outside the
+  // popup — undo/redo, the agent, a collaborator. Image → Gradient → Cmd+Z
+  // put the image back while the popup stayed on Gradient (user report
+  // 2026-10-16). Only a REAL fill moves the tab: an empty one (Image/Video
+  // tab before anything is picked) is the user choosing, and detectFillTab's
+  // 'color' fallback would bounce them out of it.
+  const filledTab = filledFillTab(styles, node);
+  useEffect(() => {
+    if (!solidOnly && filledTab && filledTab !== tab) setTab(filledTab);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [filledTab]);
 
   return (
     <>
@@ -580,8 +615,19 @@ function SingleModeFillContent({ styles, onUpdate, onLivePreview, solidOnly }: {
             // Leaving the Video tab — remove the bg-video child via the
             // dedicated mutation, since it lives on the node, not in styles.
             if (tab === 'video' && nodeId) {
-              queueMutation({ type: 'removeVideoFill', nodeId });
+              forSelectionTargets(nodeId, (tid) => queueMutation({ type: 'removeVideoFill', nodeId: tid }));
             }
+            // APPLY what the new tab shows. Its editor falls back to a default
+            // for DISPLAY only (black→white gradient, #000000 picker) and
+            // writes nothing until a stop/picker is touched — so the old fill
+            // was cleared above and the frame went transparent while the
+            // popup showed a gradient (user report 2026-10-16). Image/Video
+            // show an empty picker, so there is nothing to apply.
+            if (newTab === 'gradient') {
+              const current = [styles.backgroundImage, styles.background].find(v => v && /gradient\(/.test(v));
+              if (!current) commitGradient(formatGradient(createDefaultGradient()));
+            }
+            if (newTab === 'color' && !styles.backgroundColor) onUpdate('backgroundColor', '#000000');
           }
           setTab(newTab);
         }}
@@ -656,14 +702,7 @@ function SingleModeFillContent({ styles, onUpdate, onLivePreview, solidOnly }: {
       {tab === 'gradient' && (
         <GradientEditor
           value={styles.backgroundImage || styles.background || ''}
-          onChange={(css) => {
-            // Clear conflicting props FIRST — `background: ''` wipes every
-            // background-* longhand from the inline DOM (CSSOM shorthand
-            // semantics), so it must precede the backgroundImage write.
-            if (styles.background) onUpdate('background', '');
-            if (styles.backgroundColor) onUpdate('backgroundColor', '');
-            onUpdate('backgroundImage', css);
-          }}
+          onChange={commitGradient}
           // Smooth drag: patch the canvas DOM directly every frame (no code
           // re-parse); GradientEditor fires onChange once on release to commit.
           onLiveChange={legacyCtl ? (css) => legacyCtl.updateStyleLive('backgroundImage', css) : undefined}
@@ -1208,6 +1247,7 @@ function FillPopupContent({ styles, onUpdate, onChangeMultiple, nodeId: nodeIdPr
 function FillAtom() {
   const { node, onChangeMultiple, binding, mode, allProps, hasVariable } = useControlContext();
   const legacyCtl = useControlOptional();
+  const fillCmsPageMeta = useAtomValue(cmsPageMetaAtom);
   const styles = allProps;
   const btnRef = useRef<HTMLSpanElement>(null);
   const allTokens = useAtomValue(presetTokensAtom);
@@ -1219,6 +1259,11 @@ function FillAtom() {
   // the menu items + bound pill.
   const isComponentFile = useAtomValue(isComponentFileAtom);
   const fillHoverColor: 'accent' | 'accent-secondary' = isComponentFile ? 'accent-secondary' : 'accent';
+  // A NON-default variant tile: the × must write explicit neutrals, not ''
+  // (which means "inherit default" there) — see fill-clear.ts.
+  const isVariantTile = useAtomValue(isComponentVariantViewportAtom);
+  const activeVariant = useAtomValue(activeComponentVariantAtom);
+  const onNonDefaultVariant = !!isVariantTile && !!activeVariant && activeVariant !== 'default';
   // Locale `:lang()` overrides on the fill → blue Locale pill (Phase 4).
   const fillLocaleOverrides = useLocaleStyleOverrides('backgroundColor', node?.id ?? null);
   // Active file code — used to read a bound Fill variable's @propMeta TYPE so an
@@ -1303,11 +1348,15 @@ function FillAtom() {
   );
   if (fillOrphan && legacyCtl?.node) {
     const orphanNodeId = legacyCtl.node.id;
+    // See ContentControl: on a `[slug]` page the field is this page's own, so
+    // the pill names it instead of claiming it went missing.
+    const fillOrphanLabel = cmsOrphanInScope(fillOrphan.field, legacyCtl.cmsBinding, fillCmsPageMeta?.kind === 'detail');
     return (
       <div className="flex items-center justify-between w-full">
         <ControlLabel label="Fill" property="backgroundColor" />
         <CmsMissingPill
           field={fillOrphan.field}
+          label={fillOrphanLabel ?? undefined}
           onClear={() => queueMutation({ type: 'clearCmsOrphan', nodeId: orphanNodeId, propName: fillOrphan.prop })}
         />
       </div>
@@ -1474,7 +1523,10 @@ function FillAtom() {
   // True when ANY fill is present — drives the empty alpha-checker placeholder
   // and gates the × clear button. A live color drag counts as a fill so the
   // row doesn't flash to the "Add" placeholder mid-drag.
-  const hasAnyFill = livePreviewColor != null || isMulti || isPresetRef || hasGradient || hasImage || hasVideo || !!bgColor;
+  // A fully transparent colour (the frame creator's `rgba(0, 0, 0, 0)`, or a
+  // variant's cleared fill) is NO fill: placeholder + "Add", not a swatch.
+  const hasSolidColor = !!bgColor && !isTransparentColor(bgColor);
+  const hasAnyFill = livePreviewColor != null || isMulti || isPresetRef || hasGradient || hasImage || hasVideo || hasSolidColor;
 
   // Click-handler for the × on the Fill row — wipes EVERY background-related
   // value (color, gradient, image, multi-layer extras, AND the bg-video
@@ -1486,20 +1538,11 @@ function FillAtom() {
   // normal render → "Rendered fewer hooks than expected" crash.
   const handleClearAll = (e: React.MouseEvent) => {
     e.stopPropagation();
-    onChangeMultiple({
-      backgroundColor: '',
-      background: '',
-      backgroundImage: '',
-      backgroundSize: '',
-      backgroundPosition: '',
-      backgroundRepeat: '',
-      backgroundAttachment: '',
-      backgroundBlendMode: '',
-    });
+    onChangeMultiple(fillClearStyles(onNonDefaultVariant, styles));
     if (node?.id && node.bgVideo) {
-      queueMutation({ type: 'removeVideoFill', nodeId: node.id });
+      forSelectionTargets(node.id, (tid) => queueMutation({ type: 'removeVideoFill', nodeId: tid }));
     }
-    trace.action('fill:clear-all', { nodeId: node?.id });
+    trace.action('fill:clear-all', { nodeId: node?.id, onNonDefaultVariant });
   };
 
   // Empty state defaults — alpha-checker swatch + "Add" label. Each branch
@@ -1557,7 +1600,7 @@ function FillAtom() {
     // Raw bg-video URL with no matching preset.
     swatchStyle = { background: '#000' };
     labelText = 'Video';
-  } else if (bgColor) {
+  } else if (hasSolidColor) {
     const displayColor = bgColor.startsWith('#') && bgColor.length === 4
       ? `#${bgColor[1]}${bgColor[1]}${bgColor[2]}${bgColor[2]}${bgColor[3]}${bgColor[3]}`
       : bgColor;

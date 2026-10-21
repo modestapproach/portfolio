@@ -5,21 +5,30 @@ import React, { useState, useCallback, useEffect, useRef, type PointerEvent as R
 import { useAtomValue } from 'jotai';
 import { componentEditorPropsAtom } from '@/code/stores/component-editor-store';
 import { compileCodeComponent } from '@/canvas/code-component-runtime';
-import ComponentChat from './ComponentChat';
+import AgentChat from '@/editor/agent/AgentChat';
 import CreditsIndicator from '../CreditsIndicator';
 import { trace } from '@/shared/debug-trace';
 
 interface ComponentPreviewPaneProps {
   code: string;
   fileName: string;
-  liveCode: string;
-  onCodeChange: (code: string) => void;
 }
 
-export default function ComponentPreviewPane({ code, fileName, liveCode, onCodeChange }: ComponentPreviewPaneProps) {
+export default function ComponentPreviewPane({ code, fileName }: ComponentPreviewPaneProps) {
   const props = useAtomValue(componentEditorPropsAtom);
   const [error, setError] = useState<string | null>(null);
   const [CompiledComponent, setCompiledComponent] = useState<React.ComponentType<any> | null>(null);
+
+  // Environment flag for the preview pane's lifetime. Components that gate
+  // themselves on per-session state (an intro loader's play-once flag, a
+  // cookie-consent banner) check this global to know they're in the code
+  // editor and should ALWAYS run — previewMode only reaches the compiler,
+  // never the component, so without a signal a play-once component renders
+  // an empty pane after its first run.
+  useEffect(() => {
+    (window as any).__REVYME_COMPONENT_PREVIEW_PANE__ = true;
+    return () => { delete (window as any).__REVYME_COMPONENT_PREVIEW_PANE__; };
+  }, []);
 
   // Compile the component whenever code changes
   useEffect(() => {
@@ -124,7 +133,13 @@ export default function ComponentPreviewPane({ code, fileName, liveCode, onCodeC
           </div>
         ) : CompiledComponent ? (
           <ErrorBoundary key={code + JSON.stringify(props)}>
-            <div style={{ position: 'absolute', inset: 0 }}>
+            {/* transform creates a CONTAINING BLOCK for position:fixed
+                descendants, so overlay-style components (intro loaders,
+                cursors) fill THIS pane instead of escaping over the whole
+                editor window — the pane runs components live (previewMode
+                forces useStaticCanvas false), so a fixed overlay otherwise
+                covers the entire editor UI. */}
+            <div style={{ position: 'absolute', inset: 0, transform: 'translateZ(0)' }}>
               <CompiledComponent
                 {...props}
                 style={{ width: '100%', height: '100%' }}
@@ -169,12 +184,13 @@ export default function ComponentPreviewPane({ code, fileName, liveCode, onCodeC
         {/* Chat content — hidden when collapsed */}
         {!chatCollapsed && (
           <div className="flex-1 min-h-0">
-            <ComponentChat code={liveCode} onCodeChange={onCodeChange} />
+            {/* The SAME agent as everywhere else. It knows it is in here — the
+                turn's context names this file (src/ai/agent/surface.ts) — so a
+                request is about this component by default. */}
+            <AgentChat />
           </div>
         )}
 
-        {/* Whole-section gate (AI Chat strip + credits included) while the
-            in-house agent is offline (see VibeComingSoonGate). */}
       </div>
     </div>
   );

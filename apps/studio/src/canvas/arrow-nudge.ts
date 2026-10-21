@@ -23,6 +23,9 @@ import { getDefaultStore } from 'jotai';
 import { containerOverridesAtom } from '@/code/stores/container-query-store';
 import { isComponentFilePath } from '@/code/project/active-file-store';
 import { bakeStylesForTile, tileContextFor } from './replica-bake';
+import { resolveOverlayConfig } from '@/code/parsing/overlay-parser';
+import type { OverlayConfig } from '@/shared/types';
+import { refusedByCollaboratorLock } from './collab/collab-locks';
 
 export type NudgeDirection = 'up' | 'down' | 'left' | 'right';
 
@@ -155,19 +158,72 @@ function effectiveStylesFor(node: CanvasNode, vpId: string): Record<string, stri
  * Pure over its inputs so the rule is testable without a canvas bridge.
  */
 export function computeFlowSiblingOrder(
-  children: { id: string; rect: { left: number; top: number }; position: string | null | undefined }[],
+  children: {
+    id: string;
+    rect: { left: number; top: number };
+    position: string | null | undefined;
+    order?: number | null;
+    /** Not rendered on this viewport/variant. Such a child has NO usable
+     *  geometry — see the placement note below. */
+    hidden?: boolean;
+  }[],
   flexDirection: 'row' | 'column',
 ): string[] {
-  return children
+  const kept = children
     // TEMPLATE CHROME excluded: on a templated page the flat merge makes
     // `layout::` nodes siblings of the sections — including them here made an
     // arrow reorder renumber the template footer/nav in SECTION space (the
     // band-corruption commitOrderAssignments now also guards against).
+    .map((c, index) => ({ ...c, index }))
     .filter(c => !c.id.startsWith('layout::') && c.id !== 'children-slot')
-    .filter(c => c.position !== 'absolute' && c.position !== 'fixed')
-    .slice()
-    .sort((a, b) => (flexDirection === 'row' ? a.rect.left - b.rect.left : a.rect.top - b.rect.top))
-    .map(c => c.id);
+    .filter(c => c.position !== 'absolute' && c.position !== 'fixed');
+
+  // HIDDEN siblings are placed by `order`, never by geometry.
+  //
+  // A hidden element's rect is (0,0,0,0) — the iframe's top-left — so it does
+  // not merely sort imprecisely, it sorts BEFORE every laid-out sibling and
+  // never reaches the tie-break below. The caller renumbers this sequence
+  // 0..n-1, so the hidden child was rewritten to `order: 0` on every nudge: its
+  // authored position was silently destroyed and it reappeared at the front of
+  // the parent when unhidden (user report 2026-09-19). The shift is uniform, so
+  // the VISIBLE result stayed correct — which is why this went unnoticed.
+  //
+  // `order` is the only record of where a hidden child belongs, so it is what
+  // places it: sort the visible ones by geometry as before, then splice each
+  // hidden one in at the point its `order` puts it among them.
+  const visible = kept.filter(c => !c.hidden);
+  const hidden = kept.filter(c => c.hidden);
+
+  visible.sort((a, b) => {
+    const d = flexDirection === 'row' ? a.rect.left - b.rect.left : a.rect.top - b.rect.top;
+    // A ZERO-SIZE sibling ties on the main axis with the sibling that follows
+    // it (a code component whose min-content width squeezed its flex siblings
+    // to 0px, live find 2026-09-06). A geometry tie must fall back to what
+    // CSS itself uses to place them — `order`, then source index — otherwise
+    // the tie keeps INPUT (source) order, the moved node reads as still first,
+    // and every arrow press is a no-op or rewrites the same assignments.
+    if (Math.abs(d) > 0.5) return d;
+    const ao = a.order ?? 0; const bo = b.order ?? 0;
+    if (ao !== bo) return ao - bo;
+    return a.index - b.index;
+  });
+
+  if (hidden.length === 0) return visible.map(c => c.id);
+
+  // Lowest order first, so equal-order hidden children keep their source order
+  // relative to each other rather than reversing.
+  hidden.sort((a, b) => (a.order ?? 0) - (b.order ?? 0) || a.index - b.index);
+  const out = [...visible];
+  for (const h of hidden) {
+    const ho = h.order ?? 0;
+    // First visible child whose order is GREATER — the hidden one belongs just
+    // before it. Equal orders keep the hidden child after, matching how CSS
+    // breaks an `order` tie by source position.
+    let at = out.findIndex(c => !c.hidden && (c.order ?? 0) > ho);
+    if (at === -1) at = out.length;
+    out.splice(at, 0, h);
+  }
+  return out.map(c => c.id);
 }
 
 export function computeOrderNudge(
@@ -210,10 +266,67 @@ export interface NudgeContext {
  * Mutations are queued + flushed immediately; the DOM is also patched via the
  * bridge for instant visual feedback.
  */
+// ─── Pure: overlay offset nudge ─────────────────────────────────────────────
+
+/**
+ * An OVERLAY is `position: fixed` but its placement is not left/top — the
+ * runtime derives it from the trigger rect + the overlay config's offset. So
+ * an arrow press on a selected overlay must nudge `offsetX` / `offsetY`,
+ * routed exactly like the overlay drag commit: primary tile → base config,
+ * component variant tile → that variant's override, page replica → that
+ * width's override. (Before: the absolute path wrote left/top, which the
+ * portal placement ignored — "arrows do nothing on a selected overlay",
+ * live find 2026-09-06.)
+ */
+export function computeOverlayNudge(
+  config: OverlayConfig,
+  direction: NudgeDirection,
+  step: number,
+  tile: { vpId: string; vpWidth: number; isPrimary: boolean; isComponentFile: boolean },
+): { patch: { offsetX: number; offsetY: number }; vpWidth: number | null; variant: string | null } {
+  const eff = tile.isPrimary
+    ? { offsetX: config.offsetX ?? 0, offsetY: config.offsetY ?? 0 }
+    : resolveOverlayConfig(config, tile.vpId, tile.vpWidth);
+  const dx = direction === 'left' ? -step : direction === 'right' ? step : 0;
+  const dy = direction === 'up' ? -step : direction === 'down' ? step : 0;
+  const variant = (!tile.isPrimary && tile.isComponentFile) ? tile.vpId : null;
+  return {
+    patch: { offsetX: (eff.offsetX ?? 0) + dx, offsetY: (eff.offsetY ?? 0) + dy },
+    vpWidth: variant ? null : (tile.isPrimary ? null : tile.vpWidth),
+    variant,
+  };
+}
+
 export function nudgeSelection(direction: NudgeDirection, step: number, ctx: NudgeContext): void {
   const { selectedIds, nodes, contentEl, vpId } = ctx;
   if (selectedIds.length === 0) return;
+  // A collaborator is dragging / resizing one of these right now.
+  if (refusedByCollaboratorLock(selectedIds, 'nudge')) return;
   trace.action('arrow-nudge:start', { direction, step, count: selectedIds.length, vpId });
+
+  // Single OVERLAY selection → offset nudge (config write, not left/top).
+  if (selectedIds.length === 1) {
+    const ovNode = nodes.get(selectedIds[0]);
+    const rawCfg = ovNode?.attrs?.['data-overlay'];
+    if (ovNode && rawCfg) {
+      let config: OverlayConfig | null = null;
+      try { config = JSON.parse(rawCfg) as OverlayConfig; } catch { config = null; }
+      if (config) {
+        const widths = getViewportWidths();
+        const isPrimary = isPrimaryViewport(vpId);
+        const { patch, vpWidth, variant } = computeOverlayNudge(config, direction, step, {
+          vpId, vpWidth: widths[vpId] ?? 0, isPrimary, isComponentFile: isComponentFilePath(getActiveFilePath()),
+        });
+        queueMutation({
+          type: 'updateOverlayConfig', overlayId: ovNode.id, patch,
+          vpWidth, variant, breakpoints: Object.values(widths),
+        });
+        flushNow();
+        trace.action('arrow-nudge:overlay-offset', { id: ovNode.id, direction, step, patch, vpWidth, variant });
+        return;
+      }
+    }
+  }
 
   // Single layout-child selection → ORDER nudge (multi-select reorder is
   // ambiguous, so it falls through to the absolute path which no-ops on
@@ -285,7 +398,10 @@ export function queuePendingUpdates(updates: PendingUpdate[]): void {
         variantName: update.variantName, styles: update.styles,
       };
     } else if (update.type === 'setConditionalOrder' && update.orderMap != null) {
-      mutation = { type: 'setConditionalOrder', nodeId: update.nodeId, orderMap: update.orderMap };
+      mutation = {
+        type: 'setConditionalOrder', nodeId: update.nodeId,
+        orderMap: update.orderMap, pinVariants: update.pinVariants,
+      };
     }
     if (mutation) {
       queueMutation(mutation);
@@ -319,6 +435,11 @@ function nudgeOrder(
       id: c.id,
       rect: c.rect,
       position: findNodeComputedStyle(c.id, vpId, 'position'),
+      order: parseInt(findNodeComputedStyle(c.id, vpId, 'order') || '0', 10) || 0,
+      // Both tests matter: `display:none` is the authored hide, and a 0x0 rect
+      // catches the same degenerate geometry from a mid-flush remeasure.
+      hidden: findNodeComputedStyle(c.id, vpId, 'display') === 'none'
+        || (c.rect.width === 0 && c.rect.height === 0),
     })),
     flexDir,
   );

@@ -10,7 +10,7 @@ import { codeAtom, selectedIdsAtom, updatingFromCanvasAtom } from '@/code/stores
 import { projectVersionAtom, projectFS } from '@/code/project/project-fs';
 import { translationsOverlayOpenAtom } from '@/code/stores/left-panel-store';
 import { activeLocaleAtom } from '@/code/stores/locale-store';
-import { activeFilePathAtom, switchActiveFile, setSwitchCameraHandler } from '@/code/project/active-file-store';
+import { activeFilePathAtom, switchActiveFile, setSwitchCameraHandler, componentBreadcrumbAtom } from '@/code/project/active-file-store';
 import { applyPageCameraForSwitch, initCameraPersist } from '@/canvas/transform';
 import { setBumpVersion, consumeGestureVersionBump } from '@/code/project/modify-file';
 import { initHistory, pushHistory, syncHistoryCode } from '@/code/mutation/history';
@@ -26,6 +26,11 @@ import { triggerAutosave } from '@/backend/autosave';
 import { dragStateOps } from '@/canvas/drag/drag-state-store';
 import { createDeferredDragFlush } from './deferred-drag-flush';
 import { trace } from '@/shared/debug-trace';
+import { expediteStableAtomSync } from './useStableAtomSync';
+
+/** Below this node count the stable-mirror cascade is cheap enough that an
+ *  undo needs no canvas-paint-first budget. */
+const SMALL_PAGE_NODE_COUNT = 200;
 import { refreshCanvasTokens } from '../node-ops';
 import { getCanvasRenderer } from '../CanvasRenderer';
 
@@ -74,6 +79,12 @@ export function useMutationQueueLifecycle({
         // 5. Defer the React fan-out (setCode → panels/atoms) through the
         //    FENCED queue mechanism — applied early by any empty-queue flush,
         //    cancelled by a file switch, forced by the next undo/redo.
+        // Panels that read the STABLE mirror (Overlays row, CMS pills, page
+        // variables) otherwise catch up 450ms after the canvas — the delay
+        // exists to let a BIG page's canvas paint first. On a small page the
+        // mirror cascade is a few ms, so there is nothing to protect: let the
+        // panel land with the canvas ("undo brings the row back ~1s late").
+        if (restoredNodes.size <= SMALL_PAGE_NODE_COUNT) expediteStableAtomSync();
         scheduleQueueFanOut();
         // Re-inject CSS tokens from restored tokens.css (undo may have changed them)
         refreshCanvasTokens();
@@ -124,8 +135,18 @@ export function useMutationQueueLifecycle({
           localizationLocale: store.get(translationsOverlayOpenAtom)
             ? store.get(activeLocaleAtom)
             : null,
+          breadcrumb: [...store.get(componentBreadcrumbAtom)],
         }),
         set: (loc) => {
+          // Component breadcrumb trail — the ancestor files above the master
+          // the undo/redo lands on. Without this the hand-pushed stack keeps
+          // the master the user just left (nested Make Component undone) as
+          // an extra crumb, growing by one per undo/redo round.
+          if (loc.breadcrumb) {
+            const cur = store.get(componentBreadcrumbAtom);
+            const same = cur.length === loc.breadcrumb.length && cur.every((p, i) => p === loc.breadcrumb![i]);
+            if (!same) store.set(componentBreadcrumbAtom, [...loc.breadcrumb]);
+          }
           const wantLocale = loc.localizationLocale ?? null;
           // Locale FIRST: the overlay derives its target column from the
           // active locale, so opening before setting it renders one frame of

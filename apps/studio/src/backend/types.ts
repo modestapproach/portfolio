@@ -9,15 +9,56 @@ export const PROJECT_FORMAT = 'revyme-v1' as const;
  * the migration — an old export, a hand-restored backup — still hydrates
  * instead of silently loading as an empty project.
  */
-export type ProjectFormat = 'revyme-v1' | 'canvas-poc-v1';
+// 'revyme-v2' adds the `branches` envelope. A project with no non-main
+// branch still serializes as v1, so the payload of every existing site is
+// byte-identical to before branching shipped.
+export type ProjectFormat = 'revyme-v1' | 'revyme-v2' | 'canvas-poc-v1';
 
 export function isKnownProjectFormat(value: unknown): value is ProjectFormat {
-  return value === 'revyme-v1' || value === 'canvas-poc-v1';
+  return value === 'revyme-v1' || value === 'revyme-v2' || value === 'canvas-poc-v1';
+}
+
+/**
+ * The backend refused a save because the row moved on since this tab's copy
+ * was loaded — another tab or device saved newer work (save-revision.ts).
+ * `serverRevision` is the row's current revision (null if the backend did
+ * not say), the base an explicit "overwrite" saves against.
+ */
+export class SaveConflictError extends Error {
+  readonly serverRevision: number | null;
+  constructor(serverRevision: number | null) {
+    super('This project was saved from another tab or device after this tab loaded it.');
+    this.name = 'SaveConflictError';
+    this.serverRevision = serverRevision;
+  }
 }
 
 export interface ProjectData {
   format: ProjectFormat;
+  /** MAIN's files — the publish / export / backup truth, in BOTH formats.
+   *  Branches are stored beside it, never instead of it, so every consumer
+   *  that reads `files` keeps working and never needs to know about them. */
   files: Record<string, string>;  // ProjectFS snapshot: { filePath: fileContent }
+  /** v2 only: non-main branches, each with its working files and the merge
+   *  base it was cut from. Absent while the project has no branches. Saved as
+   *  deltas — `baseDelta` against main's `files`, `filesDelta` against the
+   *  branch's own base (project-fs FileDelta); `files` / `baseSnapshot` are
+   *  the legacy full copies, still read on load. */
+  branches?: Record<string, {
+    baseDelta?: { set: Record<string, string>; del: string[] };
+    filesDelta?: { set: Record<string, string>; del: string[] };
+    files?: Record<string, string>;
+    baseSnapshot?: Record<string, string>;
+    status?: string;
+    parentId?: string | null;
+    order?: number;
+    createdAt?: number;
+    lastEditedAt?: number | null;
+  }>;
+  /** v2 only: which branch the editor was last sitting on. Falls back to main
+   *  when it names a branch that no longer exists. */
+  activeBranchId?: string;
+  mainBranchId?: string;
   settings?: {
     fonts?: string[];
     pages?: string[];
@@ -43,6 +84,12 @@ export interface WorkspaceFont {
   url: string;
   uploadedAt: string;
   uploadedBy: string;
+  /** One file covering a weight RANGE rather than a single cut. */
+  isVariable?: boolean;
+  /** `wght` axis bounds → CSS `font-weight: <min> <max>`. */
+  weightRange?: { min: number; max: number };
+  /** `file` = read from the font's own tables, `filename` = guessed. */
+  source?: 'file' | 'filename';
 }
 
 export interface RevymeUser {

@@ -25,6 +25,7 @@ import { settingsOverlayOpenAtom, settingsSectionAtom, websiteMetaAtom } from '@
 import { isComponentFileAtom } from '@/code/stores/store';
 import { LiveDropdown } from './LiveDropdown';
 import { ExportDropdown, type ExportFormat } from './ExportDropdown';
+import ExportConfirmModal, { TRANSFORMATIVE_FORMATS } from '../ui/ExportConfirmModal';
 import { exportProject } from './export-project';
 import { useIsClosedSource } from '@/code/stores/closed-source-store';
 import { parseWebsiteMeta } from './publish-utils';
@@ -136,15 +137,27 @@ export default function RightHeader({ previewMode, onTogglePreview }: Props) {
   // The fetch → blob → download sequence lives in `export-project.ts` so
   // the cmd+K "Export Code" row runs the same path rather than a second
   // copy. Only the spinner and dropdown state are the component's job.
-  const handleExport = useCallback(async () => {
+  // Transformative formats (Vite project, HTML + CSS) confirm first — the
+  // output goes through a rewrite / prerender step and may not match the
+  // source project exactly. Source export downloads straight away.
+  const [confirmFormat, setConfirmFormat] = useState<ExportFormat | null>(null);
+  const runExport = useCallback(async (format: ExportFormat) => {
     if (exporting) return;
     setExporting(true);
     try {
-      if (await exportProject(exportFormat)) setExportOpen(false);
+      if (await exportProject(format)) { setExportOpen(false); setConfirmFormat(null); }
     } finally {
       setExporting(false);
     }
-  }, [exporting, exportFormat]);
+  }, [exporting]);
+  const handleExport = useCallback(() => {
+    if (TRANSFORMATIVE_FORMATS.has(exportFormat)) {
+      trace.action('header:export-confirm-open', { format: exportFormat });
+      setConfirmFormat(exportFormat);
+      return;
+    }
+    void runExport(exportFormat);
+  }, [exportFormat, runExport]);
 
   // Open Settings → Plans tab when the user clicks the upgrade
   // affordance inside the export dropdown.
@@ -155,8 +168,9 @@ export default function RightHeader({ previewMode, onTogglePreview }: Props) {
     setSettingsOpenAtom(true);
   }, [exportFormat, setSettingsSectionAtom, setSettingsOpenAtom]);
 
+  // Both builds export: cloud on the server, standalone the Next.js source
+  // zipped in the browser (export-project.ts).
   const handleExportToggle = useCallback(() => {
-    if (!CLOUD_ENABLED) return;
     setExportOpen((v) => !v);
     trace.action('header:export-toggle');
   }, []);
@@ -219,8 +233,34 @@ export default function RightHeader({ previewMode, onTogglePreview }: Props) {
       // live site doesn't have it" report).
       const { flushNow } = await import('@/code/mutation/mutation-queue');
       flushNow();
+      // Tier-3 pre-flight: the backend ships the source verbatim (no oracle at
+      // publish), so a file that parses but crashes React — a string style
+      // attribute, an undeclared identifier — used to reach production as a
+      // white page (bug-hunt 22). Refuse here, with file + line.
+      const { runPublishPreflight, formatPreflightIssues } = await import('@/code/oracle/publish-preflight');
+      const preflight = runPublishPreflight();
+      if (preflight.length > 0) {
+        trace.error('header:publish-preflight-blocked', { issues: preflight });
+        setProgress(0);
+        setPublishError({ message: formatPreflightIssues(preflight), upgradable: false });
+        return;
+      }
       const { flushSaveNow } = await import('@/backend/autosave');
-      await flushSaveNow();
+      // Publish builds from the SAVED row, not from this tab: a failed save
+      // would deploy the previous version while the editor shows the new one
+      // (a deleted page "coming back" after publish, 2026-10-14). Refuse.
+      const saved = await flushSaveNow();
+      if (!saved.ok) {
+        trace.error('header:publish-save-failed', { error: saved.error, conflict: !!saved.conflict });
+        setProgress(0);
+        setPublishError({
+          message: saved.conflict
+            ? 'Not published — this project was changed in another tab or device. Reload the editor to get the latest version, then publish.'
+            : `Not published — your latest changes could not be saved (${saved.error}). Try again in a moment.`,
+          upgradable: false,
+        });
+        return;
+      }
       const res = await fetch(`/api/websites/${id}/publish`, { method: 'POST' });
       const json = await res.json();
       if (json.success && json.url) {
@@ -316,7 +356,7 @@ export default function RightHeader({ previewMode, onTogglePreview }: Props) {
             tabIndex={-1}
             className="w-full cut-corners"
             onClick={handleExportToggle}
-            disabled={!(CLOUD_ENABLED || DISK_ENABLED) || isViewer || isClosedSource}
+            disabled={isViewer || isClosedSource}
             // `data-export-trigger` lets ExportDropdown's outside-click
             // listener ignore clicks on us so this toggle isn't fought
             // by a "close because outside" race.
@@ -331,6 +371,12 @@ export default function RightHeader({ previewMode, onTogglePreview }: Props) {
               Export is unavailable — this template's creator made its code closed source.
             </div>
           )}
+          <ExportConfirmModal
+            format={confirmFormat}
+            exporting={exporting}
+            onConfirm={() => { if (confirmFormat) void runExport(confirmFormat); }}
+            onClose={() => setConfirmFormat(null)}
+          />
           <ExportDropdown
             open={exportOpen}
             meta={meta}

@@ -33,3 +33,6 @@ before-oss-refactor/
 oss-release-plan/
 
 .DS_Store
+
+# LOCAL FORK: the upstream sync procedure is part of the fork, not a scratch script
+!scripts/sync-upstream.sh

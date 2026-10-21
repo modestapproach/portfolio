@@ -30,6 +30,7 @@ import { trace } from '@/shared/debug-trace';
 import { getI18nConfig } from '@/code/project/locale-ops';
 import { commitTranslationAttr, readTranslationText } from '@/code/project/translation-ops';
 import { getActiveFilePath } from '@/canvas/node-ops';
+import { expediteStableAtomSync } from '@/canvas/hooks/useStableAtomSync';
 
 /** Blue "overridden on this viewport/variant" label style (matches ComponentPropsTool). */
 const OVERRIDE_LABEL: React.CSSProperties = { color: 'var(--accent-text)', fontWeight: 600 };
@@ -233,6 +234,7 @@ export default function InputTool() {
     void (async () => {
       const raw = await fetchRawIconSvg(spec.icon);
       if (!raw) { trace.error('input-tool:select-icon-heal-fetch-failed', { icon: spec.icon }); return; }
+      expediteStableAtomSync();
       queueMutation({ type: 'updateSelectCaretRule', nodeId, cssBody: bakeSelectCaretCssBody(raw, spec.color ?? DEFAULT_SELECT_ICON_COLOR) });
       flushNow();
     })();
@@ -269,6 +271,7 @@ export default function InputTool() {
     if (!nodeId) return;
     // Spread the existing rule so future ::placeholder props survive a color
     // edit; '' filters out and an empty rule is removed entirely.
+    expediteStableAtomSync();
     queueMutation({ type: 'updatePseudoStyle', nodeId, pseudo: 'placeholder', styles: { ...placeholderStyles, color: v } });
     commitNow();
     trace.action('input-tool:placeholder-color', { nodeId, set: !!v });
@@ -288,6 +291,15 @@ export default function InputTool() {
     } });
     commitNow();
     trace.action('input-tool:padding-side', { nodeId, index, val });
+  };
+  /** X / Y step of the padding control — all four sides in one write. */
+  const commitPaddingSides = (sides: [string, string, string, string]) => {
+    if (!nodeId) return;
+    queueMutation({ type: 'updateStyles', nodeId, styles: {
+      padding: '', paddingTop: sides[0], paddingRight: sides[1], paddingBottom: sides[2], paddingLeft: sides[3],
+    } });
+    commitNow();
+    trace.action('input-tool:padding-sides', { nodeId, sides });
   };
   const commitPaddingAll = (val: string) => {
     if (!nodeId) return;
@@ -311,6 +323,7 @@ export default function InputTool() {
     // Fill read the caret as an "Image" fill — user report 2026-08-13). The
     // inline clear migrates selects baked by the pre-rule version (no-op
     // otherwise).
+    expediteStableAtomSync();
     queueMutation({ type: 'updateSelectCaretRule', nodeId, cssBody: bakeSelectCaretCssBody(raw, c) });
     queueMutation({ type: 'updateStyles', nodeId, styles: clearSelectIconInlineStyles() });
     queueMutation({ type: 'updateHtmlAttrs', nodeId, attrs: { [SELECT_ICON_ATTR]: JSON.stringify({ icon: iconName, color: c }) } });
@@ -334,6 +347,7 @@ export default function InputTool() {
 
   const removeSelectIcon = () => {
     if (!nodeId) return;
+    expediteStableAtomSync();
     queueMutation({ type: 'updateSelectCaretRule', nodeId, cssBody: null });
     queueMutation({ type: 'updateStyles', nodeId, styles: clearSelectIconInlineStyles() });
     queueMutation({ type: 'updateHtmlAttrs', nodeId, attrs: { [SELECT_ICON_ATTR]: '' } });
@@ -511,7 +525,59 @@ export default function InputTool() {
             labels={['T', 'R', 'B', 'L']}
             onChange={commitPaddingSide}
             onChangeAll={commitPaddingAll}
+            onChangeSides={commitPaddingSides}
           />
+        </ToolRow>
+      </ToolSection>
+    );
+  }
+
+  // ─── Checkbox / Radio (native form booleans) ──────────────────────────────
+  // Added by the form's "+". Their panel is Name, Value (radio),
+  // Checked and Required; their look (fill, border, radius, Checked / Focus
+  // states, the check icon) is the Styles tool's, since they draw themselves.
+  const boolType = node.type === 'input' && (attrs.type === 'checkbox' || attrs.type === 'radio') ? attrs.type : null;
+  if (boolType) {
+    const isRadio = boolType === 'radio';
+    const setChecked = (yes: boolean) => {
+      if (!nodeId) return;
+      if (yes && isRadio && attrs.name) {
+        // One radio per name is checked: clear its siblings in the same group.
+        const nodes = getNodesSnapshot();
+        let form = node.parentId ? nodes.get(node.parentId) : undefined;
+        while (form && form.type !== 'form' && form.parentId) form = nodes.get(form.parentId);
+        const scope = form ?? (node.parentId ? nodes.get(node.parentId) : undefined);
+        const walk = (id: string) => {
+          const n = nodes.get(id);
+          if (!n) return;
+          if (n.id !== nodeId && n.type === 'input' && n.attrs?.type === 'radio' && n.attrs?.name === attrs.name && n.attrs?.checked) {
+            queueMutation({ type: 'updateHtmlAttrs', nodeId: n.id, attrs: { checked: '' } });
+          }
+          n.children.forEach(walk);
+        };
+        if (scope) walk(scope.id);
+      }
+      queueMutation({ type: 'updateHtmlAttrs', nodeId, attrs: { checked: yes ? 'true' : '' } });
+      commitNow();
+      trace.action('input-tool:set-checked', { nodeId, type: boolType, checked: yes });
+    };
+    return (
+      <ToolSection title="Input">
+        <ToolRow label="Name" {...ov('name')}>
+          <ToolInput value={displayAttr('name')} onChange={(v) => writeAttr('name', v)} placeholder={isRadio ? 'Radio' : 'Newsletter'} />
+        </ToolRow>
+        {isRadio && (
+          <ToolRow label="Value" {...ov('value')}>
+            <ToolInput value={displayAttr('value')} onChange={(v) => writeAttr('value', v)} placeholder="Option 1" />
+          </ToolRow>
+        )}
+        <ToolRow label="Checked">
+          <ToolSegmentedControl value={isToggleOn('checked') ? 'yes' : 'no'} onChange={(v) => setChecked(v === 'yes')}
+            options={[{ value: 'yes', label: 'Yes' }, { value: 'no', label: 'No' }]} />
+        </ToolRow>
+        <ToolRow label="Required">
+          <ToolSegmentedControl value={isToggleOn('required') ? 'yes' : 'no'} onChange={(v) => setAttrs({ required: v === 'yes' ? 'true' : '' })}
+            options={[{ value: 'yes', label: 'Yes' }, { value: 'no', label: 'No' }]} />
         </ToolRow>
       </ToolSection>
     );
@@ -550,6 +616,7 @@ export default function InputTool() {
           labels={['T', 'R', 'B', 'L']}
           onChange={commitPaddingSide}
           onChangeAll={commitPaddingAll}
+            onChangeSides={commitPaddingSides}
         />
       </ToolRow>
 

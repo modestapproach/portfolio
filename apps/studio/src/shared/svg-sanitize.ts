@@ -25,8 +25,40 @@ const SVG_PRESENTATION_ATTRS = new Set([
   'stop-color', 'stop-opacity', 'color', 'display',
 ]);
 
+/** Remove what makes an SVG ACTIVE rather than a drawing: `<script>`,
+ *  `<foreignObject>` (embedded HTML), `on*` event handlers and `javascript:`
+ *  links. Uploaded SVGs land inline in the user's page, which ships as server-
+ *  rendered HTML — a `<script>` there runs for every visitor (Media panel SVG
+ *  drop, 2026-10-15). Drawings never need any of it. */
+export function stripActiveSvgContent(markup: string): string {
+  return markup
+    .replace(/<script\b[\s\S]*?<\/script\s*>/gi, '')
+    .replace(/<script\b[^>]*\/>/gi, '')
+    .replace(/<foreignObject\b[\s\S]*?<\/foreignObject\s*>/gi, '')
+    .replace(/<foreignObject\b[^>]*\/>/gi, '')
+    .replace(/\s+on[a-z]+\s*=\s*(?:"[^"]*"|'[^']*'|[^\s>]+)/gi, '')
+    .replace(/\s+(?:xlink:)?href\s*=\s*(?:"\s*javascript:[^"]*"|'\s*javascript:[^']*')/gi, '');
+}
+
+const DRAWABLE_SVG_RE = /<(?:path|rect|circle|ellipse|line|polyline|polygon|text|image|use)\b/i;
+
+/** Is anything left to DRAW once the active content is stripped? An
+ *  html-to-image style export — one <foreignObject> holding HTML, which is how
+ *  "Export as SVG" used to write every selection — has nothing, and importing
+ *  it as vectors produced an empty <svg> (2026-10-19). */
+export function svgHasDrawableContent(markup: string): boolean {
+  return DRAWABLE_SVG_RE.test(stripActiveSvgContent(markup));
+}
+
+/** An SVG whose only content is embedded HTML (<foreignObject>) — an
+ *  html-to-image snapshot. Importers must unwrap it (vectorize-html-svg.ts),
+ *  never sanitize it straight to an empty <svg>. */
+export function isHtmlOnlySvg(markup: string): boolean {
+  return /<foreignObject\b/i.test(markup) && !svgHasDrawableContent(markup);
+}
+
 export function sanitizeSvgMarkupForJsx(markup: string): string {
-  let s = markup;
+  let s = stripActiveSvgContent(markup);
 
   // 1) XML comments are not JSX.
   s = s.replace(/<!--[\s\S]*?-->/g, '');

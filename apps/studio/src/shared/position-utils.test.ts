@@ -277,3 +277,56 @@ describe('neutralizeReplicaClears', () => {
     expect(payload).toEqual({ right: '', bottom: '' });
   });
 });
+
+describe('removeAxisTranslate / centeringChannel', () => {
+  test('removes one axis, keeps the other + visuals; splits translate(x,y)', async () => {
+    const { removeAxisTranslate } = await import('./position-utils');
+    expect(removeAxisTranslate('translateX(-50%) translateY(-50%) rotate(9deg)', 'x')).toBe('translateY(-50%) rotate(9deg)');
+    expect(removeAxisTranslate('translate(-50%, -50%)', 'x')).toBe('translateY(-50%)');
+    expect(removeAxisTranslate('translateX(-50%)', 'x')).toBe('');
+    expect(removeAxisTranslate('rotate(9deg)', 'y')).toBe('rotate(9deg)');
+    expect(removeAxisTranslate(undefined, 'x')).toBe('');
+  });
+  test('centeringChannel detects motion shorthands', async () => {
+    const { centeringChannel } = await import('./position-utils');
+    expect(centeringChannel({ x: '-50%' })).toBe('shorthand');
+    expect(centeringChannel({ y: '-50%', transform: 'translateX(-50%)' })).toBe('shorthand');
+    expect(centeringChannel({ transform: 'translateX(-50%)' })).toBe('string');
+    expect(centeringChannel({ x: '' })).toBe('string');
+  });
+});
+
+describe('shape canonical position model (reference parity)', () => {
+  const rect = { left: 12.3456, top: 40, width: 34, height: 18, parentWidth: 200, parentHeight: 100, centerXPercent: 0, centerYPercent: 0 };
+  test('normalization: null when already canonical (px left/top, nothing else)', async () => {
+    const { shapePositionNormalizationStyles } = await import('./position-utils');
+    expect(shapePositionNormalizationStyles({ left: '10px', top: '5px' }, rect)).toBeNull();
+    expect(shapePositionNormalizationStyles({ left: '10px', top: '5px', rotate: '30' }, rect)).toBeNull();
+  });
+  test('normalization: % left, shorthand x/y, right/bottom, string translate → px + clears', async () => {
+    const { shapePositionNormalizationStyles } = await import('./position-utils');
+    const expected = { left: '12.346px', top: '40px', right: '', bottom: '', x: '', y: '' };
+    expect(shapePositionNormalizationStyles({ left: '50%', top: '17px', x: '-50%', y: '-50%' }, rect)).toEqual(expected);
+    expect(shapePositionNormalizationStyles({ left: '10px', top: '5px', right: '0px' }, rect)).toEqual(expected);
+    expect(shapePositionNormalizationStyles({ left: '10px', top: '5px', transform: 'translateX(-50%) rotate(9deg)' }, rect)).toEqual(expected);
+  });
+  test('shapeAlignStyles: each direction, other axis kept, clears included', async () => {
+    const { shapeAlignStyles } = await import('./position-utils');
+    const clears = { right: '', bottom: '', x: '', y: '' };
+    expect(shapeAlignStyles('center-h', rect)).toEqual({ left: '83px', top: '40px', ...clears });
+    expect(shapeAlignStyles('right', rect)).toEqual({ left: '166px', top: '40px', ...clears });
+    expect(shapeAlignStyles('left', rect)).toEqual({ left: '0px', top: '40px', ...clears });
+    expect(shapeAlignStyles('center-v', rect)).toEqual({ left: '12.346px', top: '41px', ...clears });
+    expect(shapeAlignStyles('bottom', rect)).toEqual({ left: '12.346px', top: '82px', ...clears });
+    expect(shapeAlignStyles('top', rect)).toEqual({ left: '12.346px', top: '0px', ...clears });
+  });
+});
+
+describe('neutralizeReplicaClears — motion shorthands', () => {
+  test("x/y clears become '0' only when the base carries them", async () => {
+    const { neutralizeReplicaClears } = await import('./position-utils');
+    expect(neutralizeReplicaClears({ x: '', y: '', right: '' }, { x: '-50%', y: '-50%' })).toEqual({ x: '0', y: '0', right: '' });
+    expect(neutralizeReplicaClears({ x: '' }, {})).toEqual({ x: '' });
+    expect(neutralizeReplicaClears({ scale: '' }, { scale: '1.2' })).toEqual({ scale: '1' });
+  });
+});

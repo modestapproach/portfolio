@@ -109,9 +109,13 @@ function checkOverlayDialect(code: string, ast: t.File, v: OracleViolation[]): v
       missing.push(`the conditional wrapper: <AnimatePresence>{${varName} && ( …overlay… )}</AnimatePresence>`);
     }
     const isFixed = o.cfg.type === 'fixed';
+    // The effect references its overlay either document-scoped
+    // (`[data-id="<id>"]`, pages) or instance-scoped (`ovFind('<id>')`,
+    // component masters — see overlay-gen ensureMasterOverlayScope).
+    const refsOverlay = code.includes(`[data-id="${o.id}"]`) || code.includes(`ovFind('${o.id}')`);
     const effectPresent = isFixed
-      ? (code.includes(`[data-id="${o.id}"]`) && /useEffect\(/.test(code) && code.includes('prevOverflow'))
-      : (code.includes(`[data-id="${o.id}"]`) && /useLayoutEffect\(/.test(code) && code.includes('getBoundingClientRect'));
+      ? (refsOverlay && /useEffect\(/.test(code) && code.includes('prevOverflow'))
+      : (refsOverlay && /useLayoutEffect\(/.test(code) && code.includes('getBoundingClientRect'));
     if (!effectPresent) {
       const effect = isFixed ? buildFixedOverlayRuntimeEffect(o.id) : buildRelativeOverlayPosEffect(o.id);
       missing.push(`the runtime effect (paste verbatim above the return):\n${effect}`);
@@ -137,11 +141,11 @@ function checkOverlayDialect(code: string, ast: t.File, v: OracleViolation[]): v
     // EVENT trigger (component-instance event): the trigger is a component
     // INSTANCE and the overlay opens when a component EVENT fires from a child
     // inside the master. It needs `eventName` (the master's callback prop), and
-    // the instance passes `<eventName>={() => set<Ovl>Open(true)}`.
+    // the instance passes `<eventName>={() => set<Ovl>Open(!<ovl>Open)}` (toggle).
     if (tr.cfg.trigger === 'event' && tr.cfg.eventName == null) {
       v.push({
         code: 'OVERLAY_CONFIG_INVALID', tier: 2, line: tr.line, elementId: tr.id,
-        message: `data-overlay-trigger on <${tr.id || 'element'}> (line ${tr.line}) is trigger: 'event' but has no eventName — an event trigger fires when a component EVENT fires from inside the instance, so it needs the master's event-callback prop name: data-overlay-trigger='{"targetId":"...","trigger":"event","eventName":"event1","dismiss":"outside"}' plus eventName={() => set<Ovl>Open(true)} on the instance tag.`,
+        message: `data-overlay-trigger on <${tr.id || 'element'}> (line ${tr.line}) is trigger: 'event' but has no eventName — an event trigger fires when a component EVENT fires from inside the instance, so it needs the master's event-callback prop name: data-overlay-trigger='{"targetId":"...","trigger":"event","eventName":"event1","dismiss":"outside"}' plus eventName={() => set<Ovl>Open(!<ovl>Open)} on the instance tag (the event toggles the overlay).`,
       });
       continue;
     }
@@ -157,7 +161,7 @@ function checkOverlayDialect(code: string, ast: t.File, v: OracleViolation[]): v
     const setVar = `set${varName.charAt(0).toUpperCase() + varName.slice(1)}`;
     if (!tr.tagHasSetter(setVar)) {
       const handler = tr.cfg.trigger === 'event'
-        ? `${tr.cfg.eventName}={() => ${setVar}(true)}`
+        ? `${tr.cfg.eventName}={() => ${setVar}(!${varName})}`
         : tr.cfg.trigger === 'hover'
           ? `onMouseEnter={() => { clearTimeout(((window as any).__ovGrace ||= {})['${target}']); ${setVar}(true); }} onMouseLeave={(e) => { const ov = document.querySelector('[data-id="${target}"]'); if (ov && e.relatedTarget && ov.contains(e.relatedTarget)) return; const g = ((window as any).__ovGrace ||= {}); clearTimeout(g['${target}']); g['${target}'] = setTimeout(() => ${setVar}(false), 180); }}`
           : `onClick={() => ${setVar}(!${varName})}`;

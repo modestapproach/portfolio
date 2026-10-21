@@ -27,8 +27,12 @@
 
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { useAtomValue } from 'jotai';
+import { activeFilePathAtom } from '@/code/project/active-file-store';
+import { isIconSetFilePath } from '@/code/project/file-path-kind';
 import { ToolSection, ToolInput, ToolSegmentedControl, ToolSelect, ToolPlusMinus, ColorInput, ToolDivider } from '../controls';
 import ControlLabel from '../controls/ControlLabel';
+import { LegacyVariableBoundPill } from '../controls/VariableBoundPill';
+import type { VariableIconKey } from '../controls/VariableTypeIcon';
 import { LocalizeGate } from '../controls/localize-gate';
 import { useControl } from '../controls/ControlProvider';
 import { OpacityControl } from './StylesTool/atoms/OpacityControl';
@@ -46,10 +50,11 @@ import { modifyProjectFile } from '@/code/project/modify-file';
 import { ensureShapeChildIds } from '@/code/generation/generator-attrs';
 import { useNodesComputed } from '@/code/stores/node-family';
 import { selectedPointAtom, shapeEditingIdAtom } from '@/code/stores/shape-edit-store';
-import { selectedIdsAtom, getNodesSnapshot } from '@/code/stores/store';
+import { getCachedNodesMap, selectedIdsAtom, getNodesSnapshot } from '@/code/stores/store';
 import type { CanvasNode } from '@/code/parsing/parser';
 import { resolveShapeAttrTargets } from './svg-shape-targets';
 import { trace } from '@/shared/debug-trace';
+import { isComponentFilePath } from '@/code/project/active-file-store';
 
 // SVG presentation attributes that are ALSO valid CSS properties — so a
 // per-tile (variant / viewport) override can ride the CSS cascade on top of the
@@ -176,9 +181,17 @@ function JoinIcon({ join }: { join: 'miter' | 'round' | 'bevel' }) {
 // ─── Component ──────────────────────────────────────────────────────────────
 
 export default function SvgShapeTool() {
-  const { nodeId, node, vpId, styles, updateStyle } = useControl();
+  const { nodeId, node, vpId, styles, updateStyle, getValueSource, removeVariable } = useControl();
+  // Mount/unmount trace — a remount here is the "panel flashes on undo" symptom.
+  useEffect(() => {
+    trace.action('svg-shape-tool:mount', {});
+    return () => trace.action('svg-shape-tool:unmount', {});
+  }, []);
 
   const selectedPoint = useAtomValue(selectedPointAtom);
+  // Inside an icon set a vector's paint is a per-instance knob, not a fixed
+  // attribute — see `shapeLabel`.
+  const inIconSet = isIconSetFilePath(useAtomValue(activeFilePathAtom) ?? '');
   const childIndex = selectedPoint?.shapeIndex ?? 0;
 
   // Multi-select: Fill/Stroke must apply to EVERY selected SVG shape, not just
@@ -192,8 +205,16 @@ export default function SvgShapeTool() {
   const isInShapeEdit = shapeEditingId !== null && nodeId === shapeEditingId;
 
   // Resolve target inner-shape CanvasNode from cached node tree.
+  // `node` is the LIVE cache node (useLiveNode) while `nodes` is the PARSED
+  // map, which an undo/redo restore updates one fan-out later. When the restore
+  // changes the inner shape's id (the toolbar polygon has no child data-id; the
+  // first shape-edit commit rewrites it as `<path data-id="…-g0">`) the parsed
+  // map has no entry for the new child yet, the lookup missed, and this tool
+  // rendered null for one fan-out — the Fill/Stroke sections flashed on every
+  // undo across that boundary (live find 2026-09-06). Fall back to the cache
+  // map the wrapper itself came from; identical ids resolve either way.
   const shapeNode = useNodesComputed(
-    (nodes) => findSvgShapeChild(node, nodes, childIndex)?.node ?? null,
+    (nodes) => (findSvgShapeChild(node, nodes, childIndex) ?? findSvgShapeChild(node, getCachedNodesMap(), childIndex))?.node ?? null,
     [node, childIndex],
   );
 
@@ -243,8 +264,22 @@ export default function SvgShapeTool() {
     return out;
   }, [rawTileOverrides]);
 
-  // base attrs ⊕ this tile's overrides (variant or @media) ⊕ in-flight shape-edit buffer.
-  const attrs = { ...(shapeNode?.attrs ?? {}), ...tileOverrides, ...pendingOverrides };
+  // On a component PRIMARY tile the painted value is the shape's `default`
+  // entry (motion applies it over the attribute) — overlay it so the panel
+  // shows what the canvas shows. Kept OUT of `rawTileOverrides` so it never
+  // lights the per-tile override indicator (it isn't an override).
+  const primaryDefaultOverlay = useMemo(() => {
+    const out: Record<string, string> = {};
+    if (inNonDefaultVariant || !isComponentFilePath(getActiveFilePath())) return out;
+    const def = (shapeNode?.motionVariants?.default ?? {}) as Record<string, unknown>;
+    for (const [camelKey, value] of Object.entries(def)) {
+      if (typeof value === 'string' || typeof value === 'number') out[toKebab(camelKey)] = String(value);
+    }
+    return out;
+  }, [inNonDefaultVariant, shapeNode]);
+
+  // base attrs ⊕ primary default entry ⊕ this tile's overrides (variant or @media) ⊕ in-flight shape-edit buffer.
+  const attrs = { ...(shapeNode?.attrs ?? {}), ...primaryDefaultOverlay, ...tileOverrides, ...pendingOverrides };
 
   // Overridden when the active source has the prop. Check the CAMELCASE key the sources store
   // (`stroke-width` → `strokeWidth`). `stroke`/`fill` are single-word so they matched either way — which
@@ -300,6 +335,26 @@ export default function SvgShapeTool() {
     }
 
     queueMutation({ type: 'updateSvgAttrs', nodeId: tNodeId, attrs: { [key]: value }, childIndex: tChildIndex });
+    // PRIMARY WRITE MUST ALSO REFRESH A STALE `variants.default` ENTRY. The first
+    // per-variant recolour seeds the shape's variants object with the base value
+    // of that moment (`default: { fill: '#3b82f6' }`, the transform-law return
+    // value). Every later PRIMARY recolour only rewrote the ATTRIBUTE — and on
+    // the primary tile motion/the Renderer apply the default ENTRY over the
+    // attribute, so the shape kept painting the old colour while the panel
+    // (reading the attribute) showed the new one (live find 2026-09-05: black
+    // in the panel, blue on canvas). Same mirror node-ops applies to inline
+    // styles; done only when the entry already carries the key, so sparse
+    // sources stay sparse.
+    const primaryCamel = CSS_ROUTABLE_SHAPE_ATTRS[key];
+    const defaultEntry = tShapeNode?.motionVariants?.default as Record<string, unknown> | undefined;
+    if (primaryCamel && tShapeNode && defaultEntry && defaultEntry[primaryCamel] !== undefined) {
+      const sid = tShapeNode.id.startsWith(`${tNodeId}-g`) ? tShapeNode.id : `${tNodeId}-g${tChildIndex}`;
+      queueMutation({ type: 'updateVariantStyle', nodeId: sid, variantName: 'default', styles: { [primaryCamel]: value } });
+      // The painted value on this tile IS the entry (applied as a style), so the
+      // attribute-only live patch below can't show it — patch the style too.
+      getCanvasBridge().patchStyles(sid, vpPrefix, { [primaryCamel]: value }, true);
+      trace.action('svg-shape-tool:mirror-default-entry', { nodeId: tNodeId, sid, key: primaryCamel, value });
+    }
     // Always go through `setChildShapeAttribute` (parent SVG nodeId + childIndex)
     // rather than `setAttribute(shapeChildId, …)`. Inner-shape `data-id`s
     // (auto_1, auto_2…) restart their counter per SVG, so multiple SVGs in
@@ -344,13 +399,22 @@ export default function SvgShapeTool() {
     // Live feedback fans out to every selected shape (same targets as the commit)
     // so a picker/chevron drag paints all selected shapes at once, not just the
     // primary. Bridge-only (no source write) — the commit lands on release.
+    const liveCamel = CSS_ROUTABLE_SHAPE_ATTRS[key];
     for (const t of resolveAttrTargets()) {
       bridge.setChildShapeAttribute?.(t.nodeId, vpPrefix, t.childIndex, key, value === '' ? null : value);
+      // Primary tile + a `default` entry carrying this key: the entry is applied
+      // as a STYLE over the attribute, so the attribute patch alone shows nothing
+      // during the drag — patch the style on the child too (see applyAttrToTarget).
+      const def = t.shapeNode?.motionVariants?.default as Record<string, unknown> | undefined;
+      if (liveCamel && t.shapeNode && def && def[liveCamel] !== undefined && !inNonDefaultVariant) {
+        const sid = t.shapeNode.id.startsWith(`${t.nodeId}-g`) ? t.shapeNode.id : `${t.nodeId}-g${t.childIndex}`;
+        getCanvasBridge().patchStyles(sid, vpPrefix, { [liveCamel]: value }, true);
+      }
     }
     // Shape-edit mode commits via the pending-override buffer, not the queue —
     // mirror `updateAttr`'s shape-edit branch so a live drag still records.
     if (isInShapeEdit) setPendingOverrides(prev => ({ ...prev, [key]: value }));
-  }, [nodeId, vpId, childIndex, isInShapeEdit, resolveAttrTargets]);
+  }, [nodeId, vpId, childIndex, isInShapeEdit, resolveAttrTargets, inNonDefaultVariant]);
 
   // ─── Reset a per-tile override ("Reset Override" menu item) ───────────────
   // Drops THIS tile's @media / variant CSS override for the prop so the shared
@@ -379,17 +443,45 @@ export default function SvgShapeTool() {
   // flags strip Create-Variable / Reset-Style / Bind-to-Field so the menu holds
   // ONLY "Reset Override" — and the chevron auto-hides when there's nothing to
   // show (no override → empty menu → plain-looking, non-interactive label).
+  // …EXCEPT inside an ICON SET, where a vector's paint is exactly what an
+  // instance needs to vary: Framer's own icons declare their colour as a
+  // variable and expose it as a Color control, and a set that cannot do the
+  // same has to bake one file per colour. There the row carries the REAL CSS
+  // property (`fill` / `stroke` / `strokeWidth`), so the variable binds in the
+  // shape's style object — the only form the parser tags `var:` and the panel
+  // can read back — rather than as a presentation attribute.
   const shapeLabel = (label: string, syntheticProp: string, svgKey: string) => (
     <ControlLabel
       label={label}
-      property={syntheticProp}
+      property={inIconSet ? (CSS_ROUTABLE_SHAPE_ATTRS[svgKey] ?? syntheticProp) : syntheticProp}
       overridden={isAttrOverridden(svgKey)}
       onResetOverride={() => resetAttrOverride(svgKey)}
-      hideCreateVariable
+      hideCreateVariable={!inIconSet || !CSS_ROUTABLE_SHAPE_ATTRS[svgKey]}
       hideResetStyle
       hideCmsBinding
     />
   );
+
+  // A paint bound to an icon-set variable (`iconColor`) shows the variable
+  // pill in the value column, like every other bound row. The raw ColorInput
+  // showed the fallback colour under a label naming the variable, so a bound
+  // stroke read as a plain unbound #000000. Same lookup as the label's.
+  const boundPill = (svgKey: string, label: string, currentValue: string, iconKey: VariableIconKey) => {
+    const property = CSS_ROUTABLE_SHAPE_ATTRS[svgKey];
+    if (!inIconSet || !property) return null;
+    const source = getValueSource(property);
+    if (source.source !== 'prop' || !source.ref) return null;
+    return (
+      <LegacyVariableBoundPill
+        property={property}
+        propertyLabel={label}
+        variableRef={source.ref}
+        currentValue={currentValue}
+        removeVariable={removeVariable}
+        iconKey={iconKey}
+      />
+    );
+  };
 
   // ─── Read inner-shape attrs ─────────────────────────────────────────────
   const fill = attrs.fill || '#000000';
@@ -456,12 +548,14 @@ export default function SvgShapeTool() {
         <div className="flex items-center justify-between w-full">
           {shapeLabel('Fill', '__svg-fill', 'fill')}
           <div className="flex items-center gap-2 w-full">
-            <ColorInput
-              value={fill}
-              onChange={v => updateAttr('fill', v)}
-              onChangeLive={v => updateAttrLive('fill', v)}
-              showAlpha
-            />
+            {boundPill('fill', 'Fill', fill, 'color') ?? (
+              <ColorInput
+                value={fill}
+                onChange={v => updateAttr('fill', v)}
+                onChangeLive={v => updateAttrLive('fill', v)}
+                showAlpha
+              />
+            )}
           </div>
         </div>
 
@@ -480,12 +574,14 @@ export default function SvgShapeTool() {
         <div className="flex items-center justify-between w-full">
           {shapeLabel('Color', '__svg-stroke', 'stroke')}
           <div className="flex items-center gap-2 w-full">
-            <ColorInput
-              value={stroke || '#000000'}
-              onChange={v => updateAttr('stroke', v)}
-              onChangeLive={v => updateAttrLive('stroke', v)}
-              showAlpha
-            />
+            {boundPill('stroke', 'Color', stroke || '#000000', 'color') ?? (
+              <ColorInput
+                value={stroke || '#000000'}
+                onChange={v => updateAttr('stroke', v)}
+                onChangeLive={v => updateAttrLive('stroke', v)}
+                showAlpha
+              />
+            )}
           </div>
         </div>
 
@@ -496,19 +592,23 @@ export default function SvgShapeTool() {
         <div className="flex items-center justify-between w-full">
           {shapeLabel('Width', '__svg-stroke-width', 'stroke-width')}
           <div className="flex items-center gap-2 w-full">
-            <ToolInput
-              value={strokeWidth}
-              onChange={v => updateAttr('stroke-width', v)}
-              onChangeLive={v => updateAttrLive('stroke-width', v)}
-              onCommit={v => updateAttr('stroke-width', v)}
-              step={1}
-            />
-            <ToolPlusMinus
-              value={Number.parseFloat(strokeWidth) || 0}
-              onChange={(v) => updateAttr('stroke-width', String(Math.max(0, v)))}
-              min={0}
-              max={100}
-            />
+            {boundPill('stroke-width', 'Width', strokeWidth, 'number') ?? (
+              <>
+                <ToolInput
+                  value={strokeWidth}
+                  onChange={v => updateAttr('stroke-width', v)}
+                  onChangeLive={v => updateAttrLive('stroke-width', v)}
+                  onCommit={v => updateAttr('stroke-width', v)}
+                  step={1}
+                />
+                <ToolPlusMinus
+                  value={Number.parseFloat(strokeWidth) || 0}
+                  onChange={(v) => updateAttr('stroke-width', String(Math.max(0, v)))}
+                  min={0}
+                  max={100}
+                />
+              </>
+            )}
           </div>
         </div>
 

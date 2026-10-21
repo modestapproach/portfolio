@@ -55,6 +55,30 @@ function parseComponentNodesCached(code: string): Map<string, CanvasNode> {
 }
 
 /** Test/diagnostic hook — drop all memoised component parses. */
+/** The master ROOT's own base `display` (e.g. `flex`), or undefined when the
+ *  file is unreadable/unparseable or the root declares none. Used by the
+ *  replica-entry recipe for instances (instance-replica-visibility.ts): the
+ *  entered band must restore the ROOT's display because on the live site the
+ *  instance's `display:none` and the band rule both land on that root. */
+export function readMasterRootDisplay(fs: ProjectFS, filePath: string): string | undefined {
+  let code: string | null | undefined;
+  try { code = fs.readFile(filePath); } catch { return undefined; }
+  if (!code) return undefined;
+  let nodes: Map<string, CanvasNode>;
+  try { nodes = parseComponentNodesCached(code); } catch { return undefined; }
+  for (const [, node] of nodes) {
+    // Same root test — and the same FIRST-root choice — as `expandComponent`,
+    // so the value agrees with what the canvas expands. A file that defines a
+    // helper component above its exported one therefore reports the helper's
+    // root; the caller validates the result against real CSS display keywords,
+    // so the worst case is a valid-but-wrong value rather than broken CSS.
+    if (!node.parentId && !node.isCanvasNode && !node.attrs?.['data-overlay']) {
+      return node.styles?.display || undefined;
+    }
+  }
+  return undefined;
+}
+
 export function clearComponentParseCache(): void {
   componentParseCache.clear();
   trace.action('project-parser:clearComponentParseCache', {});
@@ -366,6 +390,16 @@ function lowerResponsiveBindings(
  * Expand a component instance by parsing the component file
  * and flattening its nodes as children of the instance node.
  */
+/** The literal values of a variant entry — an unresolved `@@VARREF:` sentinel
+ *  (a prop-driven value with no page override yet) must never be baked. */
+function literalEntries(entry: Record<string, string>): Record<string, string> {
+  const out: Record<string, string> = {};
+  for (const [k, v] of Object.entries(entry)) {
+    if (typeof v === 'string' && !v.startsWith('@@VARREF:')) out[k] = v;
+  }
+  return out;
+}
+
 function expandComponent(
   instanceNode: CanvasNode,
   componentInfo: ComponentInfo,
@@ -579,6 +613,18 @@ function expandComponent(
       }
     }
   }
+
+  // A nested instance that switches NOTHING per viewport itself — no data-responsive, no inline
+  // `initialVariant={__mqN ? …}` rail, no per-parent ternary — renders ONE child variant (its plain
+  // `initialVariant`, else the master default) on EVERY tile. The map it holds here is INHERITED from
+  // the outer instance (stamped on its wrapper by the outer expansion) and speaks the PARENT's variant
+  // names, so nothing keyed by the CHILD's names may be resolved against it: treat the instance exactly
+  // like the no-map case below (bake the variant, clear motionVariants, bake visibility). Live find
+  // (an imported FAQ, 2026-09-16): the phone accordion's Closed items rendered OPEN on the mobile tile —
+  // the outer FAQ's map said 'variant-2' there, the answer is hidden on the ITEM's 'variant-1', and the
+  // tablet tile only looked right because both instances happened to name that variant 'variant-1'.
+  const ownViewportSwitching = !!respAttr || !!instanceNode.responsiveAttrPropValues?.initialVariant;
+  const fixedChildVariant = !instanceConditional && !ownViewportSwitching && !!responsiveVariantMap;
 
   // PER-VIEWPORT TEXT props → the child's responsiveTextValues rail. The
   // style-driving props lower via styleVariables below, but a TEXT variable's
@@ -857,10 +903,24 @@ function expandComponent(
     // a non-default child variant on the parent's primary (or via plain
     // initialVariant), merge those styles into the expanded base. Per-parent
     // overrides are handled below by remapping motionVariants.
-    if (defaultChildVariant && defaultChildVariant !== 'default' && node.motionVariants) {
-      const variantStyles = node.motionVariants[defaultChildVariant];
-      if (variantStyles) {
-        overriddenStyles = { ...overriddenStyles, ...variantStyles };
+    //
+    // The DEFAULT entry is baked FIRST, always. Live paints `animate={['default',
+    // variant]}` — default then the chosen variant — and the Renderer's own merge
+    // for un-expanded nodes is base ⊕ default ⊕ variant too. But this expansion
+    // CLEARS motionVariants below for a parent-driven instance, and a default-
+    // only value (the builder's FormSubmit keeps `backgroundColor: '#3b82f6'`
+    // solely in rootVariants.default) was then lost: the submit button rendered
+    // native-button grey on the canvas while live showed blue (2026-09-08).
+    if (node.motionVariants) {
+      const defaultEntry = node.motionVariants['default'];
+      if (defaultEntry && Object.keys(defaultEntry).length > 0) {
+        overriddenStyles = { ...overriddenStyles, ...literalEntries(defaultEntry) };
+      }
+      if (defaultChildVariant && defaultChildVariant !== 'default') {
+        const variantStyles = node.motionVariants[defaultChildVariant];
+        if (variantStyles) {
+          overriddenStyles = { ...overriddenStyles, ...variantStyles };
+        }
       }
     }
 
@@ -911,6 +971,13 @@ function expandComponent(
       for (const [k, v] of Object.entries(instanceNode.styles)) {
         if (WRAPPER_ONLY_STYLE_PROPS.has(k)) continue;
         if (k === 'display' && instHasVisibilityControl) continue;
+        // A plain `display: 'none'` on the tag is the replica-entry hide
+        // baseline (see instance-replica-visibility.ts) — the WRAPPER owns it
+        // (the Renderer lets `none` through its wrapper allow-list), and the
+        // entered viewport's band unhide targets the wrapper's data-id, never
+        // the root's. Baked onto the root it would keep the embed blank on
+        // the one viewport the instance is meant to show.
+        if (k === 'display' && v === 'none') continue;
         if (dimInPropChannel(k)) continue;
         instanceStylesForRoot[k] = v;
       }
@@ -953,7 +1020,7 @@ function expandComponent(
             remappedMotionVariants[parentVariant] = childStyles;
           }
         }
-      } else if (!respAttr && !(responsiveVariantMap && Object.keys(responsiveVariantMap).length > 0)) {
+      } else if (fixedChildVariant || (!respAttr && !(responsiveVariantMap && Object.keys(responsiveVariantMap).length > 0))) {
         // Parent-driven nested instance (NO own per-viewport switching) — clear
         // motionVariants so a parent variant never accidentally name-matches a
         // child variant. With a plain initialVariant the chosen child variant is
@@ -1116,7 +1183,7 @@ function expandComponent(
     // without per-viewport switching). Instance-level (parent-keyed) sets
     // merged onto the root are kept — the parent master resolves those.
     let bakedHidden = rootHidden;
-    if (!responsiveVariantMap && node.hiddenOnVariants && node.hiddenOnVariants.size > 0) {
+    if ((!responsiveVariantMap || fixedChildVariant) && node.hiddenOnVariants && node.hiddenOnVariants.size > 0) {
       const effectiveVariant = defaultChildVariant ?? 'default';
       if (node.hiddenOnVariants.has(effectiveVariant)) {
         overriddenStyles = { ...overriddenStyles, display: 'none' };
@@ -1141,6 +1208,12 @@ function expandComponent(
     // resolveVariantStyles falls back base-ward when a variant key is absent.
     let remappedConditional = rootConditional;
     let remappedHidden = bakedHidden;
+    if (fixedChildVariant && rootConditional) {
+      // The child's own branches are baked (above); only the instance-level `display` ternary on the
+      // root — keyed by the PARENT's names, resolved by the parent's map — may stay.
+      const rootDisplay = isRoot ? instanceNode.conditionalStyles?.['display'] : undefined;
+      remappedConditional = rootDisplay ? { display: rootDisplay } : null;
+    }
     if (Object.keys(perParentOverrides).length > 0) {
       if (rootConditional) {
         const rc: Record<string, Record<string, string>> = {};
@@ -1171,6 +1244,7 @@ function expandComponent(
       }
     }
 
+    const instanceVariantText = bindInstanceVariantText(node, instanceProps);
     allNodes.set(prefixedId, {
       ...node,
       id: prefixedId,
@@ -1185,7 +1259,8 @@ function expandComponent(
       // renders whatever `title` is on the parent. The parser has to do it
       // manually here because expansion already resolved `{title}` into the
       // master's default at parse time.
-      textContent: overriddenTextContent !== null ? overriddenTextContent : node.textContent,
+      textContent: overriddenTextContent !== null ? overriddenTextContent : (instanceVariantText.textContent ?? node.textContent),
+      conditionalText: instanceVariantText.conditionalText,
       componentFile: componentInfo.filePath,
       componentInstanceId: instanceNode.id,
       isComponentRoot: isRoot,
@@ -1238,6 +1313,30 @@ function expandComponent(
     instanceId: instanceNode.id,
     expandedNodes: componentNodes.size,
   });
+}
+
+/**
+ * PER-VARIANT text bound to variables (`conditionalTextVariable`, variant → prop; `default` = the
+ * ternary fallback): the master parse baked every such branch with the MASTER's default. An instance
+ * passes its own values, so re-evaluate those branches — and the fallback text — with the instance's
+ * props, exactly as React evaluates the ternary live. Literal branches (a variant detached from the
+ * variable) are untouched. Formatted and plain per-variant text alike.
+ */
+function bindInstanceVariantText(
+  node: CanvasNode,
+  instanceProps: Record<string, string>,
+): { conditionalText: CanvasNode['conditionalText']; textContent?: string } {
+  const ctv = node.conditionalTextVariable;
+  if (!ctv || !node.conditionalText) return { conditionalText: node.conditionalText };
+  let conditionalText = node.conditionalText;
+  let textContent: string | undefined;
+  for (const [variant, prop] of Object.entries(ctv)) {
+    if (!(prop in instanceProps)) continue;
+    if (conditionalText === node.conditionalText) conditionalText = { ...node.conditionalText };
+    conditionalText[variant] = instanceProps[prop];
+    if (variant === 'default') textContent = instanceProps[prop];
+  }
+  return { conditionalText, textContent };
 }
 
 /**
@@ -1296,6 +1395,7 @@ export function resolveInstancePropOverrides(
     let match;
     while ((match = styleRegex.exec(componentCode)) !== null) {
       const cssProp = match[1];
+      if (cssProp === '__html') continue; // a formatted text variable — handled as text below
       const nodeId = findEnclosingDataId(match.index);
       if (nodeId) {
         result.set(`${propName}:${nodeId}`, { kind: 'style', nodeId, cssProp, value: propValue });
@@ -1388,6 +1488,22 @@ export function resolveInstancePropOverrides(
         // Use a `text:` prefixed key so it doesn't collide with style overrides
         // for the same nodeId (rare but possible if a prop drives both).
         result.set(`text:${propName}:${nodeId}`, { kind: 'text', nodeId, value: propValue });
+      }
+    }
+
+    // ── Formatted text usage: `dangerouslySetInnerHTML={{ __html: propName }}` ──
+    // The value is inline HTML; the master parse flagged the node mixed, so the
+    // Renderer paints the override as innerHTML. The attribute can sit BEFORE
+    // `data-id` in its tag, so the id is read from the whole opening tag.
+    const htmlRegex = new RegExp(`dangerouslySetInnerHTML=\\{\\{\\s*(?:__html|['"]__html['"])\\s*:\\s*${propName}\\s*\\}\\}`, 'g');
+    let htmlMatch;
+    while ((htmlMatch = htmlRegex.exec(componentCode)) !== null) {
+      const tagStart = componentCode.lastIndexOf('<', htmlMatch.index);
+      const tagEnd = componentCode.indexOf('>', htmlMatch.index + htmlMatch[0].length);
+      if (tagStart < 0 || tagEnd < 0) continue;
+      const idMatch = /data-id="([^"]*)"/.exec(componentCode.slice(tagStart, tagEnd));
+      if (idMatch) {
+        result.set(`text:${propName}:${idMatch[1]}`, { kind: 'text', nodeId: idMatch[1], value: propValue });
       }
     }
   }

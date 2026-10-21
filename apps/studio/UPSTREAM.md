@@ -9,9 +9,9 @@ project with no releases and no documented fork-update path — this file and
 
 | | |
 |---|---|
-| Upstream commit | `26b98d6884817a2b102dcec297cea9c4e4bf9fd0` |
-| Upstream date | 2026-08-30 |
-| Vendored | 2026-08-30 |
+| Upstream commit | `2289948e21dbd1cf5ce6b7a9d8f7bc8d7f24fd44` |
+| Upstream date | 2026-10-21 |
+| Vendored | 2026-10-21 (three-way merge; 101 upstream commits since the previous pin `26b98d68`) |
 
 Update this table every time a sync lands.
 
@@ -28,44 +28,45 @@ back to upstream localStorage mode). Cloud mode is untouched.
 
 ## Local modifications to preserve on sync
 
-**Ours (upstream has no such files — sync must never delete):**
+`grep -rln "LOCAL FORK" src vite-plugins vite*.config.ts` is the authoritative
+list — every fork hunk carries that marker. As of the 2026-10-21 sync:
 
-- `vite-plugins/access-gate.ts` — shared-secret gate for public hostnames
+**Ours (upstream has no such files):** `vite-plugins/{access-gate,ai-openrouter,
+ai-service,collab-relay,disk-project,local-api,mcp-bridge}.ts`,
+`src/backend/{disk-backend,disk-sync}.ts`, `src/shared/disk-flag.ts`,
+`src/local/local-plugin.ts`, `src/canvas/selection/ColorMatchHighlight.tsx`,
+`src/editor/tools/selection-colors{,.test}.ts`, `UPSTREAM.md`,
+`scripts/sync-upstream.sh`. Plus the fork's own deps in `package.json`
+(`@modelcontextprotocol/sdk`, `jose`, `socket.io`, `@hono/node-server`).
 
-- `UPSTREAM.md`, `scripts/sync-upstream.sh`
-- `vite-plugins/disk-project.ts` — dev-server endpoints + `/assets/*` static serving
-- `src/backend/disk-backend.ts` — `DiskBackend extends LocalBackend`
-- `src/shared/disk-flag.ts` — the `DISK_ENABLED` switch
+**Upstream files we patched (marked hunks):** `src/App.tsx`,
+`src/ai/mcp/bridge-client.ts`, `src/ai/vibe-models.ts`, `src/backend/{autosave,
+index}.ts`, `src/canvas-sandbox/protocol.ts`, `src/canvas/Canvas.tsx`,
+`src/canvas/collab/CollaborationProvider.tsx`, `src/cloud/settings/ConnectAiSection.tsx`,
+`src/editor/LayersPanel.tsx`, `src/editor/header/{PreviewOverlay,RightHeader}.tsx`,
+`src/editor/left-toolbar/panels/MediaGalleryPanel.tsx`, `src/editor/ui/ImageSearchModal.tsx`,
+`vite.config.ts`, `vite.sandbox.config.ts`, `vite.preview.config.ts`.
 
-**Upstream files we PATCHED (sync overlays them — re-apply the marked
-`// LOCAL FORK` lines after every sync, then diff-review):**
-
-- `src/backend/index.ts` — three-way backend switch (cloud / disk / localStorage)
-- `src/backend/autosave.ts` — unload path: keepalive save / leave-dialog for
-  the async disk backend (upstream assumes localStorage is synchronous)
-- `vite.config.ts` — `diskProjectApi()` + `diskProjectAssets()` in plugins
-- `vite.sandbox.config.ts` — `diskProjectAssets()` in plugins
-- `vite.preview.config.ts` — `diskProjectAssets()` in plugins
-- `src/editor/header/RightHeader.tsx` — Publish button: disk-mode publish
-  (flush save → POST /__revyme_disk/publish → commit+push; CI deploys)
-- `src/canvas-sandbox/protocol.ts` — `VITE_SANDBOX_ORIGIN` override (tunnel)
-- `src/editor/header/PreviewOverlay.tsx` — `VITE_PREVIEW_ORIGIN` override
-- `vite.config.ts` / `vite.sandbox.config.ts` / `vite.preview.config.ts` —
-  env-driven wss HMR for public hostnames (`REVYME_*_HOST`)
-
-Every patch line carries a `// LOCAL FORK` comment — `grep -rn "LOCAL FORK"`
-lists the full surface area of the fork.
+Retired by the 2026-10-21 sync: our removal of upstream's `VibeComingSoonGate`
+(upstream deleted the gate and shipped its agent), our `canExport` disk branch
+(upstream now exports the Next.js source in the browser for standalone builds),
+and `src/editor/tools/SelectionTool.tsx` edits that upstream absorbed.
 
 ## How to sync
 
 ```bash
-./scripts/sync-upstream.sh            # dry run: what changed upstream since the pin
-./scripts/sync-upstream.sh --apply    # overlay upstream, keeping our added files
+./scripts/sync-upstream.sh            # report: what changed upstream since the pin
+./scripts/sync-upstream.sh --merge    # three-way merge in a scratch repo (base = pin, ours, theirs)
 ```
 
-After `--apply`: re-apply the four patches above (grep for missing `LOCAL FORK`
-markers), `npm ci`, boot, drag something, confirm it lands in `apps/web`, update
-the pin table.
+The script never overlays files onto this directory. It builds the merge in a
+scratch repo and prints the conflict list; resolve there (keep every `LOCAL
+FORK` hunk; when upstream and the fork both edited a line, prefer upstream and
+re-apply the fork's intent), take upstream's lockfile then `npm install` so it
+covers the fork's deps, run `tsc --noEmit`, `vitest run` and `npm run build:all`
+in the scratch repo, and only then rsync the merged tree back here. Live:
+`npm install`, `npm run studio:build` at the monorepo root, `launchctl
+kickstart -k gui/$(id -u)/com.teddessert.revyme.studio`, update the pin table.
 
 ## Known gaps (deliberate deferrals)
 

@@ -26,8 +26,10 @@ import { CmsBoundPill } from '../../../controls/CmsBoundPill';
 import { presetTokensAtom, livePresetTokenAtom } from '@/code/stores/preset-store';
 import { resolveTokenValue } from '@/code/project/preset-ops';
 import { trace } from '@/shared/debug-trace';
+import { rowSwatchBackground } from '../text-helpers';
 import LocaleBoundPill, { useLocaleStyleOverrides } from '@/editor/controls/LocaleBoundPill';
 import { parseVarRef } from '@/shared/css-utils';
+import { parseGradient, formatGradient, createDefaultGradient } from '@/shared/gradient-utils';
 
 type ColorTab = 'solid' | 'gradient';
 
@@ -145,7 +147,7 @@ const GRADIENT_CLEAR: Record<string, string> = {
 };
 
 /** Popup content: Solid/Gradient tabs + picker with color presets */
-function TextColorPopupContent({ styles, isEditing, onColorChange, onColorCommit, onGradientChange, onGradientLiveChange, onClearGradient, currentValue, initialTab, gradientContext, gradientCSS: gradientCSSProp }: {
+export function TextColorPopupContent({ styles, isEditing, onColorChange, onColorCommit, onGradientChange, onGradientLiveChange, onClearGradient, currentValue, initialTab, gradientContext, gradientCSS: gradientCSSProp }: {
   styles: Record<string, string>;
   isEditing: boolean;
   /** Tab seeded from the live SELECTION state (edit mode: a gradient mark on
@@ -204,6 +206,12 @@ function TextColorPopupContent({ styles, isEditing, onColorChange, onColorCommit
     trace.action('text-color:tab-change', { from: tab, to: t });
     if (t === 'solid' && tab === 'gradient') {
       onClearGradient();
+    }
+    // APPLY the gradient the editor shows: with nothing to parse it displays a
+    // default black→white for display only, so the text stayed solid until a
+    // stop was touched (user report 2026-10-16, same as the Fill popup).
+    if (t === 'gradient' && tab !== 'gradient' && !parseGradient(gradientValue)) {
+      onGradientChange(formatGradient(createDefaultGradient()));
     }
     setTab(t);
   };
@@ -555,7 +563,14 @@ export function TextColorControl() {
   // During a solid-color drag, the live raw color overrides the committed
   // value/preset so the row swatch + hex track the picker in real time.
   const solidSwatch = (!isGradient && livePreviewColor != null) ? livePreviewColor : (resolvedColor || '#000000');
-  const swatchBg = nodeMixed ? mixedSwatchCSS : (isGradient ? gradientCSS : solidSwatch);
+  const swatchBg = rowSwatchBackground({
+    nodeMixed, mixedSwatchCSS,
+    isMixed: colorResult.isMixed, livePreviewColor,
+    isGradient, gradientCSS, solidSwatch,
+    mixedValues: colorResult.mixedValues,
+    // Mixed without listed values (whole-node read): the base color + the span colors.
+    fallbackColors: [resolvedColor || styles.color || '', ...spanTextColors].filter(Boolean),
+  });
   // Label always shows the HEX equivalent — rgb / rgba / hsl / oklch / named
   // are all converted (var()/gradient pass through untouched), matching the
   // Fill control and every other color swatch in the editor.

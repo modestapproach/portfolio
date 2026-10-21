@@ -90,3 +90,7 @@ export function querySelectorIdsSync() { return []; }
 
 export function patchCanvasRender() {}
 export async function findNodeRectLiveMetaAsync(_nodeId: string, _vpId: string): Promise<{ rect: DOMRect | null; culled: boolean }> { return { rect: null, culled: false }; }
+
+// LOCAL FORK: backend/disk-sync.ts (disk catch-up) is reachable from the sandbox
+// graph since upstream 2289948; the canvas repaint it asks for is parent-only.
+export function forceCanvasRender() {}
