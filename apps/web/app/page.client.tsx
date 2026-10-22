@@ -14,6 +14,7 @@
 } */
 
 import React from 'react';
+import Link from 'next/link';
 import VariableName from '../components/VariableName';
 
 export default function Page() {
@@ -154,9 +155,9 @@ export default function Page() {
         gap: '24px'
       }}>
 
-      <a data-id="card-supafeed" data-name="Card · Supafeed" href="/work/supafeed" style={{ width: 'auto', height: 'auto',
+      <Link data-id="card-supafeed" data-name="Card · Supafeed" href="/work/supafeed" style={{ width: 'auto', height: 'auto',
           position: 'relative',
-          flex: '1 1 380px',
+          flex: '1 1 280px',
           order: '0',
           display: 'flex',
           flexDirection: 'column',
@@ -195,7 +196,7 @@ export default function Page() {
               letterSpacing: '0.1em',
               textTransform: 'uppercase',
               color: '#4358CD'
-            }}>AI agents · iOS + web · 2026</p>
+            }}>Overview · AI agents · iOS + web · 2026</p>
           <h3 data-id="supafeed-name" data-name="Name" style={{ width: 'auto', height: 'auto',
               position: 'relative',
               flex: '0 0 auto',
@@ -203,7 +204,7 @@ export default function Page() {
               fontSize: '24px',
               fontWeight: '700',
               color: '#222017'
-            }}>Supafeed</h3>
+            }}>Supafeed: the project</h3>
           <p data-id="supafeed-desc" data-name="Description" style={{ width: 'auto', height: 'auto',
               position: 'relative',
               flex: '0 0 auto',
@@ -211,13 +212,13 @@ export default function Page() {
               fontSize: '15px',
               lineHeight: '1.55',
               color: '#665f4e'
-            }}>Designing an app with two users: you, and the AI agent that works for you. A private feed your own agent fills, read in a native iPhone app.</p>
+            }}>One product, two users: a person and the AI agent that works for them. The overview of the project, and the way into its three case studies.</p>
         </div>
-      </a>
+      </Link>
 
-      <a data-id="card-dibslist" data-name="Card · Dibslist" href="/work/dibslist" style={{ width: 'auto', height: 'auto',
+<Link data-id="card-feed" data-name="Card · Where an agent’s finds go" href="/work/supafeed-feed" style={{ width: 'auto', height: 'auto',
           position: 'relative',
-          flex: '1 1 380px',
+          flex: '1 1 280px',
           order: '1',
           display: 'flex',
           flexDirection: 'column',
@@ -228,27 +229,17 @@ export default function Page() {
           textDecoration: 'none',
           color: 'inherit'
         }}>
-        <div data-id="dibs-art" data-name="Art" style={{ width: 'auto',
+        <div data-id="feed-art" data-name="Art" role="img" aria-label="Supafeed feed: typed cards for an event, a place and a product" style={{ width: 'auto',
             position: 'relative',
             flex: '0 0 auto',
             order: '0',
-            display: 'flex',
-            alignItems: 'center',
-            justifyContent: 'center',
             height: '180px',
-            backgroundColor: '#ffffff'
-          }}>
-          <p data-id="dibs-art-word" data-name="Art word" style={{ width: 'auto', height: 'auto',
-              position: 'relative',
-              flex: '0 0 auto',
-              order: '0',
-              fontSize: '52px',
-              fontWeight: '700',
-              letterSpacing: '-0.02em',
-              color: '#f6f0e5'
-            }}>Dibslist</p>
-        </div>
-        <div data-id="dibs-body" data-name="Body" style={{ width: 'auto', height: 'auto',
+            backgroundImage: 'url(/assets/supafeed/ios-feed-mid.webp)',
+            backgroundSize: 'cover',
+            backgroundPosition: 'center 38%',
+            backgroundRepeat: 'no-repeat'
+          }} />
+        <div data-id="feed-body" data-name="Body" style={{ width: 'auto', height: 'auto',
             position: 'relative',
             flex: '1 0 auto',
             order: '1',
@@ -257,7 +248,7 @@ export default function Page() {
             gap: '10px',
             padding: '22px 24px 26px 24px'
           }}>
-          <p data-id="dibs-badge" data-name="Badge" style={{ width: 'auto', height: 'auto',
+          <p data-id="feed-badge" data-name="Badge" style={{ width: 'auto', height: 'auto',
               position: 'relative',
               flex: '0 0 auto',
               order: '0',
@@ -265,59 +256,51 @@ export default function Page() {
               fontWeight: '600',
               letterSpacing: '0.1em',
               textTransform: 'uppercase',
-              color: '#4a6c56'
-            }}>Object-aware checkout · 2026 concept</p>
-          <h3 data-id="dibs-name" data-name="Name" style={{ width: 'auto', height: 'auto',
+              color: '#4358CD'
+            }}>Case study 1 · The person’s side</p>
+          <h3 data-id="feed-name" data-name="Name" style={{ width: 'auto', height: 'auto',
               position: 'relative',
               flex: '0 0 auto',
               order: '1',
               fontSize: '24px',
               fontWeight: '700',
               color: '#222017'
-            }}>Dibslist</h3>
-          <p data-id="dibs-desc" data-name="Description" style={{ width: 'auto', height: 'auto',
+            }}>Where an agent’s finds go</h3>
+          <p data-id="feed-desc" data-name="Description" style={{ width: 'auto', height: 'auto',
               position: 'relative',
               flex: '0 0 auto',
               order: '2',
               fontSize: '15px',
               lineHeight: '1.55',
               color: '#665f4e'
-            }}>A marketplace thesis built around latent supply: receipts become inventory, and checkout becomes the moment local alternatives appear.</p>
+            }}>A find is a paragraph until something gives it a shape. Research into where finds live today, and the typed card contract that replaced the chat message.</p>
         </div>
-      </a>
+      </Link>
 
-      <div data-id="card-reef" data-name="Card · Reef" style={{ width: 'auto', height: 'auto',
+<Link data-id="card-agent" data-name="Card · Onboarding a user who is a machine" href="/work/supafeed-agent" style={{ width: 'auto', height: 'auto',
           position: 'relative',
-          flex: '1 1 380px',
+          flex: '1 1 280px',
           order: '2',
           display: 'flex',
           flexDirection: 'column',
           backgroundColor: '#fffdf9',
           border: '1px solid #22201721',
           borderRadius: '18px',
-          overflow: 'hidden'
+          overflow: 'hidden',
+          textDecoration: 'none',
+          color: 'inherit'
         }}>
-        <div data-id="reef-art" data-name="Art" style={{ width: 'auto',
+        <div data-id="agent-art" data-name="Art" role="img" aria-label="Supafeed: editing what the agent looks for" style={{ width: 'auto',
             position: 'relative',
             flex: '0 0 auto',
             order: '0',
-            display: 'flex',
-            alignItems: 'center',
-            justifyContent: 'center',
             height: '180px',
-            backgroundColor: '#ffffff'
-          }}>
-          <p data-id="reef-art-word" data-name="Art word" style={{ width: 'auto', height: 'auto',
-              position: 'relative',
-              flex: '0 0 auto',
-              order: '0',
-              fontSize: '52px',
-              fontWeight: '700',
-              letterSpacing: '-0.02em',
-              color: '#ffd166'
-            }}>Reef</p>
-        </div>
-        <div data-id="reef-body" data-name="Body" style={{ width: 'auto', height: 'auto',
+            backgroundImage: 'url(/assets/supafeed/ios-discovery.webp)',
+            backgroundSize: 'cover',
+            backgroundPosition: 'center 38%',
+            backgroundRepeat: 'no-repeat'
+          }} />
+        <div data-id="agent-body" data-name="Body" style={{ width: 'auto', height: 'auto',
             position: 'relative',
             flex: '1 0 auto',
             order: '1',
@@ -326,7 +309,7 @@ export default function Page() {
             gap: '10px',
             padding: '22px 24px 26px 24px'
           }}>
-          <p data-id="reef-badge" data-name="Badge" style={{ width: 'auto', height: 'auto',
+          <p data-id="agent-badge" data-name="Badge" style={{ width: 'auto', height: 'auto',
               position: 'relative',
               flex: '0 0 auto',
               order: '0',
@@ -334,60 +317,51 @@ export default function Page() {
               fontWeight: '600',
               letterSpacing: '0.1em',
               textTransform: 'uppercase',
-              color: '#8b3a2b'
-            }}>macOS utility · in development</p>
-          <h3 data-id="reef-name" data-name="Name" style={{ width: 'auto', height: 'auto',
+              color: '#4358CD'
+            }}>Case study 2 · The agent’s side</p>
+          <h3 data-id="agent-name" data-name="Name" style={{ width: 'auto', height: 'auto',
               position: 'relative',
               flex: '0 0 auto',
               order: '1',
               fontSize: '24px',
               fontWeight: '700',
               color: '#222017'
-            }}>Reef</h3>
-          <p data-id="reef-desc" data-name="Description" style={{ width: 'auto', height: 'auto',
+            }}>Onboarding a user who is a machine</h3>
+          <p data-id="agent-desc" data-name="Description" style={{ width: 'auto', height: 'auto',
               position: 'relative',
               flex: '0 0 auto',
               order: '2',
               fontSize: '15px',
               lineHeight: '1.55',
               color: '#665f4e'
-            }}>The window manager that gives every app its own Alt-Tab. For people who live in windows all day and want switching to feel instant, physical, and dependable.</p>
+            }}>Setup meant terminal commands and pasted keys, and “connected” was a lie. Designing for an agent that reads the docs, sets itself up, and is only ever as green as the server has seen.</p>
         </div>
-      </div>
+      </Link>
 
-      <div data-id="card-type" data-name="Card · Type experiments" style={{ width: 'auto', height: 'auto',
+<Link data-id="card-chat" data-name="Card · Talking back to your agent" href="/work/supafeed-chat" style={{ width: 'auto', height: 'auto',
           position: 'relative',
-          flex: '1 1 380px',
+          flex: '1 1 280px',
           order: '3',
           display: 'flex',
           flexDirection: 'column',
           backgroundColor: '#fffdf9',
           border: '1px solid #22201721',
           borderRadius: '18px',
-          overflow: 'hidden'
+          overflow: 'hidden',
+          textDecoration: 'none',
+          color: 'inherit'
         }}>
-        <div data-id="type-art" data-name="Art" style={{ width: 'auto',
+        <div data-id="chat-art" data-name="Art" role="img" aria-label="Supafeed: a chat with the agent showing cards and a question" style={{ width: 'auto',
             position: 'relative',
             flex: '0 0 auto',
             order: '0',
-            display: 'flex',
-            alignItems: 'center',
-            justifyContent: 'center',
             height: '180px',
-            backgroundColor: '#ffffff'
-          }}>
-          <p data-id="type-art-word" data-name="Art word" style={{ width: 'auto', height: 'auto',
-              position: 'relative',
-              flex: '0 0 auto',
-              order: '0',
-              fontSize: '52px',
-              fontWeight: '600',
-              letterSpacing: '0em',
-              color: '#ff5c33',
-              fontFamily: 'ui-monospace, SFMono-Regular, Menlo, monospace'
-            }}>Flow</p>
-        </div>
-        <div data-id="type-body" data-name="Body" style={{ width: 'auto', height: 'auto',
+            backgroundImage: 'url(/assets/supafeed/ios-chat-2.webp)',
+            backgroundSize: 'cover',
+            backgroundPosition: 'center 38%',
+            backgroundRepeat: 'no-repeat'
+          }} />
+        <div data-id="chat-body" data-name="Body" style={{ width: 'auto', height: 'auto',
             position: 'relative',
             flex: '1 0 auto',
             order: '1',
@@ -396,7 +370,7 @@ export default function Page() {
             gap: '10px',
             padding: '22px 24px 26px 24px'
           }}>
-          <p data-id="type-badge" data-name="Badge" style={{ width: 'auto', height: 'auto',
+          <p data-id="chat-badge" data-name="Badge" style={{ width: 'auto', height: 'auto',
               position: 'relative',
               flex: '0 0 auto',
               order: '0',
@@ -404,95 +378,28 @@ export default function Page() {
               fontWeight: '600',
               letterSpacing: '0.1em',
               textTransform: 'uppercase',
-              color: '#7d1fa0'
-            }}>Typography engines · 2026</p>
-          <h3 data-id="type-name" data-name="Name" style={{ width: 'auto', height: 'auto',
+              color: '#4358CD'
+            }}>Case study 3 · Where the two meet</p>
+          <h3 data-id="chat-name" data-name="Name" style={{ width: 'auto', height: 'auto',
               position: 'relative',
               flex: '0 0 auto',
               order: '1',
               fontSize: '24px',
               fontWeight: '700',
               color: '#222017'
-            }}>Set in advance</h3>
-          <p data-id="type-desc" data-name="Description" style={{ width: 'auto', height: 'auto',
+            }}>Talking back to your agent</h3>
+          <p data-id="chat-desc" data-name="Description" style={{ width: 'auto', height: 'auto',
               position: 'relative',
               flex: '0 0 auto',
               order: '2',
               fontSize: '15px',
               lineHeight: '1.55',
               color: '#665f4e'
-            }}>A variable-font specimen tool generated from font binaries, and a magazine engine that typesets a whole spread — Knuth-Plass line breaking, zero DOM reads — before any of it exists on the page.</p>
+            }}>A feed is one-way. Hold-to-talk, cards inside chat, questions that look different from permissions, and a status that means a real round trip.</p>
         </div>
-      </div>
+      </Link>
 
-      <div data-id="card-metabob" data-name="Card · Metabob" style={{ width: 'auto', height: 'auto',
-          position: 'relative',
-          flex: '1 1 380px',
-          order: '4',
-          display: 'flex',
-          flexDirection: 'column',
-          backgroundColor: '#fffdf9',
-          border: '1px solid #22201721',
-          borderRadius: '18px',
-          overflow: 'hidden'
-        }}>
-        <div data-id="meta-art" data-name="Art" style={{ width: 'auto',
-            position: 'relative',
-            flex: '0 0 auto',
-            order: '0',
-            display: 'flex',
-            alignItems: 'center',
-            justifyContent: 'center',
-            height: '180px',
-            backgroundColor: '#ffffff'
-          }}>
-          <p data-id="meta-art-word" data-name="Art word" style={{ width: 'auto', height: 'auto',
-              position: 'relative',
-              flex: '0 0 auto',
-              order: '0',
-              fontSize: '52px',
-              fontWeight: '700',
-              letterSpacing: '-0.02em',
-              color: '#39ff88'
-            }}>Metabob</p>
-        </div>
-        <div data-id="meta-body" data-name="Body" style={{ width: 'auto', height: 'auto',
-            position: 'relative',
-            flex: '1 0 auto',
-            order: '1',
-            display: 'flex',
-            flexDirection: 'column',
-            gap: '10px',
-            padding: '22px 24px 26px 24px'
-          }}>
-          <p data-id="meta-badge" data-name="Badge" style={{ width: 'auto', height: 'auto',
-              position: 'relative',
-              flex: '0 0 auto',
-              order: '0',
-              fontSize: '12px',
-              fontWeight: '600',
-              letterSpacing: '0.1em',
-              textTransform: 'uppercase',
-              color: '#4a6c56'
-            }}>AI developer tool · previously at</p>
-          <h3 data-id="meta-name" data-name="Name" style={{ width: 'auto', height: 'auto',
-              position: 'relative',
-              flex: '0 0 auto',
-              order: '1',
-              fontSize: '24px',
-              fontWeight: '700',
-              color: '#222017'
-            }}>Metabob</h3>
-          <p data-id="meta-desc" data-name="Description" style={{ width: 'auto', height: 'auto',
-              position: 'relative',
-              flex: '0 0 auto',
-              order: '2',
-              fontSize: '15px',
-              lineHeight: '1.55',
-              color: '#665f4e'
-            }}>Generative AI for debugging and refactoring code — where the real design work was making complex analysis feel calm and actionable.</p>
-        </div>
-      </div>
+      
 
     </div>
   </div>

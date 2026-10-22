@@ -1,9 +1,9 @@
 import PageClient from './page.client';
 
 export const metadata = {
-  title: 'Supafeed: designing an app for you and your AI agent — Ted Dessert',
+  title: "Supafeed: designing an app for you and your AI agent — Ted Dessert",
   description:
-    'A case study: designing Supafeed, a private feed, day plan and dashboards that your own AI agent fills, read in a native iPhone app.',
+    "Supafeed is a private feed, day plan and dashboards that your own AI agent fills, read in a native iPhone app. The project, and its three case studies.",
 };
 
 export default function Page() {
