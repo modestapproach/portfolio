@@ -71,7 +71,7 @@ jobs:
 
       - name: Build (OpenNext → Workers)
         if: steps.creds.outputs.have == 'true'
-        run: npx opennextjs-cloudflare build
+        run: npx opennextjs-cloudflare build --dangerouslyUseUnsupportedNextVersion
 
       - name: Deploy production
         if: steps.creds.outputs.have == 'true' && github.ref == 'refs/heads/main'
