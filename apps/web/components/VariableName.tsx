@@ -5,7 +5,7 @@
 /** @controls {
   "text": { "type": "text", "label": "Text", "default": "Ted Dessert" },
   "effect": { "type": "select", "label": "Effect", "default": "heartbeat", "options": [{"label":"Sunset bloom","value":"bloom"},{"label":"Sunset heartbeat","value":"sunset-heartbeat"},{"label":"Heartbeat","value":"heartbeat"},{"label":"Still","value":"still"}] },
-  "beatPush": { "type": "slider", "label": "Heartbeat push", "default": 0, "min": 0, "max": 0.5, "step": 0.01, "description": "Sunset heartbeat: optionally also shove the rings inward on each lub-dub, as a share of one ring's life. The beat itself already reveals and hides the outer rings." },
+  "beatPush": { "type": "slider", "label": "Heartbeat push", "default": 0.12, "min": 0, "max": 0.5, "step": 0.01, "description": "Sunset heartbeat: how far each lub-dub pushes the rings, as a share of one ring's whole life. Uses Beat every for timing." },
   "bloomDirection": { "type": "select", "label": "Bloom direction", "default": "inward", "options": [{"label":"Inward (bold to skinny)","value":"inward"},{"label":"Outward (skinny to bold)","value":"outward"}] },
   "bloomSeconds": { "type": "slider", "label": "Bloom length (s)", "default": 24, "min": 2, "max": 90, "step": 1, "description": "How long one layer takes to cross from skinny to bold. A new layer starts every length ÷ layers." },
   "bloomLayers": { "type": "slider", "label": "Bloom layers", "default": 40, "min": 4, "max": 120, "step": 1, "description": "More layers make finer rings." },
@@ -155,14 +155,6 @@ function beatSurge(seconds: number, period: number): number {
   return (f(Math.min(seconds, period)) - lo) / Math.max(1e-6, hi - lo);
 }
 
-// A ring is fully visible at or below the cap and fades out over the next
-// RING_EDGE weight units above it, so the edge of the beat is soft.
-const RING_EDGE = 40;
-
-function ringReveal(weight: number, cap: number): number {
-  return Math.max(0, Math.min(1, 1 - (weight - cap) / RING_EDGE));
-}
-
 function heartbeat(seconds: number): number {
   return Math.min(1, Math.max(pulseAt(seconds - LUB_AT, LUB_DECAY), DUB_STRENGTH * pulseAt(seconds - DUB_AT, DUB_DECAY)));
 }
@@ -218,7 +210,7 @@ function VariableName({
   text = 'Ted Dessert',
   effect = 'heartbeat',
   bloomDirection = 'inward',
-  beatPush = 0,
+  beatPush = 0.12,
   bloomSeconds = 24,
   bloomFromWeight = 100,
   bloomLayers = 40,
@@ -315,15 +307,7 @@ function VariableName({
       const n = layers.length;
       // Each layer is a fixed slot in the cycle, 1/n apart, so the stack is
       // already full on the first frame. Newest (skinniest) sits on top.
-      const squeezeBeat = beatDirection === 'squeeze';
-      const heartbeatCap = (seconds: number) => {
-        const h = heartbeat(seconds);
-        return squeezeBeat ? peakWeight - (peakWeight - baseWeight) * h : baseWeight + (peakWeight - baseWeight) * h;
-      };
-      // cap: in sunset heartbeat, only rings at or below this weight show. It
-      // follows the heartbeat, so at rest the name is just its thin inner
-      // rings and each beat flashes the bolder outer rings into view.
-      const paint = (cycle: number, cap = Infinity) => {
+      const paint = (cycle: number) => {
         for (let k = 0; k < n; k++) {
           const s = layers[k];
           if (!s) continue;
@@ -331,12 +315,12 @@ function VariableName({
           s.style.color = sunsetAt(sunset, born * colourSpread);
           const w = bloomFromWeight + (peakWeight - bloomFromWeight) * bloomGrowth(p);
           s.style.fontVariationSettings = `'wght' ${Math.round(w)}`;
-          s.style.opacity = String(bloomOpacity(p, n) * ringReveal(w, cap));
+          s.style.opacity = String(bloomOpacity(p, n));
           s.style.zIndex = String(Math.round((1 - p) * 1000));
         }
       };
       if (reduced || !idleWave) {
-        paint(0.5 / n, beating ? heartbeatCap(0) : Infinity);
+        paint(0.5 / n);
         return;
       }
       // Inward plays the same cycle backwards: each layer arrives bold on the
@@ -346,16 +330,13 @@ function VariableName({
       const tick = (now: number) => {
         const elapsed = (now - start) / 1000;
         let travel = elapsed / Math.max(0.5, bloomSeconds);
-        let cap = Infinity;
         if (beating) {
+          // Each heartbeat pushes the rings on by beatPush of a ring's life.
           const period = Math.max(BEAT_WINDOW, pulseSeconds);
           const beats = Math.floor(elapsed / period);
-          const inBeat = elapsed - beats * period;
-          cap = heartbeatCap(inBeat);
-          // Optional extra: each heartbeat also shoves the rings inward.
-          travel += Math.max(0, beatPush) * (beats + beatSurge(inBeat, period));
+          travel += Math.max(0, beatPush) * (beats + beatSurge(elapsed - beats * period, period));
         }
-        paint((0.5 / n) + direction * travel, cap);
+        paint((0.5 / n) + direction * travel);
         raf.current = requestAnimationFrame(tick);
       };
       raf.current = requestAnimationFrame(tick);
@@ -496,7 +477,7 @@ function VariableName({
               lineHeight: 1.1,
               color: sunsetAt(sunset, born * colourSpread),
               fontVariationSettings: `'wght' ${Math.round(bloomFromWeight + (peakWeight - bloomFromWeight) * bloomGrowth(p0))}`,
-              opacity: bloomOpacity(p0, layerCount) * (beating ? ringReveal(bloomFromWeight + (peakWeight - bloomFromWeight) * bloomGrowth(p0), beatDirection === 'squeeze' ? peakWeight : baseWeight) : 1),
+              opacity: bloomOpacity(p0, layerCount),
               zIndex: Math.round((1 - p0) * 1000),
             }}
           >
