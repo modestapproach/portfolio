@@ -16,6 +16,7 @@
 import React from 'react';
 import Link from 'next/link';
 import VideoEmbed from '../../../components/VideoEmbed';
+import ImageCarousel from '../../../components/ImageCarousel';
 
 export default function Page() {
   return (
@@ -28,7 +29,7 @@ export default function Page() {
       [data-id="site-nav"] { padding: 16px 20px 16px 20px !important; }
       [data-id="gd-title"] { font-size: 34px !important; }
       [data-id="gd-head"] { padding: 32px 20px 0px 20px !important; }
-      [data-id="vd-hyt"], [data-id="vd-h0"], [data-id="vd-h1"], [data-id="vd-h2"], [data-id="vd-h3"], [data-id="vd-h4"], [data-id="vd-h5"] { font-size: 20px !important; }
+      [data-id="vd-hyt"], [data-id="vd-h0"], [data-id="vd-h1"], [data-id="vd-h2"], [data-id="vd-h3"], [data-id="vd-h4"], [data-id="vd-h5"], [data-id="vd-mb-process-h"] { font-size: 20px !important; }
     }
   `}</style>
   <div data-id="site-nav" data-name="Site nav" style={{ position: 'relative', flex: '0 0 auto', order: '0', display: 'flex', flexDirection: 'row', width: '100%', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: '12px', padding: '22px 40px 22px 40px' }}>
@@ -84,6 +85,36 @@ export default function Page() {
             <div data-id="vd-fig1-img" data-name="Image" style={{ position: 'relative', flex: '0 0 auto', order: '0', width: '100%', borderRadius: '10px', aspectRatio: '2000 / 1467', backgroundImage: 'url(/assets/process/metabob-animation.webp)', backgroundSize: 'cover', backgroundPosition: 'center', backgroundRepeat: 'no-repeat' }} role="img" aria-label="Still from the Metabob web animation" />
           </div>
           <p data-id="vd-fig1-cap" data-name="Caption" style={{ position: 'relative', flex: '0 0 auto', order: '1', fontFamily: 'Work Sans, -apple-system, BlinkMacSystemFont, sans-serif', color: '#666C73', fontSize: '14px', lineHeight: '1.45', textAlign: 'center' }}>A frame from the Metabob web animation</p>
+        </div>
+        <div data-id="vd-mb-process" data-name="Logo process" style={{ position: 'relative', flex: '0 0 auto', order: '4', display: 'flex', flexDirection: 'column', width: '100%', maxWidth: '1040px', gap: '14px', margin: '28px 0px 12px 0px', alignItems: 'center' }}>
+          <h3 data-id="vd-mb-process-h" data-name="Subheading" style={{ position: 'relative', flex: '0 0 auto', order: '0', fontFamily: 'Work Sans, -apple-system, BlinkMacSystemFont, sans-serif', color: '#16191C', fontSize: '22px', lineHeight: '1.3', fontWeight: '600', width: '100%', maxWidth: '600px' }}>Metabob logo design process</h3>
+          <ImageCarousel data-id="vd-mb-carousel" data-name="Logo process carousel" label="Metabob logo design process" aspectRatio="1940 / 1458" radius={18} images="/assets/graphic-design/metabob-logo-process/metabob-logo-process-01.webp,/assets/graphic-design/metabob-logo-process/metabob-logo-process-02.webp,/assets/graphic-design/metabob-logo-process/metabob-logo-process-03.webp,/assets/graphic-design/metabob-logo-process/metabob-logo-process-04.webp,/assets/graphic-design/metabob-logo-process/metabob-logo-process-05.webp,/assets/graphic-design/metabob-logo-process/metabob-logo-process-06.webp,/assets/graphic-design/metabob-logo-process/metabob-logo-process-07.webp,/assets/graphic-design/metabob-logo-process/metabob-logo-process-08.webp,/assets/graphic-design/metabob-logo-process/metabob-logo-process-09.webp,/assets/graphic-design/metabob-logo-process/metabob-logo-process-10.webp" captions="The starting point: a hand-drawn sketch|Tracing the sketch into a vector shape|The simplified vector next to the original drawing|Refining the face: glasses, beard and hair|First variations with the wordmark|Comparing variations side by side, including color|The full exploration board|The team vote: green dots on the favorites|Trying the chosen mark in color and in context|The final Metabob logo" style={{ position: 'relative', flex: '0 0 auto', order: '1', width: '100%' }} />
+        </div>
+      </div>
+      <div data-id="vd-g2" data-name="Modest Approach business card" style={{ position: 'relative', flex: '0 0 auto', order: '3', display: 'flex', flexDirection: 'column', width: '100%', alignItems: 'center', gap: '16px', padding: '40px 0px 0px 0px', borderTop: '1px solid #E8EAF0', marginTop: '24px' }}>
+        <div data-id="vd-proj2" data-name="Project" style={{ position: 'relative', flex: '0 0 auto', order: '0', display: 'flex', flexDirection: 'row', alignItems: 'center', flexWrap: 'wrap', gap: '10px', width: '100%', maxWidth: '600px' }}>
+          <p data-id="vd-proj2-k" data-name="Label" style={{ position: 'relative', flex: '0 0 auto', order: '0', fontFamily: 'Work Sans, -apple-system, BlinkMacSystemFont, sans-serif', color: '#666C73', fontSize: '13px', lineHeight: '1.4', fontWeight: '600', letterSpacing: '0.06em', textTransform: 'uppercase' }}>Project</p>
+          <p data-id="vd-proj2-v" data-name="Project name" style={{ position: 'relative', flex: '0 0 auto', order: '1', fontFamily: 'Work Sans, -apple-system, BlinkMacSystemFont, sans-serif', fontSize: '14px', lineHeight: '1.4', fontWeight: '600', color: '#4358CD', backgroundColor: '#EEF1FD', borderRadius: '9999px', padding: '5px 12px 5px 12px' }}>Modest Approach</p>
+        </div>
+        <h3 data-id="vd-h2" data-name="Subheading" style={{ position: 'relative', flex: '0 0 auto', order: '1', fontFamily: 'Work Sans, -apple-system, BlinkMacSystemFont, sans-serif', color: '#16191C', fontSize: '22px', lineHeight: '1.3', fontWeight: '600', width: '100%', maxWidth: '600px' }}>Modest Approach business card</h3>
+        <p data-id="vd-p2" data-name="Body" style={{ position: 'relative', flex: '0 0 auto', order: '2', fontFamily: 'Work Sans, -apple-system, BlinkMacSystemFont, sans-serif', color: '#2A2E33', fontSize: '18px', lineHeight: '1.6', width: '100%', maxWidth: '600px' }}>The front and back of the Modest Approach card. The MA mark is built from a few simple triangles, and the back crops it large in white over the blue.</p>
+        <div data-id="vd-fig2p" data-name="Process figure" style={{ position: 'relative', flex: '0 0 auto', order: '3', display: 'flex', flexDirection: 'column', width: '100%', maxWidth: '1040px', gap: '10px', margin: '12px 0px 12px 0px' }}>
+          <div data-id="vd-fig2p-card" data-name="Card" style={{ position: 'relative', flex: '0 0 auto', order: '0', display: 'flex', flexDirection: 'column', width: '100%', padding: '12px 12px 12px 12px', backgroundColor: '#ffffff', borderRadius: '18px', boxShadow: '0 1px 2px rgba(20,27,77,.05), 0 8px 28px rgba(20,27,77,.08)' }}>
+            <div data-id="vd-fig2p-img" data-name="Image" style={{ position: 'relative', flex: '0 0 auto', order: '0', width: '100%', borderRadius: '10px', aspectRatio: '2000 / 1391', backgroundImage: 'url(/assets/graphic-design/modest-approach-logo-process.webp)', backgroundSize: 'cover', backgroundPosition: 'center', backgroundRepeat: 'no-repeat' }} role="img" aria-label="Sketch board of Modest Approach logo explorations" />
+          </div>
+          <p data-id="vd-fig2p-cap" data-name="Caption" style={{ position: 'relative', flex: '0 0 auto', order: '1', fontFamily: 'Work Sans, -apple-system, BlinkMacSystemFont, sans-serif', color: '#666C73', fontSize: '14px', lineHeight: '1.45', textAlign: 'center' }}>Logo design process: spacing tests, shape studies and the variations that led to the MA mark</p>
+        </div>
+        <div data-id="vd-fig2" data-name="Figure" style={{ position: 'relative', flex: '0 0 auto', order: '4', display: 'flex', flexDirection: 'column', width: '100%', maxWidth: '1040px', gap: '10px', margin: '12px 0px 12px 0px' }}>
+          <div data-id="vd-fig2-card" data-name="Card" style={{ position: 'relative', flex: '0 0 auto', order: '0', display: 'flex', flexDirection: 'column', width: '100%', padding: '12px 12px 12px 12px', backgroundColor: '#ffffff', borderRadius: '18px', boxShadow: '0 1px 2px rgba(20,27,77,.05), 0 8px 28px rgba(20,27,77,.08)' }}>
+            <div data-id="vd-fig2-img" data-name="Image" style={{ position: 'relative', flex: '0 0 auto', order: '0', width: '100%', borderRadius: '10px', aspectRatio: '1584 / 1250', backgroundImage: 'url(/assets/graphic-design/modest-approach-business-card.webp)', backgroundSize: 'cover', backgroundPosition: 'center', backgroundRepeat: 'no-repeat' }} role="img" aria-label="Front and back of the Modest Approach business card" />
+          </div>
+          <p data-id="vd-fig2-cap" data-name="Caption" style={{ position: 'relative', flex: '0 0 auto', order: '1', fontFamily: 'Work Sans, -apple-system, BlinkMacSystemFont, sans-serif', color: '#666C73', fontSize: '14px', lineHeight: '1.45', textAlign: 'center' }}>Modest Approach business card, front and back</p>
+        </div>
+        <div data-id="vd-fig2k" data-name="Knife figure" style={{ position: 'relative', flex: '0 0 auto', order: '5', display: 'flex', flexDirection: 'column', width: '100%', maxWidth: '1040px', gap: '10px', margin: '12px 0px 12px 0px' }}>
+          <div data-id="vd-fig2k-card" data-name="Card" style={{ position: 'relative', flex: '0 0 auto', order: '0', display: 'flex', flexDirection: 'column', width: '100%', padding: '12px 12px 12px 12px', backgroundColor: '#ffffff', borderRadius: '18px', boxShadow: '0 1px 2px rgba(20,27,77,.05), 0 8px 28px rgba(20,27,77,.08)' }}>
+            <div data-id="vd-fig2k-img" data-name="Image" style={{ position: 'relative', flex: '0 0 auto', order: '0', width: '100%', borderRadius: '10px', aspectRatio: '2000 / 1500', backgroundImage: 'url(/assets/graphic-design/modest-approach-knife-engraving.webp)', backgroundSize: 'cover', backgroundPosition: 'center', backgroundRepeat: 'no-repeat' }} role="img" aria-label="Modest Approach logo engraved on a steel knife blade, with Made in San Francisco below it" />
+          </div>
+          <p data-id="vd-fig2k-cap" data-name="Caption" style={{ position: 'relative', flex: '0 0 auto', order: '1', fontFamily: 'Work Sans, -apple-system, BlinkMacSystemFont, sans-serif', color: '#666C73', fontSize: '14px', lineHeight: '1.45', textAlign: 'center' }}>The mark engraved on a Modest Approach knife blade, made in San Francisco</p>
         </div>
       </div>
       <div data-id="vd-g3" data-name="Gift app video" style={{ position: 'relative', flex: '0 0 auto', order: '4', display: 'flex', flexDirection: 'column', width: '100%', alignItems: 'center', gap: '16px', padding: '40px 0px 0px 0px', borderTop: '1px solid #E8EAF0', marginTop: '24px' }}>
