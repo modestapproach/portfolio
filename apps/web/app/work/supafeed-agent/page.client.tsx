@@ -55,7 +55,8 @@ export default function Page() {
       [data-id="hero-phone-3"] { margin-left: -44px !important; }
       [data-id="hero-phone-2"] { width: 156px !important; padding: 6px 6px 6px 6px !important; border-radius: 26px !important; }
       [data-id="hero-phone-1-img"], [data-id="hero-phone-2-img"], [data-id="hero-phone-3-img"] { border-radius: 21px !important; }
-      [data-id="hero"] { padding: 64px 20px 0px 20px !important; }
+      [data-id="hero"] { padding: 20px 20px 0px 20px !important; }
+      [data-id="hero-back"] { margin-bottom: 36px !important; }
       [data-id="hero-title"] { font-size: 34px !important; }
       [data-id="rs-title"] { font-size: 31px !important; }
       [data-id="affinity"] { min-width: 0px !important; grid-template-columns: minmax(0, 1fr) !important; }
@@ -70,8 +71,11 @@ export default function Page() {
       [data-id="ev-table-6-1"], [data-id="ev-table-6-2"], [data-id="ev-table-6-3"] { font-size: 14px !important; padding: 10px 8px 10px 8px !important; }
     }
   `}</style>
-  <div data-id="hero" data-name="Hero" style={{ position: 'relative', flex: '0 0 auto', order: '0', display: 'flex', flexDirection: 'column', width: '100%', alignItems: 'center', padding: '96px 40px 0px 40px', overflow: 'hidden', backgroundColor: '#141B4D' }}>
-    <div data-id="hero-in" data-name="Columns" style={{ position: 'relative', flex: '0 0 auto', order: '0', display: 'grid', gridTemplateColumns: 'minmax(0, 1.05fr) minmax(0, 1fr)', alignItems: 'end', gap: '40px', width: '100%', maxWidth: '1200px' }}>
+  <div data-id="hero" data-name="Hero" style={{ position: 'relative', flex: '0 0 auto', order: '0', display: 'flex', flexDirection: 'column', width: '100%', alignItems: 'center', padding: '28px 40px 0px 40px', overflow: 'hidden', backgroundColor: '#141B4D' }}>
+    <div data-id="hero-back" data-name="Back row" style={{ position: 'relative', flex: '0 0 auto', order: '0', display: 'flex', flexDirection: 'row', width: '100%', maxWidth: '1200px', marginBottom: '56px' }}>
+      <Link data-id="hero-back-link" data-name="Back to home" style={{ position: 'relative', flex: '0 0 auto', order: '0', fontFamily: 'Work Sans, -apple-system, BlinkMacSystemFont, sans-serif', color: '#ffffff', fontSize: '14px', lineHeight: '1.4', fontWeight: '600', padding: '8px 14px 8px 12px', borderRadius: '9999px', border: '1px solid rgba(255,255,255,.24)', textDecoration: 'none' }} href="/">← Back to home</Link>
+    </div>
+    <div data-id="hero-in" data-name="Columns" style={{ position: 'relative', flex: '0 0 auto', order: '1', display: 'grid', gridTemplateColumns: 'minmax(0, 1.05fr) minmax(0, 1fr)', alignItems: 'end', gap: '40px', width: '100%', maxWidth: '1200px' }}>
       <div data-id="hero-copy" data-name="Copy" style={{ position: 'relative', order: '0', display: 'flex', flexDirection: 'column', alignItems: 'flex-start', gap: '28px', paddingBottom: '80px', minWidth: '0px' }}>
         <div data-id="hero-brand" data-name="Wordmark" style={{ position: 'relative', flex: '0 0 auto', order: '0', width: '132px', aspectRatio: '579 / 130', backgroundImage: 'url(/assets/supafeed/wordmark-peach.svg)', backgroundSize: 'cover', backgroundPosition: 'center', backgroundRepeat: 'no-repeat' }} role="img" aria-label="Supafeed" />
         <h1 data-id="hero-title" data-name="Title" style={{ position: 'relative', flex: '0 0 auto', order: '1', fontFamily: 'Work Sans, -apple-system, BlinkMacSystemFont, sans-serif', color: '#ffffff', fontSize: '56px', lineHeight: '1.04', fontWeight: '800', letterSpacing: '-0.025em' }}>Onboarding a user <span style={{ color: '#F0C9B4' }}>who is a machine</span></h1>
