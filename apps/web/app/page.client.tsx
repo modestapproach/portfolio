@@ -230,9 +230,8 @@ export default function Page() {
         position: 'relative',
         flex: '0 0 auto',
         order: '1',
-        display: 'flex',
-        flexDirection: 'row',
-        flexWrap: 'wrap',
+        display: 'grid',
+        gridTemplateColumns: 'repeat(auto-fill, minmax(280px, 1fr))',
         gap: '24px'
       }}>
 
@@ -557,9 +556,8 @@ export default function Page() {
         position: 'relative',
         flex: '0 0 auto',
         order: '1',
-        display: 'flex',
-        flexDirection: 'row',
-        flexWrap: 'wrap',
+        display: 'grid',
+        gridTemplateColumns: 'repeat(auto-fill, minmax(280px, 1fr))',
         gap: '24px'
       }}>
 
