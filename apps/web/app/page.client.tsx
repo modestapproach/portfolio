@@ -59,7 +59,7 @@ export default function Page() {
       padding: '96px 96px 72px 96px',
       gap: '28px'
     }}>
-    <VariableName effect="sunset-heartbeat" data-id="hero-name" data-name="Ted Dessert · variable" text="Ted Dessert" baseWeight={280} peakWeight={700} radius={200} fontSize={92} color="#222017" style={{
+    <VariableName beatDirection="squeeze" beatPush={0.3} color7="#ffffff" color6="#000000" color5="#000000" color4="#000000" color3="#000000" color2="#000000" color1="#ffffff" data-id="hero-name" data-name="Ted Dessert · variable" text="Ted Dessert" baseWeight={280} peakWeight={480} radius={200} fontSize={92} color="#222017" style={{
         position: 'relative',
         flex: '0 0 auto',
         order: '0'
