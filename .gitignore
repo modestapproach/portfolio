@@ -30,3 +30,6 @@ dist-ssr
 .webstudio/
 infra/editor-tunnel/.config.runtime.yml
 .env.studio
+
+# Captured source pages: keep the text, not the downloaded originals
+docs/sources/*/*/assets/

@@ -33,6 +33,7 @@ export default function Page() {
       [data-id="hero-title"] { font-size: 34px !important; }
       [data-id="hero-sub"] { font-size: 17px !important; }
       [data-id="work"] { padding: 16px 40px 64px 40px !important; }
+      [data-id="earlier"] { padding: 0px 40px 64px 40px !important; }
       [data-id="footer"] { padding: 24px 40px 32px 40px !important; }
       [data-id="footer-name"], [data-id="footer-note"] { flex: 0 1 auto !important; min-width: 0 !important; }
     }
@@ -42,6 +43,8 @@ export default function Page() {
       [data-id="hero-sub"] { font-size: 16px !important; }
       [data-id="work"] { padding: 8px 24px 40px 24px !important; }
       [data-id="cards"] { gap: 16px !important; }
+      [data-id="earlier"] { padding: 0px 24px 40px 24px !important; }
+      [data-id="earlier-cards"] { gap: 16px !important; }
       [data-id="footer"] { flex-direction: column !important; align-items: stretch !important; justify-content: flex-start !important; gap: 6px !important; padding: 20px 24px 28px 24px !important; }
     }
 `}</style>
@@ -122,6 +125,52 @@ export default function Page() {
           borderRadius: '999px',
           padding: '8px 16px'
         }}>Former UX instructor</p>
+    </div>
+    <div data-id="hero-links" data-name="Page links" style={{ width: 'auto', height: 'auto',
+        position: 'relative',
+        flex: '0 0 auto',
+        order: '4',
+        display: 'flex',
+        flexDirection: 'row',
+        gap: '22px',
+        flexWrap: 'wrap'
+      }}>
+      <Link data-id="hero-link-about" data-name="About" href="/about" style={{ width: 'auto', height: 'auto',
+          position: 'relative',
+          flex: '0 0 auto',
+          order: '0',
+          fontSize: '15px',
+          fontWeight: '600',
+          color: '#4358CD',
+          textDecoration: 'none'
+        }}>About me →</Link>
+      <Link data-id="hero-link-process" data-name="Process" href="/process" style={{ width: 'auto', height: 'auto',
+          position: 'relative',
+          flex: '0 0 auto',
+          order: '1',
+          fontSize: '15px',
+          fontWeight: '600',
+          color: '#4358CD',
+          textDecoration: 'none'
+        }}>Design process →</Link>
+      <Link data-id="hero-link-blog" data-name="Blog" href="/blog" style={{ width: 'auto', height: 'auto',
+          position: 'relative',
+          flex: '0 0 auto',
+          order: '2',
+          fontSize: '15px',
+          fontWeight: '600',
+          color: '#4358CD',
+          textDecoration: 'none'
+        }}>Blog →</Link>
+      <Link data-id="hero-link-resume" data-name="Resumé" href="/about#resume" style={{ width: 'auto', height: 'auto',
+          position: 'relative',
+          flex: '0 0 auto',
+          order: '3',
+          fontSize: '15px',
+          fontWeight: '600',
+          color: '#4358CD',
+          textDecoration: 'none'
+        }}>Resumé →</Link>
     </div>
   </div>
 
@@ -399,7 +448,221 @@ export default function Page() {
         </div>
       </Link>
 
-      
+    </div>
+  </div>
+
+  <div data-id="earlier" data-name="Earlier work" style={{ width: 'auto', height: 'auto',
+      position: 'relative',
+      flex: '0 0 auto',
+      order: '2',
+      display: 'flex',
+      flexDirection: 'column',
+      padding: '0px 96px 96px 96px',
+      gap: '28px'
+    }}>
+    <h2 data-id="earlier-title" data-name="Section title" style={{ width: 'auto', height: 'auto',
+        position: 'relative',
+        flex: '0 0 auto',
+        order: '0',
+        fontSize: '15px',
+        fontWeight: '600',
+        letterSpacing: '0.12em',
+        textTransform: 'uppercase',
+        color: '#7d735f'
+      }}>Earlier work</h2>
+
+    <div data-id="earlier-cards" data-name="Project cards" style={{ width: 'auto', height: 'auto',
+        position: 'relative',
+        flex: '0 0 auto',
+        order: '1',
+        display: 'flex',
+        flexDirection: 'row',
+        flexWrap: 'wrap',
+        gap: '24px'
+      }}>
+
+      <Link data-id="card-kickback" data-name="Card · Kickback" href="/work/kickback" style={{ width: 'auto', height: 'auto',
+          position: 'relative',
+          flex: '1 1 280px',
+          order: '0',
+          display: 'flex',
+          flexDirection: 'column',
+          backgroundColor: '#fffdf9',
+          border: '1px solid #22201721',
+          borderRadius: '18px',
+          overflow: 'hidden',
+          textDecoration: 'none',
+          color: 'inherit'
+        }}>
+        <div data-id="kickback-art" data-name="Art" role="img" aria-label="Kickback: friends' video bubbles floating on a 2D canvas on iPhone" style={{ width: 'auto',
+            position: 'relative',
+            flex: '0 0 auto',
+            order: '0',
+            height: '180px',
+            backgroundImage: 'url(/assets/home/kickback-card.webp)',
+            backgroundSize: 'cover',
+            backgroundPosition: 'center 22%',
+            backgroundRepeat: 'no-repeat'
+          }} />
+        <div data-id="kickback-body" data-name="Body" style={{ width: 'auto', height: 'auto',
+            position: 'relative',
+            flex: '1 0 auto',
+            order: '1',
+            display: 'flex',
+            flexDirection: 'column',
+            gap: '10px',
+            padding: '22px 24px 26px 24px'
+          }}>
+          <p data-id="kickback-badge" data-name="Badge" style={{ width: 'auto', height: 'auto',
+              position: 'relative',
+              flex: '0 0 auto',
+              order: '0',
+              fontSize: '12px',
+              fontWeight: '600',
+              letterSpacing: '0.1em',
+              textTransform: 'uppercase',
+              color: '#4358CD'
+            }}>Overview · 2D metaverse · iOS + web · 3 years</p>
+          <h3 data-id="kickback-name" data-name="Name" style={{ width: 'auto', height: 'auto',
+              position: 'relative',
+              flex: '0 0 auto',
+              order: '1',
+              fontSize: '24px',
+              fontWeight: '700',
+              color: '#222017'
+            }}>Kickback</h3>
+          <p data-id="kickback-desc" data-name="Description" style={{ width: 'auto', height: 'auto',
+              position: 'relative',
+              flex: '0 0 auto',
+              order: '2',
+              fontSize: '15px',
+              lineHeight: '1.55',
+              color: '#665f4e'
+            }}>A 2D metaverse app where you float around and talk to people when your bubble touches theirs. Hackathon grand prize, then the Hook.vc accelerator.</p>
+        </div>
+      </Link>
+
+      <Link data-id="card-kickback-strategy" data-name="Card · Kickback strategy" href="/work/kickback-strategy" style={{ width: 'auto', height: 'auto',
+          position: 'relative',
+          flex: '1 1 280px',
+          order: '1',
+          display: 'flex',
+          flexDirection: 'column',
+          backgroundColor: '#fffdf9',
+          border: '1px solid #22201721',
+          borderRadius: '18px',
+          overflow: 'hidden',
+          textDecoration: 'none',
+          color: 'inherit'
+        }}>
+        <div data-id="kickback-strategy-art" data-name="Art" role="img" aria-label="A video call grid where only one person at a time can speak" style={{ width: 'auto',
+            position: 'relative',
+            flex: '0 0 auto',
+            order: '0',
+            height: '180px',
+            backgroundImage: 'url(/assets/home/kickback-strategy-card.webp)',
+            backgroundSize: 'cover',
+            backgroundPosition: 'center',
+            backgroundRepeat: 'no-repeat'
+          }} />
+        <div data-id="kickback-strategy-body" data-name="Body" style={{ width: 'auto', height: 'auto',
+            position: 'relative',
+            flex: '1 0 auto',
+            order: '1',
+            display: 'flex',
+            flexDirection: 'column',
+            gap: '10px',
+            padding: '22px 24px 26px 24px'
+          }}>
+          <p data-id="kickback-strategy-badge" data-name="Badge" style={{ width: 'auto', height: 'auto',
+              position: 'relative',
+              flex: '0 0 auto',
+              order: '0',
+              fontSize: '12px',
+              fontWeight: '600',
+              letterSpacing: '0.1em',
+              textTransform: 'uppercase',
+              color: '#4358CD'
+            }}>Case study · Research and strategy</p>
+          <h3 data-id="kickback-strategy-name" data-name="Name" style={{ width: 'auto', height: 'auto',
+              position: 'relative',
+              flex: '0 0 auto',
+              order: '1',
+              fontSize: '24px',
+              fontWeight: '700',
+              color: '#222017'
+            }}>Kickback: research to roadmap</h3>
+          <p data-id="kickback-strategy-desc" data-name="Description" style={{ width: 'auto', height: 'auto',
+              position: 'relative',
+              flex: '0 0 auto',
+              order: '2',
+              fontSize: '15px',
+              lineHeight: '1.55',
+              color: '#665f4e'
+            }}>Design research, design thinking and strategy meetings that produced the product roadmap, MVP requirements and wireframes.</p>
+        </div>
+      </Link>
+
+      <Link data-id="card-gift-app" data-name="Card · Gift App" href="/work/gift-app" style={{ width: 'auto', height: 'auto',
+          position: 'relative',
+          flex: '1 1 280px',
+          order: '2',
+          display: 'flex',
+          flexDirection: 'column',
+          backgroundColor: '#fffdf9',
+          border: '1px solid #22201721',
+          borderRadius: '18px',
+          overflow: 'hidden',
+          textDecoration: 'none',
+          color: 'inherit'
+        }}>
+        <div data-id="gift-app-art" data-name="Art" role="img" aria-label="Handwritten notes and envelopes with wax seals and twine" style={{ width: 'auto',
+            position: 'relative',
+            flex: '0 0 auto',
+            order: '0',
+            height: '180px',
+            backgroundImage: 'url(/assets/home/gift-app-card.webp)',
+            backgroundSize: 'cover',
+            backgroundPosition: 'center',
+            backgroundRepeat: 'no-repeat'
+          }} />
+        <div data-id="gift-app-body" data-name="Body" style={{ width: 'auto', height: 'auto',
+            position: 'relative',
+            flex: '1 0 auto',
+            order: '1',
+            display: 'flex',
+            flexDirection: 'column',
+            gap: '10px',
+            padding: '22px 24px 26px 24px'
+          }}>
+          <p data-id="gift-app-badge" data-name="Badge" style={{ width: 'auto', height: 'auto',
+              position: 'relative',
+              flex: '0 0 auto',
+              order: '0',
+              fontSize: '12px',
+              fontWeight: '600',
+              letterSpacing: '0.1em',
+              textTransform: 'uppercase',
+              color: '#4358CD'
+            }}>Case study · UI design · App design</p>
+          <h3 data-id="gift-app-name" data-name="Name" style={{ width: 'auto', height: 'auto',
+              position: 'relative',
+              flex: '0 0 auto',
+              order: '1',
+              fontSize: '24px',
+              fontWeight: '700',
+              color: '#222017'
+            }}>Gift App</h3>
+          <p data-id="gift-app-desc" data-name="Description" style={{ width: 'auto', height: 'auto',
+              position: 'relative',
+              flex: '0 0 auto',
+              order: '2',
+              fontSize: '15px',
+              lineHeight: '1.55',
+              color: '#665f4e'
+            }}>An app for creating and sending premium physical notes from your phone: high-quality papers, wax seals, twine and insert graphics.</p>
+        </div>
+      </Link>
 
     </div>
   </div>
@@ -407,7 +670,7 @@ export default function Page() {
   <div data-id="footer" data-name="Footer" style={{ width: 'auto', height: 'auto',
       position: 'relative',
       flex: '0 0 auto',
-      order: '2',
+      order: '3',
       display: 'flex',
       flexDirection: 'row',
       justifyContent: 'space-between',
