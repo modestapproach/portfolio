@@ -21,25 +21,29 @@ export default function Page() {
 <div data-id="root" data-name="Supafeed · Talking back to your agent" style={{ position: 'relative', display: 'flex', flexDirection: 'column', width: '100%', alignItems: 'center', backgroundColor: '#ffffff' }}>
   <style>{`
     @media (max-width: 1024px) and (min-width: 430.02px) {
-      [data-id="meta"] { width: calc(100% - 32px) !important; margin-top: -48px !important; grid-template-columns: repeat(2, minmax(0, 1fr)) !important; }
+      [data-id="hero-in"] { grid-template-columns: minmax(0, 1fr) !important; gap: 0px !important; }
+      [data-id="hero-copy"] { padding-bottom: 48px !important; }
       [data-id="rs1-shots"] { grid-template-columns: repeat(auto-fit, minmax(230px, 1fr)) !important; justify-items: center !important; }
       [data-id="gesture-card"] { overflow-x: auto !important; }
       [data-id="gesture-svg"] { min-width: 540px !important; }
-      [data-id="hero-phones"] { gap: 14px !important; height: 330px !important; }
-      [data-id="hero-phone-1"], [data-id="hero-phone-3"] { width: 180px !important; }
-      [data-id="hero-phone-2"] { width: 220px !important; }
-      [data-id="hero-title"] { font-size: 44px !important; }
+      [data-id="hero-phones"] { height: 420px !important; margin-bottom: -120px !important; }
+      [data-id="hero-title"] { font-size: 46px !important; }
     }
     @media (max-width: 430px) {
-      [data-id="meta"] { width: calc(100% - 32px) !important; margin-top: -48px !important; grid-template-columns: repeat(2, minmax(0, 1fr)) !important; padding: 22px 22px 22px 22px !important; gap: 18px !important; }
+      [data-id="hero-in"] { grid-template-columns: minmax(0, 1fr) !important; gap: 0px !important; }
+      [data-id="hero-copy"] { padding-bottom: 40px !important; gap: 22px !important; }
+      [data-id="meta"] { grid-template-columns: minmax(0, 1fr) !important; gap: 16px !important; }
       [data-id="rs1-shots"] { grid-template-columns: repeat(auto-fit, minmax(230px, 1fr)) !important; justify-items: center !important; }
       [data-id="gesture-card"] { overflow-x: auto !important; }
       [data-id="gesture-svg"] { min-width: 540px !important; }
-      [data-id="hero-phones"] { gap: 14px !important; height: 330px !important; }
-      [data-id="hero-phone-1"], [data-id="hero-phone-3"] { width: 180px !important; display: none !important; }
-      [data-id="hero-phone-2"] { width: 220px !important; }
-      [data-id="hero"] { padding: 72px 20px 0px 20px !important; }
-      [data-id="hero-title"] { font-size: 32px !important; }
+      [data-id="hero-phones"] { height: 300px !important; margin-bottom: -90px !important; }
+      [data-id="hero-phone-1"], [data-id="hero-phone-3"] { width: 140px !important; padding: 6px 6px 6px 6px !important; border-radius: 26px !important; }
+      [data-id="hero-phone-1"] { margin-right: -44px !important; }
+      [data-id="hero-phone-3"] { margin-left: -44px !important; }
+      [data-id="hero-phone-2"] { width: 156px !important; padding: 6px 6px 6px 6px !important; border-radius: 26px !important; }
+      [data-id="hero-phone-1-img"], [data-id="hero-phone-2-img"], [data-id="hero-phone-3-img"] { border-radius: 21px !important; }
+      [data-id="hero"] { padding: 64px 20px 0px 20px !important; }
+      [data-id="hero-title"] { font-size: 34px !important; }
       [data-id="rs-title"] { font-size: 31px !important; }
       [data-id="f4-gal"] { gap: 20px !important; }
       [data-id="ev-table"] { overflow-x: auto !important; }
@@ -51,44 +55,48 @@ export default function Page() {
       [data-id="ev-table-1-1"], [data-id="ev-table-1-2"], [data-id="ev-table-1-3"], [data-id="ev-table-2-1"], [data-id="ev-table-2-2"], [data-id="ev-table-2-3"], [data-id="ev-table-3-1"], [data-id="ev-table-3-2"], [data-id="ev-table-3-3"] { font-size: 14px !important; padding: 10px 8px 10px 8px !important; }
     }
   `}</style>
-  <div data-id="hero" data-name="Hero" style={{ position: 'relative', flex: '0 0 auto', order: '0', display: 'flex', flexDirection: 'column', width: '100%', alignItems: 'center', padding: '110px 20px 0px 20px', overflow: 'hidden', backgroundImage: 'linear-gradient(rgba(255,255,255,.05) 1px, rgba(0,0,0,0) 1px), linear-gradient(90deg, rgba(255,255,255,.05) 1px, rgba(0,0,0,0) 1px), radial-gradient(120% 90% at 50% 0%, #3A4CC0 0%, #1E2A78 46%, #0F1540 100%)', backgroundSize: '56px 56px, 56px 56px, 100% 100%' }}>
-      <div data-id="hero-brand" data-name="Wordmark" style={{ position: 'relative', flex: '0 0 auto', order: '0', width: '98px', marginBottom: '14px', aspectRatio: '579 / 130', backgroundImage: 'url(/assets/supafeed/wordmark-peach.svg)', backgroundSize: 'cover', backgroundPosition: 'center', backgroundRepeat: 'no-repeat' }} role="img" aria-label="Supafeed" />
-      <h1 data-id="hero-title" data-name="Title" style={{ position: 'relative', flex: '0 0 auto', order: '1', fontFamily: 'Work Sans, -apple-system, BlinkMacSystemFont, sans-serif', color: '#ffffff', maxWidth: '820px', fontSize: '52px', lineHeight: '1.08', fontWeight: '700', letterSpacing: '-0.02em', textAlign: 'center', marginBottom: '22px' }}>Talking back to your agent, from the same app</h1>
-      <div data-id="hero-chips" data-name="Chips" style={{ position: 'relative', flex: '0 0 auto', order: '2', display: 'flex', flexDirection: 'row', justifyContent: 'center', gap: '10px', flexWrap: 'wrap', marginBottom: '56px' }}>
-  <Link data-id="chip-0" data-name="Chip" style={{ position: 'relative', flex: '0 0 auto', order: '0', fontFamily: 'Work Sans, -apple-system, BlinkMacSystemFont, sans-serif', fontSize: '14px', lineHeight: '1.4', color: '#ffffff', padding: '7px 14px 7px 14px', borderRadius: '9999px', backgroundColor: 'rgba(255,255,255,.12)', border: '1px solid rgba(255,255,255,.16)' }} href="/work/supafeed">About the project ↑</Link>
-  <Link data-id="chip-1" data-name="Chip" style={{ position: 'relative', flex: '0 0 auto', order: '1', fontFamily: 'Work Sans, -apple-system, BlinkMacSystemFont, sans-serif', fontSize: '14px', lineHeight: '1.4', color: '#ffffff', padding: '7px 14px 7px 14px', borderRadius: '9999px', backgroundColor: 'rgba(255,255,255,.12)', border: '1px solid rgba(255,255,255,.16)' }} href="/work/supafeed-feed">Where an agent’s finds go →</Link>
-  <Link data-id="chip-2" data-name="Chip" style={{ position: 'relative', flex: '0 0 auto', order: '2', fontFamily: 'Work Sans, -apple-system, BlinkMacSystemFont, sans-serif', fontSize: '14px', lineHeight: '1.4', color: '#ffffff', padding: '7px 14px 7px 14px', borderRadius: '9999px', backgroundColor: 'rgba(255,255,255,.12)', border: '1px solid rgba(255,255,255,.16)' }} href="/work/supafeed-agent">Onboarding a user who is a machine →</Link>
-  </div>
-      <div data-id="hero-phones" data-name="Phones" style={{ position: 'relative', flex: '0 0 auto', order: '3', display: 'flex', flexDirection: 'row', justifyContent: 'center', alignItems: 'flex-start', gap: '28px', height: '420px', overflow: 'hidden' }}>
-        <div data-id="hero-phone-1" data-name="Hero phone · Today" style={{ position: 'relative', flex: '0 0 auto', order: '0', display: 'flex', flexDirection: 'column', width: '250px', padding: '9px 9px 9px 9px', borderRadius: '42px', backgroundColor: '#0d0f14', boxShadow: '0 24px 60px rgba(10,14,40,.35)', marginTop: '56px', opacity: '0.92' }}>
+  <div data-id="hero" data-name="Hero" style={{ position: 'relative', flex: '0 0 auto', order: '0', display: 'flex', flexDirection: 'column', width: '100%', alignItems: 'center', padding: '96px 40px 0px 40px', overflow: 'hidden', backgroundColor: '#141B4D' }}>
+    <div data-id="hero-in" data-name="Columns" style={{ position: 'relative', flex: '0 0 auto', order: '0', display: 'grid', gridTemplateColumns: 'minmax(0, 1.05fr) minmax(0, 1fr)', alignItems: 'end', gap: '40px', width: '100%', maxWidth: '1200px' }}>
+      <div data-id="hero-copy" data-name="Copy" style={{ position: 'relative', order: '0', display: 'flex', flexDirection: 'column', alignItems: 'flex-start', gap: '28px', paddingBottom: '80px', minWidth: '0px' }}>
+        <div data-id="hero-brand" data-name="Wordmark" style={{ position: 'relative', flex: '0 0 auto', order: '0', width: '132px', aspectRatio: '579 / 130', backgroundImage: 'url(/assets/supafeed/wordmark-peach.svg)', backgroundSize: 'cover', backgroundPosition: 'center', backgroundRepeat: 'no-repeat' }} role="img" aria-label="Supafeed" />
+        <h1 data-id="hero-title" data-name="Title" style={{ position: 'relative', flex: '0 0 auto', order: '1', fontFamily: 'Work Sans, -apple-system, BlinkMacSystemFont, sans-serif', color: '#ffffff', fontSize: '56px', lineHeight: '1.04', fontWeight: '800', letterSpacing: '-0.025em' }}>Talking back to your agent, <span style={{ color: '#F0C9B4' }}>from the same app</span></h1>
+        <div data-id="hero-chips" data-name="Chips" style={{ position: 'relative', flex: '0 0 auto', order: '2', display: 'flex', flexDirection: 'row', gap: '8px', flexWrap: 'wrap' }}>
+          <Link data-id="chip-0" data-name="Chip" style={{ position: 'relative', flex: '0 0 auto', order: '0', fontFamily: 'Work Sans, -apple-system, BlinkMacSystemFont, sans-serif', fontSize: '14px', lineHeight: '1.4', fontWeight: '500', color: '#ffffff', padding: '8px 14px 8px 14px', borderRadius: '9999px', border: '1px solid rgba(255,255,255,.24)', textDecoration: 'none' }} href="/work/supafeed">About the project ↑</Link>
+          <Link data-id="chip-1" data-name="Chip" style={{ position: 'relative', flex: '0 0 auto', order: '1', fontFamily: 'Work Sans, -apple-system, BlinkMacSystemFont, sans-serif', fontSize: '14px', lineHeight: '1.4', fontWeight: '500', color: '#ffffff', padding: '8px 14px 8px 14px', borderRadius: '9999px', border: '1px solid rgba(255,255,255,.24)', textDecoration: 'none' }} href="/work/supafeed-feed">Where an agent’s finds go →</Link>
+          <Link data-id="chip-2" data-name="Chip" style={{ position: 'relative', flex: '0 0 auto', order: '2', fontFamily: 'Work Sans, -apple-system, BlinkMacSystemFont, sans-serif', fontSize: '14px', lineHeight: '1.4', fontWeight: '500', color: '#ffffff', padding: '8px 14px 8px 14px', borderRadius: '9999px', border: '1px solid rgba(255,255,255,.24)', textDecoration: 'none' }} href="/work/supafeed-agent">Onboarding a user who is a machine →</Link>
+        </div>
+        <div data-id="meta" data-name="Project details" style={{ position: 'relative', flex: '0 0 auto', order: '3', display: 'grid', gridTemplateColumns: 'repeat(2, minmax(0, 1fr))', width: '100%', gap: '20px 32px', paddingTop: '24px', borderTop: '1px solid rgba(255,255,255,.16)' }}>
+          <div data-id="meta-role" data-name="Role" style={{ position: 'relative', order: '0', display: 'flex', flexDirection: 'column', gap: '6px', minWidth: '0px' }}>
+            <h3 data-id="meta-role-k" data-name="Label" style={{ position: 'relative', flex: '0 0 auto', order: '0', fontFamily: 'Work Sans, -apple-system, BlinkMacSystemFont, sans-serif', color: '#F0C9B4', fontSize: '12px', lineHeight: '1.3', fontWeight: '700', letterSpacing: '0.08em', textTransform: 'uppercase' }}>Role</h3>
+            <p data-id="meta-role-v" data-name="Value" style={{ position: 'relative', flex: '0 0 auto', order: '1', fontFamily: 'Work Sans, -apple-system, BlinkMacSystemFont, sans-serif', color: 'rgba(255,255,255,.82)', fontSize: '15px', lineHeight: '1.45' }}>Founder and designer: product, UX, interaction and visual design, and the build</p>
+          </div>
+          <div data-id="meta-team" data-name="Team" style={{ position: 'relative', order: '1', display: 'flex', flexDirection: 'column', gap: '6px', minWidth: '0px' }}>
+            <h3 data-id="meta-team-k" data-name="Label" style={{ position: 'relative', flex: '0 0 auto', order: '0', fontFamily: 'Work Sans, -apple-system, BlinkMacSystemFont, sans-serif', color: '#F0C9B4', fontSize: '12px', lineHeight: '1.3', fontWeight: '700', letterSpacing: '0.08em', textTransform: 'uppercase' }}>Team</h3>
+            <p data-id="meta-team-v" data-name="Value" style={{ position: 'relative', flex: '0 0 auto', order: '1', fontFamily: 'Work Sans, -apple-system, BlinkMacSystemFont, sans-serif', color: 'rgba(255,255,255,.82)', fontSize: '15px', lineHeight: '1.45' }}>Just me, directing coding agents (Claude Code and Codex) for most of the code</p>
+          </div>
+          <div data-id="meta-timeline" data-name="Timeline" style={{ position: 'relative', order: '2', display: 'flex', flexDirection: 'column', gap: '6px', minWidth: '0px' }}>
+            <h3 data-id="meta-timeline-k" data-name="Label" style={{ position: 'relative', flex: '0 0 auto', order: '0', fontFamily: 'Work Sans, -apple-system, BlinkMacSystemFont, sans-serif', color: '#F0C9B4', fontSize: '12px', lineHeight: '1.3', fontWeight: '700', letterSpacing: '0.08em', textTransform: 'uppercase' }}>Timeline</h3>
+            <p data-id="meta-timeline-v" data-name="Value" style={{ position: 'relative', flex: '0 0 auto', order: '1', fontFamily: 'Work Sans, -apple-system, BlinkMacSystemFont, sans-serif', color: 'rgba(255,255,255,.82)', fontSize: '15px', lineHeight: '1.45' }}>13 days<br />Sep 26 – Oct 8, 2026</p>
+          </div>
+          <div data-id="meta-stack" data-name="Stack" style={{ position: 'relative', order: '3', display: 'flex', flexDirection: 'column', gap: '6px', minWidth: '0px' }}>
+            <h3 data-id="meta-stack-k" data-name="Label" style={{ position: 'relative', flex: '0 0 auto', order: '0', fontFamily: 'Work Sans, -apple-system, BlinkMacSystemFont, sans-serif', color: '#F0C9B4', fontSize: '12px', lineHeight: '1.3', fontWeight: '700', letterSpacing: '0.08em', textTransform: 'uppercase' }}>Stack</h3>
+            <p data-id="meta-stack-v" data-name="Value" style={{ position: 'relative', flex: '0 0 auto', order: '1', fontFamily: 'Work Sans, -apple-system, BlinkMacSystemFont, sans-serif', color: 'rgba(255,255,255,.82)', fontSize: '15px', lineHeight: '1.45' }}>SwiftUI (iOS 26), React, Convex, Cloudflare Workers, Claude Code, Codex</p>
+          </div>
+        </div>
+      </div>
+      <div data-id="hero-phones" data-name="Phones" style={{ position: 'relative', order: '1', display: 'flex', flexDirection: 'row', justifyContent: 'center', alignItems: 'flex-end', height: '560px', marginBottom: '-150px', minWidth: '0px' }}>
+        <div data-id="hero-phone-1" data-name="Hero phone · Today" style={{ position: 'relative', flex: '0 0 auto', order: '0', display: 'flex', flexDirection: 'column', width: '210px', padding: '9px 9px 9px 9px', borderRadius: '42px', backgroundColor: '#0d0f14', boxShadow: '0 30px 60px rgba(5,8,30,.45)', transform: 'rotate(-8deg)', transformBox: 'border-box', transformOrigin: 'center bottom', marginBottom: '-40px', marginRight: '-56px' }}>
           <div data-id="hero-phone-1-img" data-name="Screenshot" style={{ position: 'relative', flex: '0 0 auto', order: '0', width: '100%', borderRadius: '34px', aspectRatio: '900 / 1957', backgroundImage: 'url(/assets/supafeed/ios-hold.webp)', backgroundSize: 'cover', backgroundPosition: 'center', backgroundRepeat: 'no-repeat' }} aria-hidden="true" />
         </div>
-        <div data-id="hero-phone-2" data-name="Hero phone · Feed" style={{ position: 'relative', flex: '0 0 auto', order: '1', display: 'flex', flexDirection: 'column', width: '280px', padding: '9px 9px 9px 9px', borderRadius: '42px', backgroundColor: '#0d0f14', boxShadow: '0 24px 60px rgba(10,14,40,.35)' }}>
+        <div data-id="hero-phone-2" data-name="Hero phone · Feed" style={{ position: 'relative', flex: '0 0 auto', order: '1', display: 'flex', flexDirection: 'column', width: '236px', padding: '9px 9px 9px 9px', borderRadius: '42px', backgroundColor: '#0d0f14', boxShadow: '0 30px 60px rgba(5,8,30,.45)', zIndex: '2' }}>
           <div data-id="hero-phone-2-img" data-name="Screenshot" style={{ position: 'relative', flex: '0 0 auto', order: '0', width: '100%', borderRadius: '34px', aspectRatio: '900 / 1957', backgroundImage: 'url(/assets/supafeed/ios-chat-2.webp)', backgroundSize: 'cover', backgroundPosition: 'center', backgroundRepeat: 'no-repeat' }} aria-hidden="true" />
         </div>
-        <div data-id="hero-phone-3" data-name="Hero phone · Chat" style={{ position: 'relative', flex: '0 0 auto', order: '2', display: 'flex', flexDirection: 'column', width: '250px', padding: '9px 9px 9px 9px', borderRadius: '42px', backgroundColor: '#0d0f14', boxShadow: '0 24px 60px rgba(10,14,40,.35)', marginTop: '56px', opacity: '0.92' }}>
+        <div data-id="hero-phone-3" data-name="Hero phone · Chat" style={{ position: 'relative', flex: '0 0 auto', order: '2', display: 'flex', flexDirection: 'column', width: '210px', padding: '9px 9px 9px 9px', borderRadius: '42px', backgroundColor: '#0d0f14', boxShadow: '0 30px 60px rgba(5,8,30,.45)', transform: 'rotate(8deg)', transformBox: 'border-box', transformOrigin: 'center bottom', marginBottom: '-40px', marginLeft: '-56px' }}>
           <div data-id="hero-phone-3-img" data-name="Screenshot" style={{ position: 'relative', flex: '0 0 auto', order: '0', width: '100%', borderRadius: '34px', aspectRatio: '900 / 1957', backgroundImage: 'url(/assets/supafeed/ios-chat-perm.webp)', backgroundSize: 'cover', backgroundPosition: 'center', backgroundRepeat: 'no-repeat' }} aria-hidden="true" />
         </div>
       </div>
     </div>
-  <div data-id="meta" data-name="Project details" style={{ position: 'relative', flex: '0 0 auto', order: '1', display: 'grid', gridTemplateColumns: 'repeat(4, minmax(0, 1fr))', width: '100%', maxWidth: '900px', marginTop: '-60px', zIndex: '2', gap: '24px', padding: '30px 36px 30px 36px', backgroundColor: '#ffffff', borderRadius: '20px', boxShadow: '0 1px 2px rgba(20,27,77,.05), 0 8px 28px rgba(20,27,77,.08)' }}>
-      <div data-id="meta-role" data-name="Role" style={{ position: 'relative', order: '0', display: 'flex', flexDirection: 'column', gap: '6px' }}>
-        <h3 data-id="meta-role-k" data-name="Label" style={{ position: 'relative', flex: '0 0 auto', order: '0', fontFamily: 'Work Sans, -apple-system, BlinkMacSystemFont, sans-serif', color: '#4358CD', fontSize: '18px', lineHeight: '1.25', fontWeight: '600' }}>Role</h3>
-        <p data-id="meta-role-v" data-name="Value" style={{ position: 'relative', flex: '0 0 auto', order: '1', fontFamily: 'Work Sans, -apple-system, BlinkMacSystemFont, sans-serif', color: '#2A2E33', fontSize: '16px', lineHeight: '1.45' }}>Founder and designer: product, UX, interaction and visual design, and the build</p>
-      </div>
-      <div data-id="meta-team" data-name="Team" style={{ position: 'relative', order: '1', display: 'flex', flexDirection: 'column', gap: '6px' }}>
-        <h3 data-id="meta-team-k" data-name="Label" style={{ position: 'relative', flex: '0 0 auto', order: '0', fontFamily: 'Work Sans, -apple-system, BlinkMacSystemFont, sans-serif', color: '#4358CD', fontSize: '18px', lineHeight: '1.25', fontWeight: '600' }}>Team</h3>
-        <p data-id="meta-team-v" data-name="Value" style={{ position: 'relative', flex: '0 0 auto', order: '1', fontFamily: 'Work Sans, -apple-system, BlinkMacSystemFont, sans-serif', color: '#2A2E33', fontSize: '16px', lineHeight: '1.45' }}>Just me, directing coding agents (Claude Code and Codex) for most of the code</p>
-      </div>
-      <div data-id="meta-timeline" data-name="Timeline" style={{ position: 'relative', order: '2', display: 'flex', flexDirection: 'column', gap: '6px' }}>
-        <h3 data-id="meta-timeline-k" data-name="Label" style={{ position: 'relative', flex: '0 0 auto', order: '0', fontFamily: 'Work Sans, -apple-system, BlinkMacSystemFont, sans-serif', color: '#4358CD', fontSize: '18px', lineHeight: '1.25', fontWeight: '600' }}>Timeline</h3>
-        <p data-id="meta-timeline-v" data-name="Value" style={{ position: 'relative', flex: '0 0 auto', order: '1', fontFamily: 'Work Sans, -apple-system, BlinkMacSystemFont, sans-serif', color: '#2A2E33', fontSize: '16px', lineHeight: '1.45' }}>13 days<br />Sep 26 – Oct 8, 2026</p>
-      </div>
-      <div data-id="meta-stack" data-name="Stack" style={{ position: 'relative', order: '3', display: 'flex', flexDirection: 'column', gap: '6px' }}>
-        <h3 data-id="meta-stack-k" data-name="Label" style={{ position: 'relative', flex: '0 0 auto', order: '0', fontFamily: 'Work Sans, -apple-system, BlinkMacSystemFont, sans-serif', color: '#4358CD', fontSize: '18px', lineHeight: '1.25', fontWeight: '600' }}>Stack</h3>
-        <p data-id="meta-stack-v" data-name="Value" style={{ position: 'relative', flex: '0 0 auto', order: '1', fontFamily: 'Work Sans, -apple-system, BlinkMacSystemFont, sans-serif', color: '#2A2E33', fontSize: '16px', lineHeight: '1.45' }}>SwiftUI (iOS 26), React, Convex, Cloudflare Workers, Claude Code, Codex</p>
-      </div>
-    </div>
+  </div>
   <div data-id="intro" data-name="Introduction" style={{ position: 'relative', flex: '0 0 auto', order: '2', display: 'flex', flexDirection: 'column', width: '100%', alignItems: 'center', padding: '72px 20px 0px 20px' }}>
   <div data-id="intro-in" data-name="Column" style={{ position: 'relative', flex: '0 0 auto', order: '0', display: 'flex', flexDirection: 'column', width: '100%', maxWidth: '600px', gap: '16px' }}>
   <p data-id="intro-k" data-name="Kicker" style={{ position: 'relative', flex: '0 0 auto', order: '0', fontFamily: 'Work Sans, -apple-system, BlinkMacSystemFont, sans-serif', color: '#4358CD', fontSize: '14px', lineHeight: '1.4', fontWeight: '600', letterSpacing: '0.02em' }}>Supafeed · case study 3 of 3 · Where the two meet</p>
