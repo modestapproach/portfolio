@@ -1,7 +1,7 @@
 'use client';
 
 /** @label "Variable Name" */
-/** @comment "Pointer-reactive variable-font wordmark: the character nearest the cursor peaks in weight, neighbours decay on a gaussian. Idles on a slow weight wave. Fits itself to the width of whatever box it sits in, so it never overflows a phone. Ported from the type experiments' proximity view." */
+/** @comment "Variable-font wordmark whose whole word pulses evenly between base and peak weight. Optionally pointer-reactive: the character nearest the cursor peaks in weight, neighbours decay on a gaussian. Fits itself to the width of whatever box it sits in, so it never overflows a phone. Ported from the type experiments' proximity view." */
 /** @controls {
   "text": { "type": "text", "label": "Text", "default": "Ted Dessert" },
   "baseWeight": { "type": "slider", "label": "Base weight", "default": 300, "min": 100, "max": 700, "step": 10 },
@@ -11,7 +11,9 @@
   "fit": { "type": "toggle", "label": "Fit to width", "default": true, "description": "Shrink below Font size when the box is narrower than the text. Font size becomes the maximum." },
   "minFontSize": { "type": "slider", "label": "Min font size (px)", "default": 20, "min": 8, "max": 120, "step": 1 },
   "color": { "type": "color", "label": "Color", "default": "#222017" },
-  "idleWave": { "type": "toggle", "label": "Idle wave", "default": true }
+  "idleWave": { "type": "toggle", "label": "Pulse", "default": true, "description": "Every letter swells from base to peak weight and back, together." },
+  "pulseSeconds": { "type": "slider", "label": "Pulse length (s)", "default": 2.4, "min": 0.6, "max": 8, "step": 0.1 },
+  "pointerReactive": { "type": "toggle", "label": "Pointer reactive", "default": false, "description": "Letters near the cursor get bolder. Off keeps the weight even across the word." }
 } */
 
 import React, { useEffect, useLayoutEffect, useRef, useState } from 'react';
@@ -116,6 +118,8 @@ function VariableName({
   minFontSize = 20,
   color = '#222017',
   idleWave = true,
+  pulseSeconds = 2.4,
+  pointerReactive = false,
   ...props
 }: {
   text?: string;
@@ -127,6 +131,8 @@ function VariableName({
   minFontSize?: number;
   color?: string;
   idleWave?: boolean;
+  pulseSeconds?: number;
+  pointerReactive?: boolean;
   style?: React.CSSProperties;
   [key: string]: unknown;
 }) {
@@ -178,11 +184,13 @@ function VariableName({
     const start = performance.now();
     const tick = (now: number) => {
       const wrapRect = wrap.getBoundingClientRect();
+      // One phase for the whole word, so every letter swells together.
+      const pulse = 0.5 - 0.5 * Math.cos(((now - start) / (Math.max(0.1, pulseSeconds) * 1000)) * 2 * Math.PI);
       for (let i = 0; i < spans.length; i++) {
         const s = spans[i];
         if (!s) continue;
         let target = baseWeight;
-        if (pointer.current) {
+        if (pointerReactive && pointer.current) {
           // Gaussian falloff on pointer distance — the experiments' curve.
           const cr = s.getBoundingClientRect();
           const cx = cr.left - wrapRect.left + cr.width / 2;
@@ -191,10 +199,7 @@ function VariableName({
           const t = d / Math.max(1, radius);
           target = baseWeight + (peakWeight - baseWeight) * Math.exp(-4 * t * t);
         } else if (idleWave) {
-          // No pointer: a slow travelling wave keeps the wordmark alive.
-          const phase = (now - start) / 1200 - i * 0.55;
-          const w = Math.max(0, Math.sin(phase));
-          target = baseWeight + (peakWeight - baseWeight) * 0.35 * w * w;
+          target = baseWeight + (peakWeight - baseWeight) * pulse;
         }
         // Ease toward the target so weight changes feel damped, not twitchy.
         const next = weights.current[i] + (target - weights.current[i]) * 0.18;
@@ -211,7 +216,7 @@ function VariableName({
       wrap.removeEventListener('pointerleave', onLeave);
     };
     // Re-arm when any tuning knob changes.
-  }, [text, baseWeight, peakWeight, radius, idleWave]);
+  }, [text, baseWeight, peakWeight, radius, idleWave, pulseSeconds, pointerReactive]);
 
   return (
     // `block`, not `inline-block`: the wrapper must take the width of its
