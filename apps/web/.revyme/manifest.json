@@ -44,12 +44,12 @@
     "messages/es.json",
     "messages/fr.json"
   ],
-  "savedAt": "2026-11-08T06:45:02.000Z",
+  "savedAt": "2026-11-08T07:02:50.000Z",
   "hashes": {
     "_meta/agent-chats.json": "85fce6e63832a22933b29f775286d887327f0e21",
     "_meta/chat-history.json": "bf21a9e8fbc5a3846fb05b4fa0859e0917b2202f",
     "_meta/page-camera.json": "576022f7f2873358cbb6a68f67f0d63194a7e74e",
-    "app/about/page.client.tsx": "7cdbc73dfcbba6b770c9acb1de3996ad4f54a6d0",
+    "app/about/page.client.tsx": "e3bd426d3d8dfba69ce570bccc87a3580d6934ee",
     "app/about/page.tsx": "be33930075c825e095efdc31eb1216f57164c317",
     "app/blog/gpt4-novel/page.client.tsx": "2be94f4e3bf611774267ef3abe7548f744cf6513",
     "app/blog/gpt4-novel/page.tsx": "4cf7a572af94d899054a916cef28a6a90ae25718",
