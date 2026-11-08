@@ -70,9 +70,9 @@ export default function Page() {
         lineHeight: '1.1',
         fontWeight: '600',
         letterSpacing: '-0.015em',
-        color: '#3a3527',
+        color: '#222017',
         maxWidth: '820px'
-      }}>Product designer taking new technology from first idea to products people love.</h2>
+      }}>A 0 to 1 Product Engineer with a pulse on the latest in Tech and AI.</h2>
     <p data-id="hero-sub" data-name="Subhead" style={{ width: 'auto', height: 'auto',
         position: 'relative',
         flex: '0 0 auto',

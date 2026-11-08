@@ -4,12 +4,13 @@
 /** @comment "Variable-font wordmark with three effects. Sunset bloom: copies of the word stack on top of each other, each in its own sunset colour. Inward (default): each arrives bold on the outside and thins toward the centre, so the name seems to keep sinking into itself. Outward: each is born skinny on top and grows bold. Heartbeat: the whole word rests at base weight and spikes to peak twice (lub-dub). Still: base weight. Optionally pointer-reactive in heartbeat mode. Fits itself to the width of whatever box it sits in, so it never overflows a phone. Ported from the type experiments' proximity view." */
 /** @controls {
   "text": { "type": "text", "label": "Text", "default": "Ted Dessert" },
-  "effect": { "type": "select", "label": "Effect", "default": "bloom", "options": [{"label":"Sunset bloom","value":"bloom"},{"label":"Heartbeat","value":"heartbeat"},{"label":"Still","value":"still"}] },
+  "effect": { "type": "select", "label": "Effect", "default": "heartbeat", "options": [{"label":"Sunset bloom","value":"bloom"},{"label":"Heartbeat","value":"heartbeat"},{"label":"Still","value":"still"}] },
   "bloomDirection": { "type": "select", "label": "Bloom direction", "default": "inward", "options": [{"label":"Inward (bold to skinny)","value":"inward"},{"label":"Outward (skinny to bold)","value":"outward"}] },
-  "bloomSeconds": { "type": "slider", "label": "Bloom length (s)", "default": 30, "min": 2, "max": 90, "step": 1, "description": "How long one layer takes to cross from skinny to bold. A new layer starts every length ÷ layers." },
+  "bloomSeconds": { "type": "slider", "label": "Bloom length (s)", "default": 24, "min": 2, "max": 90, "step": 1, "description": "How long one layer takes to cross from skinny to bold. A new layer starts every length ÷ layers." },
   "bloomLayers": { "type": "slider", "label": "Bloom layers", "default": 40, "min": 4, "max": 120, "step": 1, "description": "More layers make finer rings." },
   "colourSpread": { "type": "slider", "label": "Colours at once", "default": 0.15, "min": 0.02, "max": 1, "step": 0.01, "description": "How much of the sunset is on screen at one time. Low shows two or three neighbouring colours that drift through the whole sunset; 1 shows every colour at once." },
   "bloomFromWeight": { "type": "slider", "label": "Bloom start weight", "default": 100, "min": 100, "max": 700, "step": 10 },
+  "centreColor": { "type": "color", "label": "Centre colour", "default": "#FFFFFF", "description": "A still copy at the start weight, always on top, so the skinniest line never changes colour." },
   "color1": { "type": "color", "label": "Sunset stop 1", "default": "#FFC04D" },
   "color2": { "type": "color", "label": "Sunset stop 2", "default": "#FFB07C" },
   "color3": { "type": "color", "label": "Sunset stop 3", "default": "#FF6F61" },
@@ -24,8 +25,10 @@
   "fit": { "type": "toggle", "label": "Fit to width", "default": true, "description": "Shrink below Font size when the box is narrower than the text. Font size becomes the maximum." },
   "minFontSize": { "type": "slider", "label": "Min font size (px)", "default": 20, "min": 8, "max": 120, "step": 1 },
   "color": { "type": "color", "label": "Color", "default": "#222017" },
+  "pulseColor": { "type": "color", "label": "Pulse colour", "default": "#64635D", "description": "Heartbeat: the colour the name eases toward at full bold. Default is the ink a touch lighter." },
+  "pulseColorCurve": { "type": "slider", "label": "Pulse colour curve", "default": 1, "min": 0.2, "max": 3, "step": 0.05, "description": "Below 1 the red arrives early and lingers as the weight falls; above 1 it only shows near the peak." },
   "idleWave": { "type": "toggle", "label": "Animate", "default": true, "description": "Off holds the chosen effect still." },
-  "pulseSeconds": { "type": "slider", "label": "Beat length (s)", "default": 1.2, "min": 0.5, "max": 4, "step": 0.1, "description": "One full lub-dub-rest cycle. 1.0 is 60 bpm." },
+  "pulseSeconds": { "type": "slider", "label": "Beat every (s)", "default": 3, "min": 0.6, "max": 10, "step": 0.1, "description": "Time from the start of one lub-dub to the start of the next." },
   "pointerReactive": { "type": "toggle", "label": "Pointer reactive", "default": false, "description": "Heartbeat only: letters near the cursor get bolder. Off keeps the weight even across the word." }
 } */
 
@@ -121,22 +124,27 @@ function useFitFontSize(
   return fitPx;
 }
 
-// One heartbeat cycle, t in [0, 1) → 0..1. Shaped on heart sounds: S1 (lub)
-// opens systole, S2 (dub) closes it about 0.3 of the cycle later, a little
-// softer, then diastole is a long rest at 0. Each beat has a fast attack and a
-// slightly slower decay, so the word snaps bold and falls back thin.
-const LUB_AT = 0.06;
-const DUB_AT = 0.3;
-const DUB_STRENGTH = 0.72;
-const ATTACK = 0.035;
-const DECAY = 0.06;
+// One heartbeat, in seconds since it began → 0..1. Two pulses like a real
+// heart, and they are not equal: the lub (S1, the valves closing as the heart
+// contracts) is the louder, longer one, so it goes all the way to peak weight
+// and falls back a little slower; the dub (S2) about a quarter second later is
+// shorter and only gets a bit over half as bold. The whole beat fits in
+// BEAT_WINDOW; a heartbeat starts every pulseSeconds, and the rest of that time
+// the name rests skinny.
+const LUB_AT = 0.07;
+const DUB_AT = 0.32;
+const DUB_STRENGTH = 0.55;
+const ATTACK = 0.03;
+const LUB_DECAY = 0.07;
+const DUB_DECAY = 0.045;
+const BEAT_WINDOW = 0.55;
 
-function beat(x: number): number {
-  return x < 0 ? Math.exp(-((x / ATTACK) ** 2)) : Math.exp(-((x / DECAY) ** 1.6));
+function pulseAt(x: number, decay: number): number {
+  return x < 0 ? Math.exp(-((x / ATTACK) ** 2)) : Math.exp(-((x / decay) ** 1.6));
 }
 
-function heartbeat(t: number): number {
-  return Math.min(1, Math.max(beat(t - LUB_AT), DUB_STRENGTH * beat(t - DUB_AT)));
+function heartbeat(seconds: number): number {
+  return Math.min(1, Math.max(pulseAt(seconds - LUB_AT, LUB_DECAY), DUB_STRENGTH * pulseAt(seconds - DUB_AT, DUB_DECAY)));
 }
 
 // Sunset bloom: a layer's life, p in [0, 1). Weight moves at an even speed,
@@ -188,10 +196,11 @@ function bloomSlot(cycle: number, k: number, n: number): { p: number; born: numb
 
 function VariableName({
   text = 'Ted Dessert',
-  effect = 'bloom',
+  effect = 'heartbeat',
   bloomDirection = 'inward',
-  bloomSeconds = 30,
+  bloomSeconds = 24,
   bloomFromWeight = 100,
+  centreColor = '#FFFFFF',
   bloomLayers = 40,
   colourSpread = 0.15,
   color1 = '#FFC04D',
@@ -209,8 +218,10 @@ function VariableName({
   minFontSize = 20,
   color = '#222017',
   idleWave = true,
-  pulseSeconds = 1.2,
+  pulseSeconds = 3,
   pointerReactive = false,
+  pulseColor = '#64635D',
+  pulseColorCurve = 1,
   ...props
 }: {
   text?: string;
@@ -218,6 +229,7 @@ function VariableName({
   bloomDirection?: 'inward' | 'outward' | string;
   bloomSeconds?: number;
   bloomFromWeight?: number;
+  centreColor?: string;
   bloomLayers?: number;
   colourSpread?: number;
   color1?: string;
@@ -237,6 +249,8 @@ function VariableName({
   idleWave?: boolean;
   pulseSeconds?: number;
   pointerReactive?: boolean;
+  pulseColor?: string;
+  pulseColorCurve?: number;
   style?: React.CSSProperties;
   [key: string]: unknown;
 }) {
@@ -323,11 +337,14 @@ function VariableName({
     wrap.addEventListener('pointermove', onMove);
     wrap.addEventListener('pointerleave', onLeave);
 
+    const restRgb = hexToRgb(color);
+    const flushRgb = hexToRgb(pulseColor);
     const start = performance.now();
     const tick = (now: number) => {
       const wrapRect = wrap.getBoundingClientRect();
       // One phase for the whole word, so every letter beats together.
-      const pulse = heartbeat(((now - start) / (Math.max(0.1, pulseSeconds) * 1000)) % 1);
+      const period = Math.max(BEAT_WINDOW, pulseSeconds);
+      const pulse = heartbeat(((now - start) / 1000) % period);
       const following = pointerReactive && pointer.current !== null;
       for (let i = 0; i < spans.length; i++) {
         const s = spans[i];
@@ -349,6 +366,10 @@ function VariableName({
         const next = following ? weights.current[i] + (target - weights.current[i]) * 0.18 : target;
         weights.current[i] = next;
         s.style.fontVariationSettings = `'wght' ${Math.round(next)}`;
+        // Flush toward the pulse colour on a curve of the letter's own weight.
+        const f = Math.max(0, Math.min(1, (next - baseWeight) / Math.max(1, peakWeight - baseWeight)));
+        const m = f ** Math.max(0.05, pulseColorCurve);
+        s.style.color = `rgb(${restRgb.map((v, j) => Math.round(v + (flushRgb[j] - v) * m)).join(', ')})`;
       }
       raf.current = requestAnimationFrame(tick);
     };
@@ -360,7 +381,7 @@ function VariableName({
       wrap.removeEventListener('pointerleave', onLeave);
     };
     // Re-arm when any tuning knob changes.
-  }, [text, effect, bloomDirection, bloomSeconds, bloomLayers, colourSpread, color1, color2, color3, color4, color5, color6, color7, bloomFromWeight, baseWeight, peakWeight, radius, idleWave, pulseSeconds, pointerReactive]);
+  }, [text, effect, bloomDirection, bloomSeconds, bloomLayers, colourSpread, color1, color2, color3, color4, color5, color6, color7, bloomFromWeight, baseWeight, peakWeight, radius, idleWave, pulseSeconds, pointerReactive, color, pulseColor, pulseColorCurve]);
 
   return (
     // `block`, not `inline-block`: the wrapper must take the width of its
@@ -436,6 +457,26 @@ function VariableName({
           </span>
           );
         })}
+      {bloom && (
+        <span
+          aria-hidden="true"
+          style={{
+            position: 'absolute',
+            left: 0,
+            top: 0,
+            display: 'inline-block',
+            whiteSpace: 'pre',
+            fontFamily: "'Index Variable', ui-monospace, monospace",
+            fontSize: appliedFontSize,
+            lineHeight: 1.1,
+            color: centreColor,
+            fontVariationSettings: `'wght' ${bloomFromWeight}`,
+            zIndex: 2000,
+          }}
+        >
+          {text}
+        </span>
+      )}
     </div>
   );
 }
