@@ -59,7 +59,7 @@ export default function Page() {
       padding: '96px 96px 72px 96px',
       gap: '28px'
     }}>
-    <VariableName data-id="hero-name" data-name="Ted Dessert · variable" text="Ted Dessert" baseWeight={280} peakWeight={700} radius={200} fontSize={92} color="#222017" style={{
+    <VariableName effect="sunset-heartbeat" data-id="hero-name" data-name="Ted Dessert · variable" text="Ted Dessert" baseWeight={280} peakWeight={700} radius={200} fontSize={92} color="#222017" style={{
         position: 'relative',
         flex: '0 0 auto',
         order: '0'
