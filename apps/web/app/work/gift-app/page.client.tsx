@@ -15,6 +15,7 @@
 
 import React from 'react';
 import Link from 'next/link';
+import VideoEmbed from '../../../components/VideoEmbed';
 
 export default function Page() {
   return (
@@ -667,16 +668,7 @@ export default function Page() {
   <div data-id="final" data-name="Final video" style={{ position: 'relative', flex: '0 0 auto', order: '16', display: 'flex', flexDirection: 'column', width: '100%', alignItems: 'center', gap: '20px', padding: '72px 20px 0px 20px' }} id="final-video">
     <h2 data-id="final-h" data-name="Heading" style={{ position: 'relative', flex: '0 0 auto', order: '0', fontFamily: 'Work Sans, -apple-system, BlinkMacSystemFont, sans-serif', width: '100%', maxWidth: '600px', color: '#4358CD', fontSize: '32px', lineHeight: '1.15', fontWeight: '700', letterSpacing: '-0.01em' }}>Solution: final video</h2>
     <p data-id="final-p" data-name="Body" style={{ position: 'relative', flex: '0 0 auto', order: '1', fontFamily: 'Work Sans, -apple-system, BlinkMacSystemFont, sans-serif', width: '100%', maxWidth: '600px', color: '#2A2E33', fontSize: '18px', lineHeight: '1.6' }}>(Skip forward 30 seconds to skip the intro and go straight to the app animation.)</p>
-    <Link data-id="final-video-card" data-name="Final video" style={{ position: 'relative', flex: '0 0 auto', order: '2', display: 'flex', flexDirection: 'column', width: '100%', maxWidth: '760px', overflow: 'hidden', borderRadius: '18px', backgroundColor: '#ffffff', boxShadow: '0 1px 2px rgba(20,27,77,.05), 0 8px 28px rgba(20,27,77,.08)', textDecoration: 'none' }} href="https://vimeo.com/161241328" target="_blank" rel="noopener">
-      <div data-id="final-video-card-thumb" data-name="Thumbnail" style={{ position: 'relative', flex: '0 0 auto', order: '0', width: '100%', aspectRatio: '1280 / 720', borderRadius: '0px', backgroundImage: 'url(/assets/gift-app/final-video-thumb.webp)', backgroundSize: 'cover', backgroundPosition: 'center', backgroundRepeat: 'no-repeat' }} role="img" aria-label="Watch on Vimeo" />
-      <div data-id="final-video-card-body" data-name="Body" style={{ position: 'relative', flex: '0 0 auto', order: '1', display: 'flex', flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', gap: '12px', flexWrap: 'wrap', padding: '16px 20px 18px 20px' }}>
-        <div data-id="final-video-card-txt" data-name="Text" style={{ position: 'relative', flex: '0 0 auto', order: '0', display: 'flex', flexDirection: 'column', gap: '2px' }}>
-          <p data-id="final-video-card-title" data-name="Title" style={{ position: 'relative', flex: '0 0 auto', order: '0', fontFamily: 'Work Sans, -apple-system, BlinkMacSystemFont, sans-serif', color: '#16191C', fontSize: '17px', lineHeight: '1.35', fontWeight: '600' }}>Gift App: the final video</p>
-          <p data-id="final-video-card-sub" data-name="Subtitle" style={{ position: 'relative', flex: '0 0 auto', order: '1', fontFamily: 'Work Sans, -apple-system, BlinkMacSystemFont, sans-serif', color: '#666C73', fontSize: '14px', lineHeight: '1.4' }}>Vimeo</p>
-        </div>
-        <p data-id="final-video-card-go" data-name="Label" style={{ position: 'relative', flex: '0 0 auto', order: '1', fontFamily: 'Work Sans, -apple-system, BlinkMacSystemFont, sans-serif', color: '#4358CD', fontSize: '15px', lineHeight: '1.3', fontWeight: '600' }}>Watch on Vimeo →</p>
-      </div>
-    </Link>
+    <VideoEmbed data-id="final-video-embed" data-name="Final video" src="https://player.vimeo.com/video/161241328" title="Gift App: the final video (Vimeo)" aspectRatio="16 / 9" radius={18} style={{ position: 'relative', flex: '0 0 auto', order: '2', width: '100%', maxWidth: '760px' }} />
   </div>
   <div data-id="footer" data-name="Footer" style={{ position: 'relative', flex: '0 0 auto', order: '17', display: 'flex', flexDirection: 'column', width: '100%', alignItems: 'center', gap: '0px', marginTop: '96px', padding: '72px 20px 56px 20px', backgroundColor: '#F5F5F5' }}>
       <p data-id="footer-l1" data-name="Line 1" style={{ position: 'relative', flex: '0 0 auto', order: '0', fontFamily: 'Work Sans, -apple-system, BlinkMacSystemFont, sans-serif', color: '#16191C', fontSize: '26px', lineHeight: '1.2', fontWeight: '600', textAlign: 'center' }}>Thanks for reading.</p>
