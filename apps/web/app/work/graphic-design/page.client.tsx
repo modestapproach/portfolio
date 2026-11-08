@@ -1,0 +1,113 @@
+'use client';
+
+/** @canvas {
+  "viewports": [
+    { "id": "desktop", "label": "Desktop", "width": 1440, "height": "auto", "isPrimary": true, "order": 0 },
+    { "id": "tablet", "label": "Tablet", "width": 1024, "height": "auto", "isPrimary": false, "order": 1 },
+    { "id": "mobile", "label": "Mobile", "width": 430, "height": "auto", "isPrimary": false, "order": 2 }
+  ],
+  "positions": {
+    "desktop": { "x": 0, "y": 0 },
+    "tablet": { "x": 1560, "y": 0 },
+    "mobile": { "x": 2704, "y": 0 }
+  }
+} */
+
+import React from 'react';
+import Link from 'next/link';
+import VideoEmbed from '../../../components/VideoEmbed';
+
+export default function Page() {
+  return (
+<div data-id="root" data-name="Graphic design" style={{ position: 'relative', display: 'flex', flexDirection: 'column', width: '100%', alignItems: 'center', backgroundColor: '#ffffff' }}>
+  <style>{`
+    @media (max-width: 1024px) and (min-width: 430.02px) {
+      [data-id="gd-title"] { font-size: 40px !important; }
+    }
+    @media (max-width: 430px) {
+      [data-id="site-nav"] { padding: 16px 20px 16px 20px !important; }
+      [data-id="gd-title"] { font-size: 34px !important; }
+      [data-id="gd-head"] { padding: 32px 20px 0px 20px !important; }
+      [data-id="vd-h1"], [data-id="vd-h2"], [data-id="vd-h3"], [data-id="vd-h4"], [data-id="vd-h5"] { font-size: 20px !important; }
+    }
+  `}</style>
+  <div data-id="site-nav" data-name="Site nav" style={{ position: 'relative', flex: '0 0 auto', order: '0', display: 'flex', flexDirection: 'row', width: '100%', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: '12px', padding: '22px 40px 22px 40px' }}>
+    <Link data-id="site-nav-home" data-name="Home" style={{ position: 'relative', flex: '0 0 auto', order: '0', fontFamily: 'Work Sans, -apple-system, BlinkMacSystemFont, sans-serif', color: '#16191C', fontSize: '17px', lineHeight: '1.2', fontWeight: '700', textDecoration: 'none' }} href="/">Ted Dessert</Link>
+    <div data-id="site-nav-links" data-name="Links" style={{ position: 'relative', flex: '0 0 auto', order: '1', display: 'flex', flexDirection: 'row', gap: '22px', flexWrap: 'wrap' }}>
+      <Link data-id="site-nav-work" data-name="Work" style={{ position: 'relative', flex: '0 0 auto', order: '0', fontFamily: 'Work Sans, -apple-system, BlinkMacSystemFont, sans-serif', color: '#2A2E33', fontSize: '15px', lineHeight: '1.2', textDecoration: 'none' }} href="/">Work</Link>
+      <Link data-id="site-nav-about" data-name="About" style={{ position: 'relative', flex: '0 0 auto', order: '1', fontFamily: 'Work Sans, -apple-system, BlinkMacSystemFont, sans-serif', color: '#2A2E33', fontSize: '15px', lineHeight: '1.2', textDecoration: 'none' }} href="/about">About</Link>
+      <Link data-id="site-nav-process" data-name="Process" style={{ position: 'relative', flex: '0 0 auto', order: '2', fontFamily: 'Work Sans, -apple-system, BlinkMacSystemFont, sans-serif', color: '#2A2E33', fontSize: '15px', lineHeight: '1.2', textDecoration: 'none' }} href="/process">Process</Link>
+      <Link data-id="site-nav-blog" data-name="Blog" style={{ position: 'relative', flex: '0 0 auto', order: '3', fontFamily: 'Work Sans, -apple-system, BlinkMacSystemFont, sans-serif', color: '#2A2E33', fontSize: '15px', lineHeight: '1.2', textDecoration: 'none' }} href="/blog">Blog</Link>
+    </div>
+  </div>
+  <div data-id="gd-head" data-name="Header" style={{ position: 'relative', flex: '0 0 auto', order: '1', display: 'flex', flexDirection: 'column', width: '100%', alignItems: 'center', padding: '56px 20px 0px 20px' }}>
+    <div data-id="gd-head-in" data-name="Column" style={{ position: 'relative', flex: '0 0 auto', order: '0', display: 'flex', flexDirection: 'column', width: '100%', maxWidth: '600px', gap: '16px' }}>
+      <Link data-id="gd-back" data-name="Back" style={{ position: 'relative', flex: '0 0 auto', order: '0', fontFamily: 'Work Sans, -apple-system, BlinkMacSystemFont, sans-serif', color: '#4358CD', fontSize: '14px', lineHeight: '1.4', fontWeight: '600', textDecoration: 'none' }} href="/">← All work</Link>
+      <p data-id="gd-kicker" data-name="Kicker" style={{ position: 'relative', flex: '0 0 auto', order: '1', fontFamily: 'Work Sans, -apple-system, BlinkMacSystemFont, sans-serif', color: '#4358CD', fontSize: '14px', lineHeight: '1.4', fontWeight: '600', letterSpacing: '0.02em' }}>Earlier work · Graphics, motion and video</p>
+      <h1 data-id="gd-title" data-name="Title" style={{ position: 'relative', flex: '0 0 auto', order: '2', fontFamily: 'Work Sans, -apple-system, BlinkMacSystemFont, sans-serif', color: '#16191C', fontSize: '48px', lineHeight: '1.08', fontWeight: '700', letterSpacing: '-0.02em' }}>Graphic design</h1>
+      <p data-id="gd-intro" data-name="Intro" style={{ position: 'relative', flex: '0 0 auto', order: '3', fontFamily: 'Work Sans, -apple-system, BlinkMacSystemFont, sans-serif', color: '#2A2E33', fontSize: '18px', lineHeight: '1.6' }}>Alongside product design, I have made the graphics, animation and video that explain a product when words and still images can't: a web animation for Metabob, the launch video for my Gift App, the Kickstarter video for KromaKicks, and the company video for Artisense.</p>
+      <div data-id="gd-chips" data-name="Tools" style={{ position: 'relative', flex: '0 0 auto', order: '4', display: 'flex', flexDirection: 'row', flexWrap: 'wrap', gap: '8px' }}>
+        <p data-id="gd-chip-1" data-name="Chip" style={{ position: 'relative', flex: '0 0 auto', order: '0', fontFamily: 'Work Sans, -apple-system, BlinkMacSystemFont, sans-serif', color: '#4358CD', fontSize: '13px', lineHeight: '1.4', fontWeight: '600', backgroundColor: '#EEF1FD', borderRadius: '9999px', padding: '6px 12px 6px 12px' }}>After Effects</p>
+        <p data-id="gd-chip-2" data-name="Chip" style={{ position: 'relative', flex: '0 0 auto', order: '1', fontFamily: 'Work Sans, -apple-system, BlinkMacSystemFont, sans-serif', color: '#4358CD', fontSize: '13px', lineHeight: '1.4', fontWeight: '600', backgroundColor: '#EEF1FD', borderRadius: '9999px', padding: '6px 12px 6px 12px' }}>Lottie</p>
+        <p data-id="gd-chip-3" data-name="Chip" style={{ position: 'relative', flex: '0 0 auto', order: '2', fontFamily: 'Work Sans, -apple-system, BlinkMacSystemFont, sans-serif', color: '#4358CD', fontSize: '13px', lineHeight: '1.4', fontWeight: '600', backgroundColor: '#EEF1FD', borderRadius: '9999px', padding: '6px 12px 6px 12px' }}>Motion tracking</p>
+        <p data-id="gd-chip-4" data-name="Chip" style={{ position: 'relative', flex: '0 0 auto', order: '3', fontFamily: 'Work Sans, -apple-system, BlinkMacSystemFont, sans-serif', color: '#4358CD', fontSize: '13px', lineHeight: '1.4', fontWeight: '600', backgroundColor: '#EEF1FD', borderRadius: '9999px', padding: '6px 12px 6px 12px' }}>Video editing</p>
+      </div>
+    </div>
+  </div>
+  <div data-id="sec-visual-design" data-name="Projects" style={{ position: 'relative', flex: '0 0 auto', order: '2', display: 'flex', flexDirection: 'column', width: '100%', alignItems: 'center', padding: '40px 20px 0px 20px', scrollMarginTop: '16px' }}>
+    <div data-id="visual-design-in" data-name="Column" style={{ position: 'relative', flex: '0 0 auto', order: '0', display: 'flex', flexDirection: 'column', width: '100%', maxWidth: '1040px', alignItems: 'center', gap: '16px' }}>
+      <div data-id="vd-g1" data-name="Metabob web animation" style={{ position: 'relative', flex: '0 0 auto', order: '2', display: 'flex', flexDirection: 'column', width: '100%', alignItems: 'center', gap: '16px' }}>
+        <div data-id="vd-proj1" data-name="Project" style={{ position: 'relative', flex: '0 0 auto', order: '0', display: 'flex', flexDirection: 'row', alignItems: 'center', flexWrap: 'wrap', gap: '10px', width: '100%', maxWidth: '600px' }}>
+          <p data-id="vd-proj1-k" data-name="Label" style={{ position: 'relative', flex: '0 0 auto', order: '0', fontFamily: 'Work Sans, -apple-system, BlinkMacSystemFont, sans-serif', color: '#666C73', fontSize: '13px', lineHeight: '1.4', fontWeight: '600', letterSpacing: '0.06em', textTransform: 'uppercase' }}>Project</p>
+          <Link data-id="vd-proj1-v" data-name="Project link" style={{ position: 'relative', flex: '0 0 auto', order: '1', fontFamily: 'Work Sans, -apple-system, BlinkMacSystemFont, sans-serif', fontSize: '14px', lineHeight: '1.4', fontWeight: '600', color: '#4358CD', backgroundColor: '#EEF1FD', borderRadius: '9999px', padding: '5px 12px 5px 12px', textDecoration: 'none' }} href="https://metabob.com" target="_blank" rel="noopener">Metabob AI ↗</Link>
+        </div>
+        <h3 data-id="vd-h1" data-name="Subheading" style={{ position: 'relative', flex: '0 0 auto', order: '1', fontFamily: 'Work Sans, -apple-system, BlinkMacSystemFont, sans-serif', color: '#16191C', fontSize: '22px', lineHeight: '1.3', fontWeight: '600', width: '100%', maxWidth: '600px' }}>Metabob web animation</h3>
+        <p data-id="vd-p1" data-name="Body" style={{ position: 'relative', flex: '0 0 auto', order: '2', fontFamily: 'Work Sans, -apple-system, BlinkMacSystemFont, sans-serif', color: '#2A2E33', fontSize: '18px', lineHeight: '1.6', width: '100%', maxWidth: '600px' }}>We were having a problem with people not immediately understanding what our product did from looking at our website. Words weren’t cutting it and still images couldn’t quite capture what we did, so I created this animation in After Effects and converted it to the Lottie web animation format.</p>
+        <div data-id="vd-fig1" data-name="Figure" style={{ position: 'relative', flex: '0 0 auto', order: '3', display: 'flex', flexDirection: 'column', width: '100%', maxWidth: '1040px', gap: '10px', margin: '12px 0px 12px 0px' }}>
+          <div data-id="vd-fig1-card" data-name="Card" style={{ position: 'relative', flex: '0 0 auto', order: '0', display: 'flex', flexDirection: 'column', width: '100%', padding: '12px 12px 12px 12px', backgroundColor: '#ffffff', borderRadius: '18px', boxShadow: '0 1px 2px rgba(20,27,77,.05), 0 8px 28px rgba(20,27,77,.08)' }}>
+            <div data-id="vd-fig1-img" data-name="Image" style={{ position: 'relative', flex: '0 0 auto', order: '0', width: '100%', borderRadius: '10px', aspectRatio: '2000 / 1467', backgroundImage: 'url(/assets/process/metabob-animation.webp)', backgroundSize: 'cover', backgroundPosition: 'center', backgroundRepeat: 'no-repeat' }} role="img" aria-label="Still from the Metabob web animation" />
+          </div>
+          <p data-id="vd-fig1-cap" data-name="Caption" style={{ position: 'relative', flex: '0 0 auto', order: '1', fontFamily: 'Work Sans, -apple-system, BlinkMacSystemFont, sans-serif', color: '#666C73', fontSize: '14px', lineHeight: '1.45', textAlign: 'center' }}>A frame from the Metabob web animation</p>
+        </div>
+      </div>
+      <div data-id="vd-g3" data-name="Gift app video" style={{ position: 'relative', flex: '0 0 auto', order: '4', display: 'flex', flexDirection: 'column', width: '100%', alignItems: 'center', gap: '16px', padding: '40px 0px 0px 0px', borderTop: '1px solid #E8EAF0', marginTop: '24px' }}>
+        <div data-id="vd-proj3" data-name="Project" style={{ position: 'relative', flex: '0 0 auto', order: '0', display: 'flex', flexDirection: 'row', alignItems: 'center', flexWrap: 'wrap', gap: '10px', width: '100%', maxWidth: '600px' }}>
+          <p data-id="vd-proj3-k" data-name="Label" style={{ position: 'relative', flex: '0 0 auto', order: '0', fontFamily: 'Work Sans, -apple-system, BlinkMacSystemFont, sans-serif', color: '#666C73', fontSize: '13px', lineHeight: '1.4', fontWeight: '600', letterSpacing: '0.06em', textTransform: 'uppercase' }}>Project</p>
+          <Link data-id="vd-proj3-v" data-name="Project link" style={{ position: 'relative', flex: '0 0 auto', order: '1', fontFamily: 'Work Sans, -apple-system, BlinkMacSystemFont, sans-serif', fontSize: '14px', lineHeight: '1.4', fontWeight: '600', color: '#4358CD', backgroundColor: '#EEF1FD', borderRadius: '9999px', padding: '5px 12px 5px 12px', textDecoration: 'none' }} href="/work/gift-app">Gift App →</Link>
+        </div>
+        <h3 data-id="vd-h3" data-name="Subheading" style={{ position: 'relative', flex: '0 0 auto', order: '1', fontFamily: 'Work Sans, -apple-system, BlinkMacSystemFont, sans-serif', color: '#16191C', fontSize: '22px', lineHeight: '1.3', fontWeight: '600', width: '100%', maxWidth: '600px' }}>Gift app (skip to 30 seconds)</h3>
+        <p data-id="vd-p3" data-name="Body" style={{ position: 'relative', flex: '0 0 auto', order: '2', fontFamily: 'Work Sans, -apple-system, BlinkMacSystemFont, sans-serif', color: '#2A2E33', fontSize: '18px', lineHeight: '1.6', width: '100%', maxWidth: '600px' }}>This is the video for my senior design project. I motion tracked a screen recording of the prototype I created over the phone, and I had to re-enact all the button presses to make the video believable. I also created all the animations in the transitions from scratch.</p>
+        <VideoEmbed data-id="vd-gift-video" data-name="Gift App video" src="https://player.vimeo.com/video/161241328" title="GiftAd (Vimeo)" aspectRatio="16 / 9" style={{ position: 'relative', flex: '0 0 auto', order: '3', width: '100%', maxWidth: '760px', margin: '12px 0px 12px 0px' }} />
+      </div>
+      <div data-id="vd-g4" data-name="KromaKicks video" style={{ position: 'relative', flex: '0 0 auto', order: '5', display: 'flex', flexDirection: 'column', width: '100%', alignItems: 'center', gap: '16px', padding: '40px 0px 0px 0px', borderTop: '1px solid #E8EAF0', marginTop: '24px' }}>
+        <div data-id="vd-proj4" data-name="Project" style={{ position: 'relative', flex: '0 0 auto', order: '0', display: 'flex', flexDirection: 'row', alignItems: 'center', flexWrap: 'wrap', gap: '10px', width: '100%', maxWidth: '600px' }}>
+          <p data-id="vd-proj4-k" data-name="Label" style={{ position: 'relative', flex: '0 0 auto', order: '0', fontFamily: 'Work Sans, -apple-system, BlinkMacSystemFont, sans-serif', color: '#666C73', fontSize: '13px', lineHeight: '1.4', fontWeight: '600', letterSpacing: '0.06em', textTransform: 'uppercase' }}>Project</p>
+          <Link data-id="vd-proj4-v" data-name="Project link" style={{ position: 'relative', flex: '0 0 auto', order: '1', fontFamily: 'Work Sans, -apple-system, BlinkMacSystemFont, sans-serif', fontSize: '14px', lineHeight: '1.4', fontWeight: '600', color: '#4358CD', backgroundColor: '#EEF1FD', borderRadius: '9999px', padding: '5px 12px 5px 12px', textDecoration: 'none' }} href="https://www.kickstarter.com/projects/kromakicks/kroma-kicks-dancewear-reimagined" target="_blank" rel="noopener">KromaKicks ↗</Link>
+        </div>
+        <h3 data-id="vd-h4" data-name="Subheading" style={{ position: 'relative', flex: '0 0 auto', order: '1', fontFamily: 'Work Sans, -apple-system, BlinkMacSystemFont, sans-serif', color: '#16191C', fontSize: '22px', lineHeight: '1.3', fontWeight: '600', width: '100%', maxWidth: '600px' }}>KromaKicks</h3>
+        <p data-id="vd-p4" data-name="Body" style={{ position: 'relative', flex: '0 0 auto', order: '2', fontFamily: 'Work Sans, -apple-system, BlinkMacSystemFont, sans-serif', color: '#2A2E33', fontSize: '18px', lineHeight: '1.6', width: '100%', maxWidth: '600px' }}>This was the Kickstarter video for the product I built from scratch along with some of my friends.</p>
+        <VideoEmbed data-id="vd-ks-video" data-name="KromaKicks Kickstarter video" src="https://www.kickstarter.com/projects/kromakicks/kroma-kicks-dancewear-reimagined/widget/video.html" title="Kroma Kicks: Dancewear Reimagined (Kickstarter video)" aspectRatio="16 / 9" style={{ position: 'relative', flex: '0 0 auto', order: '3', width: '100%', maxWidth: '760px', margin: '12px 0px 12px 0px' }} />
+      </div>
+      <div data-id="vd-g5" data-name="Artisense company video" style={{ position: 'relative', flex: '0 0 auto', order: '6', display: 'flex', flexDirection: 'column', width: '100%', alignItems: 'center', gap: '16px', padding: '40px 0px 0px 0px', borderTop: '1px solid #E8EAF0', marginTop: '24px' }}>
+        <div data-id="vd-proj5" data-name="Project" style={{ position: 'relative', flex: '0 0 auto', order: '0', display: 'flex', flexDirection: 'row', alignItems: 'center', flexWrap: 'wrap', gap: '10px', width: '100%', maxWidth: '600px' }}>
+          <p data-id="vd-proj5-k" data-name="Label" style={{ position: 'relative', flex: '0 0 auto', order: '0', fontFamily: 'Work Sans, -apple-system, BlinkMacSystemFont, sans-serif', color: '#666C73', fontSize: '13px', lineHeight: '1.4', fontWeight: '600', letterSpacing: '0.06em', textTransform: 'uppercase' }}>Project</p>
+          <Link data-id="vd-proj5-v" data-name="Project link" style={{ position: 'relative', flex: '0 0 auto', order: '1', fontFamily: 'Work Sans, -apple-system, BlinkMacSystemFont, sans-serif', fontSize: '14px', lineHeight: '1.4', fontWeight: '600', color: '#4358CD', backgroundColor: '#EEF1FD', borderRadius: '9999px', padding: '5px 12px 5px 12px', textDecoration: 'none' }} href="https://artisense.ai" target="_blank" rel="noopener">Artisense ↗</Link>
+        </div>
+        <h3 data-id="vd-h5" data-name="Subheading" style={{ position: 'relative', flex: '0 0 auto', order: '1', fontFamily: 'Work Sans, -apple-system, BlinkMacSystemFont, sans-serif', color: '#16191C', fontSize: '22px', lineHeight: '1.3', fontWeight: '600', width: '100%', maxWidth: '600px' }}>Company video (2017)</h3>
+        <p data-id="vd-p5" data-name="Body" style={{ position: 'relative', flex: '0 0 auto', order: '2', fontFamily: 'Work Sans, -apple-system, BlinkMacSystemFont, sans-serif', color: '#2A2E33', fontSize: '18px', lineHeight: '1.6', width: '100%', maxWidth: '600px' }}>This video was used as an onboarding video for Artisense. It was necessary because we were finding the topic of SLAM too complicated to explain by other means. I had to come up with the entire script, get the best-looking footage from the scientists, and edit the video. Funny story: two years after leaving the company, the next time I visited, everyone knew my name because of this video.</p>
+        <VideoEmbed data-id="vd-artisense-video" data-name="Artisense company video" src="https://player.vimeo.com/video/226210207" title="Inside look at Artisense (Vimeo)" aspectRatio="16 / 9" style={{ position: 'relative', flex: '0 0 auto', order: '3', width: '100%', maxWidth: '760px', margin: '12px 0px 12px 0px' }} />
+      </div>
+    </div>
+  </div>
+  <div data-id="footer" data-name="Footer" style={{ position: 'relative', flex: '0 0 auto', order: '3', display: 'flex', flexDirection: 'column', width: '100%', alignItems: 'center', gap: '0px', marginTop: '96px', padding: '72px 20px 56px 20px', backgroundColor: '#F5F5F5' }}>
+    <p data-id="footer-l1" data-name="Line 1" style={{ position: 'relative', flex: '0 0 auto', order: '0', fontFamily: 'Work Sans, -apple-system, BlinkMacSystemFont, sans-serif', color: '#16191C', fontSize: '26px', lineHeight: '1.2', fontWeight: '600', textAlign: 'center' }}>Thanks for reading.</p>
+    <p data-id="footer-l2" data-name="Line 2" style={{ position: 'relative', flex: '0 0 auto', order: '1', fontFamily: 'Work Sans, -apple-system, BlinkMacSystemFont, sans-serif', color: '#8A8F96', fontSize: '26px', lineHeight: '1.2', fontWeight: '600', textAlign: 'center' }}>Let's make something.</p>
+    <div data-id="footer-hi" data-name="Say hi" style={{ position: 'relative', flex: '0 0 auto', order: '2', display: 'flex', flexDirection: 'row', justifyContent: 'center', alignItems: 'center', gap: '6px', flexWrap: 'wrap', marginTop: '14px' }}>
+      <Link data-id="footer-mail" data-name="Email" style={{ position: 'relative', flex: '0 0 auto', order: '0', fontFamily: 'Work Sans, -apple-system, BlinkMacSystemFont, sans-serif', fontSize: '14px', lineHeight: '1.5', color: '#4358CD', textDecoration: 'underline' }} href="mailto:theodoreyd@gmail.com">theodoreyd@gmail.com</Link>
+    </div>
+    <div data-id="footer-rule" data-name="Rule" style={{ position: 'relative', flex: '0 0 auto', order: '3', width: '100%', maxWidth: '760px', height: '1px', backgroundColor: '#DDDDDD', margin: '40px 0px 40px 0px' }} />
+    <p data-id="footer-sig" data-name="Signature" style={{ position: 'relative', flex: '0 0 auto', order: '4', fontFamily: 'Work Sans, -apple-system, BlinkMacSystemFont, sans-serif', color: '#16191C', fontSize: '12px', lineHeight: '1.4', textAlign: 'center' }}><span style={{ fontWeight: '700' }}>Ted Dessert</span> © 2026</p>
+  </div>
+</div>
+  );
+}

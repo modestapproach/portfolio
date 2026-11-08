@@ -12,11 +12,9 @@
     "mobile": { "x": 2528, "y": 0 }
   }
 } */
-
 import React from 'react';
 import Link from 'next/link';
 import VariableName from '../components/VariableName';
-
 export default function Page() {
   return <div data-id="root" data-name="Page" style={{
     position: 'relative',
@@ -91,7 +89,7 @@ export default function Page() {
         lineHeight: '1.55',
         color: '#665f4e',
         maxWidth: '640px'
-      }}>Seven years helping new products become legible, lovable, and ready to ship. Self-driving cars, IOT, social products, AI — and teaching UX design from scratch.</p>
+      }}>Seven years helping new products become legible, lovable, and ready to ship. Self-driving cars, IOT, social products, AI, and teaching UX design from scratch.</p>
     <div data-id="hero-facts" data-name="Fact chips" style={{
         width: 'auto',
         height: 'auto',
@@ -246,7 +244,7 @@ export default function Page() {
           order: '0',
           display: 'flex',
           flexDirection: 'column',
-          backgroundColor: '#fffdf9',
+          backgroundColor: '#ffffff',
           border: '1px solid #22201721',
           borderRadius: '18px',
           overflow: 'hidden',
@@ -318,7 +316,7 @@ export default function Page() {
           order: '1',
           display: 'flex',
           flexDirection: 'column',
-          backgroundColor: '#fffdf9',
+          backgroundColor: '#ffffff',
           border: '1px solid #22201721',
           borderRadius: '18px',
           overflow: 'hidden',
@@ -390,7 +388,7 @@ export default function Page() {
           order: '2',
           display: 'flex',
           flexDirection: 'column',
-          backgroundColor: '#fffdf9',
+          backgroundColor: '#ffffff',
           border: '1px solid #22201721',
           borderRadius: '18px',
           overflow: 'hidden',
@@ -462,7 +460,7 @@ export default function Page() {
           order: '3',
           display: 'flex',
           flexDirection: 'column',
-          backgroundColor: '#fffdf9',
+          backgroundColor: '#ffffff',
           border: '1px solid #22201721',
           borderRadius: '18px',
           overflow: 'hidden',
@@ -573,7 +571,7 @@ export default function Page() {
           order: '0',
           display: 'flex',
           flexDirection: 'column',
-          backgroundColor: '#fffdf9',
+          backgroundColor: '#ffffff',
           border: '1px solid #22201721',
           borderRadius: '18px',
           overflow: 'hidden',
@@ -645,7 +643,7 @@ export default function Page() {
           order: '1',
           display: 'flex',
           flexDirection: 'column',
-          backgroundColor: '#fffdf9',
+          backgroundColor: '#ffffff',
           border: '1px solid #22201721',
           borderRadius: '18px',
           overflow: 'hidden',
@@ -717,7 +715,7 @@ export default function Page() {
           order: '2',
           display: 'flex',
           flexDirection: 'column',
-          backgroundColor: '#fffdf9',
+          backgroundColor: '#ffffff',
           border: '1px solid #22201721',
           borderRadius: '18px',
           overflow: 'hidden',
@@ -778,6 +776,78 @@ export default function Page() {
               lineHeight: '1.55',
               color: '#665f4e'
             }}>An app for creating and sending premium physical notes from your phone: high-quality papers, wax seals, twine and insert graphics.</p>
+        </div>
+      </Link>
+
+      <Link data-id="card-graphic-design" data-name="Card · Graphic design" href="/work/graphic-design" style={{
+          width: 'auto',
+          height: 'auto',
+          position: 'relative',
+          flex: '1 1 280px',
+          order: '3',
+          display: 'flex',
+          flexDirection: 'column',
+          backgroundColor: '#ffffff',
+          border: '1px solid #22201721',
+          borderRadius: '18px',
+          overflow: 'hidden',
+          textDecoration: 'none',
+          color: 'inherit'
+        }}>
+        <div data-id="graphic-design-art" data-name="Art" role="img" aria-label="A frame from the Metabob web animation" style={{
+            width: 'auto',
+            position: 'relative',
+            flex: '0 0 auto',
+            order: '0',
+            height: '180px',
+            backgroundImage: 'url(/assets/process/metabob-animation.webp)',
+            backgroundSize: 'cover',
+            backgroundPosition: 'center',
+            backgroundRepeat: 'no-repeat'
+          }} />
+        <div data-id="graphic-design-body" data-name="Body" style={{
+            width: 'auto',
+            height: 'auto',
+            position: 'relative',
+            flex: '1 0 auto',
+            order: '1',
+            display: 'flex',
+            flexDirection: 'column',
+            gap: '10px',
+            padding: '22px 24px 26px 24px'
+          }}>
+          <p data-id="graphic-design-badge" data-name="Badge" style={{
+              width: 'auto',
+              height: 'auto',
+              position: 'relative',
+              flex: '0 0 auto',
+              order: '0',
+              fontSize: '12px',
+              fontWeight: '600',
+              letterSpacing: '0.1em',
+              textTransform: 'uppercase',
+              color: '#4358CD'
+            }}>Graphics · Motion · Video</p>
+          <h3 data-id="graphic-design-name" data-name="Name" style={{
+              width: 'auto',
+              height: 'auto',
+              position: 'relative',
+              flex: '0 0 auto',
+              order: '1',
+              fontSize: '24px',
+              fontWeight: '700',
+              color: '#222017'
+            }}>Graphic design</h3>
+          <p data-id="graphic-design-desc" data-name="Description" style={{
+              width: 'auto',
+              height: 'auto',
+              position: 'relative',
+              flex: '0 0 auto',
+              order: '2',
+              fontSize: '15px',
+              lineHeight: '1.55',
+              color: '#665f4e'
+            }}>Animation and video that explain a product when words can’t: Metabob, Artisense, KromaKicks and the Gift App.</p>
         </div>
       </Link>
 
