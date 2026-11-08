@@ -12,9 +12,11 @@
     "mobile": { "x": 2528, "y": 0 }
   }
 } */
+
 import React from 'react';
 import Link from 'next/link';
 import VariableName from '../components/VariableName';
+
 export default function Page() {
   return <div data-id="root" data-name="Page" style={{
     position: 'relative',

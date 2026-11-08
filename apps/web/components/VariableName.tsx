@@ -4,13 +4,13 @@
 /** @comment "Variable-font wordmark with three effects. Sunset bloom: copies of the word stack on top of each other, each in its own sunset colour. Inward (default): each arrives bold on the outside and thins toward the centre, so the name seems to keep sinking into itself. Outward: each is born skinny on top and grows bold. Heartbeat: the whole word rests at base weight and spikes to peak twice (lub-dub). Still: base weight. Optionally pointer-reactive in heartbeat mode. Fits itself to the width of whatever box it sits in, so it never overflows a phone. Ported from the type experiments' proximity view." */
 /** @controls {
   "text": { "type": "text", "label": "Text", "default": "Ted Dessert" },
-  "effect": { "type": "select", "label": "Effect", "default": "heartbeat", "options": [{"label":"Sunset bloom","value":"bloom"},{"label":"Heartbeat","value":"heartbeat"},{"label":"Still","value":"still"}] },
+  "effect": { "type": "select", "label": "Effect", "default": "heartbeat", "options": [{"label":"Sunset bloom","value":"bloom"},{"label":"Sunset heartbeat","value":"sunset-heartbeat"},{"label":"Heartbeat","value":"heartbeat"},{"label":"Still","value":"still"}] },
+  "beatPush": { "type": "slider", "label": "Heartbeat push", "default": 0.12, "min": 0, "max": 0.5, "step": 0.01, "description": "Sunset heartbeat: how far each lub-dub pushes the rings, as a share of one ring's whole life. Uses Beat every for timing." },
   "bloomDirection": { "type": "select", "label": "Bloom direction", "default": "inward", "options": [{"label":"Inward (bold to skinny)","value":"inward"},{"label":"Outward (skinny to bold)","value":"outward"}] },
   "bloomSeconds": { "type": "slider", "label": "Bloom length (s)", "default": 24, "min": 2, "max": 90, "step": 1, "description": "How long one layer takes to cross from skinny to bold. A new layer starts every length ÷ layers." },
   "bloomLayers": { "type": "slider", "label": "Bloom layers", "default": 40, "min": 4, "max": 120, "step": 1, "description": "More layers make finer rings." },
   "colourSpread": { "type": "slider", "label": "Colours at once", "default": 0.15, "min": 0.02, "max": 1, "step": 0.01, "description": "How much of the sunset is on screen at one time. Low shows two or three neighbouring colours that drift through the whole sunset; 1 shows every colour at once." },
   "bloomFromWeight": { "type": "slider", "label": "Bloom start weight", "default": 100, "min": 100, "max": 700, "step": 10 },
-  "centreColor": { "type": "color", "label": "Centre colour", "default": "#FFFFFF", "description": "A still copy at the start weight, always on top, so the skinniest line never changes colour." },
   "color1": { "type": "color", "label": "Sunset stop 1", "default": "#FFC04D" },
   "color2": { "type": "color", "label": "Sunset stop 2", "default": "#FFB07C" },
   "color3": { "type": "color", "label": "Sunset stop 3", "default": "#FF6F61" },
@@ -28,6 +28,7 @@
   "pulseColor": { "type": "color", "label": "Pulse colour", "default": "#64635D", "description": "Heartbeat: the colour the name eases toward at full bold. Default is the ink a touch lighter." },
   "pulseColorCurve": { "type": "slider", "label": "Pulse colour curve", "default": 1, "min": 0.2, "max": 3, "step": 0.05, "description": "Below 1 the red arrives early and lingers as the weight falls; above 1 it only shows near the peak." },
   "idleWave": { "type": "toggle", "label": "Animate", "default": true, "description": "Off holds the chosen effect still." },
+  "beatDirection": { "type": "select", "label": "Beat direction", "default": "swell", "options": [{"label":"Swell (rest skinny, beat bold)","value":"swell"},{"label":"Squeeze (rest bold, beat skinny)","value":"squeeze"}] },
   "pulseSeconds": { "type": "slider", "label": "Beat every (s)", "default": 3, "min": 0.6, "max": 10, "step": 0.1, "description": "Time from the start of one lub-dub to the start of the next." },
   "pointerReactive": { "type": "toggle", "label": "Pointer reactive", "default": false, "description": "Heartbeat only: letters near the cursor get bolder. Off keeps the weight even across the word." }
 } */
@@ -143,6 +144,17 @@ function pulseAt(x: number, decay: number): number {
   return x < 0 ? Math.exp(-((x / ATTACK) ** 2)) : Math.exp(-((x / decay) ** 1.6));
 }
 
+// How far through one heartbeat's push the rings are, seconds → 0..1. Two soft
+// steps at the lub and the dub (the dub smaller), so the rings lurch forward
+// twice per beat and coast the rest of the time.
+function beatSurge(seconds: number, period: number): number {
+  const step = (x: number, w: number) => 1 / (1 + Math.exp(-x / w));
+  const f = (t: number) => step(t - LUB_AT, 0.025) + DUB_STRENGTH * step(t - DUB_AT, 0.02);
+  const lo = f(0);
+  const hi = f(period);
+  return (f(Math.min(seconds, period)) - lo) / Math.max(1e-6, hi - lo);
+}
+
 function heartbeat(seconds: number): number {
   return Math.min(1, Math.max(pulseAt(seconds - LUB_AT, LUB_DECAY), DUB_STRENGTH * pulseAt(seconds - DUB_AT, DUB_DECAY)));
 }
@@ -198,9 +210,9 @@ function VariableName({
   text = 'Ted Dessert',
   effect = 'heartbeat',
   bloomDirection = 'inward',
+  beatPush = 0.12,
   bloomSeconds = 24,
   bloomFromWeight = 100,
-  centreColor = '#FFFFFF',
   bloomLayers = 40,
   colourSpread = 0.15,
   color1 = '#FFC04D',
@@ -218,6 +230,7 @@ function VariableName({
   minFontSize = 20,
   color = '#222017',
   idleWave = true,
+  beatDirection = 'swell',
   pulseSeconds = 3,
   pointerReactive = false,
   pulseColor = '#64635D',
@@ -227,9 +240,9 @@ function VariableName({
   text?: string;
   effect?: 'bloom' | 'heartbeat' | 'still' | string;
   bloomDirection?: 'inward' | 'outward' | string;
+  beatPush?: number;
   bloomSeconds?: number;
   bloomFromWeight?: number;
-  centreColor?: string;
   bloomLayers?: number;
   colourSpread?: number;
   color1?: string;
@@ -247,6 +260,7 @@ function VariableName({
   minFontSize?: number;
   color?: string;
   idleWave?: boolean;
+  beatDirection?: 'squeeze' | 'swell' | string;
   pulseSeconds?: number;
   pointerReactive?: boolean;
   pulseColor?: string;
@@ -263,7 +277,8 @@ function VariableName({
   const layerRefs = useRef<(HTMLSpanElement | null)[]>([]);
 
   const chars = Array.from(text);
-  const bloom = effect === 'bloom';
+  const bloom = effect === 'bloom' || effect === 'sunset-heartbeat';
+  const beating = effect === 'sunset-heartbeat';
   const sunset = sunsetPath([color1, color2, color3, color4, color5, color6, color7]);
   const layerCount = Math.max(2, Math.round(bloomLayers));
   const slots = Array.from({ length: layerCount }, (_, k) => k);
@@ -313,7 +328,15 @@ function VariableName({
       const direction = bloomDirection === 'outward' ? 1 : -1;
       const start = performance.now();
       const tick = (now: number) => {
-        paint((0.5 / n) + direction * ((now - start) / (Math.max(0.5, bloomSeconds) * 1000)));
+        const elapsed = (now - start) / 1000;
+        let travel = elapsed / Math.max(0.5, bloomSeconds);
+        if (beating) {
+          // Each heartbeat pushes the rings on by beatPush of a ring's life.
+          const period = Math.max(BEAT_WINDOW, pulseSeconds);
+          const beats = Math.floor(elapsed / period);
+          travel += Math.max(0, beatPush) * (beats + beatSurge(elapsed - beats * period, period));
+        }
+        paint((0.5 / n) + direction * travel);
         raf.current = requestAnimationFrame(tick);
       };
       raf.current = requestAnimationFrame(tick);
@@ -337,6 +360,7 @@ function VariableName({
     wrap.addEventListener('pointermove', onMove);
     wrap.addEventListener('pointerleave', onLeave);
 
+    const squeeze = beatDirection === 'squeeze';
     const restRgb = hexToRgb(color);
     const flushRgb = hexToRgb(pulseColor);
     const start = performance.now();
@@ -349,7 +373,11 @@ function VariableName({
       for (let i = 0; i < spans.length; i++) {
         const s = spans[i];
         if (!s) continue;
-        let target = baseWeight;
+        // Swell rests at base weight and beats toward peak; squeeze is the
+        // other way round, like a heart contracting on the beat.
+        const restWeight = squeeze ? peakWeight : baseWeight;
+        const beatWeight = squeeze ? baseWeight : peakWeight;
+        let target = restWeight;
         if (following && pointer.current) {
           // Gaussian falloff on pointer distance — the experiments' curve.
           const cr = s.getBoundingClientRect();
@@ -359,15 +387,15 @@ function VariableName({
           const t = d / Math.max(1, radius);
           target = baseWeight + (peakWeight - baseWeight) * Math.exp(-4 * t * t);
         } else if (idleWave) {
-          target = baseWeight + (peakWeight - baseWeight) * pulse;
+          target = restWeight + (beatWeight - restWeight) * pulse;
         }
         // Ease toward the pointer target so it feels damped, not twitchy. The
         // heartbeat is applied as is: easing would blunt its sharp beats.
         const next = following ? weights.current[i] + (target - weights.current[i]) * 0.18 : target;
         weights.current[i] = next;
         s.style.fontVariationSettings = `'wght' ${Math.round(next)}`;
-        // Flush toward the pulse colour on a curve of the letter's own weight.
-        const f = Math.max(0, Math.min(1, (next - baseWeight) / Math.max(1, peakWeight - baseWeight)));
+        // Ease toward the pulse colour by how far into the beat the letter is.
+        const f = Math.max(0, Math.min(1, Math.abs(next - restWeight) / Math.max(1, Math.abs(peakWeight - baseWeight))));
         const m = f ** Math.max(0.05, pulseColorCurve);
         s.style.color = `rgb(${restRgb.map((v, j) => Math.round(v + (flushRgb[j] - v) * m)).join(', ')})`;
       }
@@ -381,7 +409,7 @@ function VariableName({
       wrap.removeEventListener('pointerleave', onLeave);
     };
     // Re-arm when any tuning knob changes.
-  }, [text, effect, bloomDirection, bloomSeconds, bloomLayers, colourSpread, color1, color2, color3, color4, color5, color6, color7, bloomFromWeight, baseWeight, peakWeight, radius, idleWave, pulseSeconds, pointerReactive, color, pulseColor, pulseColorCurve]);
+  }, [text, effect, bloomDirection, bloomSeconds, bloomLayers, colourSpread, color1, color2, color3, color4, color5, color6, color7, bloomFromWeight, baseWeight, peakWeight, radius, idleWave, pulseSeconds, pointerReactive, color, pulseColor, pulseColorCurve, beatDirection, beatPush]);
 
   return (
     // `block`, not `inline-block`: the wrapper must take the width of its
@@ -457,26 +485,6 @@ function VariableName({
           </span>
           );
         })}
-      {bloom && (
-        <span
-          aria-hidden="true"
-          style={{
-            position: 'absolute',
-            left: 0,
-            top: 0,
-            display: 'inline-block',
-            whiteSpace: 'pre',
-            fontFamily: "'Index Variable', ui-monospace, monospace",
-            fontSize: appliedFontSize,
-            lineHeight: 1.1,
-            color: centreColor,
-            fontVariationSettings: `'wght' ${bloomFromWeight}`,
-            zIndex: 2000,
-          }}
-        >
-          {text}
-        </span>
-      )}
     </div>
   );
 }
