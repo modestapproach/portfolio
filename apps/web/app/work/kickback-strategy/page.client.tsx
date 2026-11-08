@@ -21,13 +21,18 @@ export default function Page() {
 <div data-id="root" data-name="Kickback · Strategy and research" style={{ position: 'relative', display: 'flex', flexDirection: 'column', width: '100%', alignItems: 'center', backgroundColor: '#ffffff' }}>
   <style>{`
     @media (max-width: 1024px) and (min-width: 430.02px) {
-      [data-id="hero-title"] { font-size: 44px !important; }
+      [data-id="hero-title"] { font-size: 46px !important; }
+      [data-id="hero-in"] { grid-template-columns: minmax(0, 1fr) !important; gap: 0px !important; }
+      [data-id="hero-copy"] { padding-bottom: 48px !important; }
       [data-id="features-grid"] { grid-template-columns: repeat(3, minmax(0, 1fr)) !important; }
       [data-id="project-grid"] { grid-template-columns: minmax(0, 1fr) !important; }
     }
     @media (max-width: 430px) {
       [data-id="site-nav"] { padding: 16px 20px 16px 20px !important; }
-      [data-id="hero"] { padding: 64px 20px 120px 20px !important; }
+      [data-id="hero"] { padding: 48px 20px 0px 20px !important; }
+      [data-id="hero-in"] { grid-template-columns: minmax(0, 1fr) !important; gap: 0px !important; }
+      [data-id="hero-copy"] { padding-bottom: 40px !important; gap: 20px !important; }
+      [data-id="hero-art"] { margin-bottom: -32px !important; }
       [data-id="hero-title"] { font-size: 32px !important; }
       [data-id="problem-grid"] { grid-template-columns: minmax(0, 1fr) !important; }
       [data-id="how-grid"] { grid-template-columns: minmax(0, 1fr) !important; }
@@ -46,20 +51,24 @@ export default function Page() {
       <Link data-id="site-nav-blog" data-name="Blog" style={{ position: 'relative', flex: '0 0 auto', order: '3', fontFamily: 'Work Sans, -apple-system, BlinkMacSystemFont, sans-serif', color: '#2A2E33', fontSize: '15px', lineHeight: '1.2', textDecoration: 'none' }} href="/blog">Blog</Link>
     </div>
   </div>
-  <div data-id="hero" data-name="Hero" style={{ position: 'relative', flex: '0 0 auto', order: '1', display: 'flex', flexDirection: 'column', width: '100%', alignItems: 'center', padding: '96px 20px 160px 20px', backgroundImage: 'linear-gradient(rgba(255,255,255,.05) 1px, rgba(0,0,0,0) 1px), linear-gradient(90deg, rgba(255,255,255,.05) 1px, rgba(0,0,0,0) 1px), radial-gradient(120% 90% at 50% 0%, #3A4CC0 0%, #1E2A78 46%, #0F1540 100%)', backgroundSize: '56px 56px, 56px 56px, 100% 100%' }}>
-      <p data-id="hero-eyebrow" data-name="Eyebrow" style={{ position: 'relative', flex: '0 0 auto', order: '0', fontFamily: 'Work Sans, -apple-system, BlinkMacSystemFont, sans-serif', color: '#C9D1FF', fontSize: '13px', lineHeight: '1.3', fontWeight: '700', letterSpacing: '0.12em', textTransform: 'uppercase', marginBottom: '16px', textAlign: 'center' }}>Kickback · Strategy and research</p>
-      <h1 data-id="hero-title" data-name="Title" style={{ position: 'relative', flex: '0 0 auto', order: '1', fontFamily: 'Work Sans, -apple-system, BlinkMacSystemFont, sans-serif', color: '#ffffff', maxWidth: '820px', fontSize: '56px', lineHeight: '1.08', fontWeight: '700', letterSpacing: '-0.02em', textAlign: 'center', marginBottom: '22px' }}>Kickback – A 2D Metaverse</h1>
-      <div data-id="hero-chips" data-name="Chips" style={{ position: 'relative', flex: '0 0 auto', order: '2', display: 'flex', flexDirection: 'row', justifyContent: 'center', gap: '10px', flexWrap: 'wrap' }}>
-        <Link data-id="chip-overview" data-name="Chip" style={{ position: 'relative', flex: '0 0 auto', order: '0', fontFamily: 'Work Sans, -apple-system, BlinkMacSystemFont, sans-serif', fontSize: '14px', lineHeight: '1.4', color: '#ffffff', padding: '7px 14px 7px 14px', borderRadius: '9999px', backgroundColor: 'rgba(255,255,255,.12)', border: '1px solid rgba(255,255,255,.16)', textDecoration: 'none' }} href="/work/kickback">← Kickback overview</Link>
-        <Link data-id="chip-how" data-name="Chip" style={{ position: 'relative', flex: '0 0 auto', order: '1', fontFamily: 'Work Sans, -apple-system, BlinkMacSystemFont, sans-serif', fontSize: '14px', lineHeight: '1.4', color: '#ffffff', padding: '7px 14px 7px 14px', borderRadius: '9999px', backgroundColor: 'rgba(255,255,255,.12)', border: '1px solid rgba(255,255,255,.16)', textDecoration: 'none' }} href="#how">How the bubbles work ↓</Link>
-        <Link data-id="chip-mvps" data-name="Chip" style={{ position: 'relative', flex: '0 0 auto', order: '2', fontFamily: 'Work Sans, -apple-system, BlinkMacSystemFont, sans-serif', fontSize: '14px', lineHeight: '1.4', color: '#ffffff', padding: '7px 14px 7px 14px', borderRadius: '9999px', backgroundColor: 'rgba(255,255,255,.12)', border: '1px solid rgba(255,255,255,.16)', textDecoration: 'none' }} href="#mvps">Three MVPs ↓</Link>
+<div data-id="hero" data-name="Hero" style={{ position: 'relative', flex: '0 0 auto', order: '1', display: 'flex', flexDirection: 'column', width: '100%', alignItems: 'center', padding: '72px 40px 0px 40px', overflow: 'hidden', backgroundColor: '#141B4D' }}>
+    <div data-id="hero-in" data-name="Columns" style={{ position: 'relative', flex: '0 0 auto', order: '0', display: 'grid', gridTemplateColumns: 'minmax(0, 1fr) minmax(0, 1.1fr)', alignItems: 'end', gap: '48px', width: '100%', maxWidth: '1200px' }}>
+      <div data-id="hero-copy" data-name="Copy" style={{ position: 'relative', order: '0', display: 'flex', flexDirection: 'column', alignItems: 'flex-start', gap: '24px', paddingBottom: '80px', minWidth: '0px' }}>
+        <p data-id="hero-eyebrow" data-name="Eyebrow" style={{ position: 'relative', flex: '0 0 auto', order: '0', fontFamily: 'Work Sans, -apple-system, BlinkMacSystemFont, sans-serif', color: '#F0C9B4', fontSize: '13px', lineHeight: '1.3', fontWeight: '700', letterSpacing: '0.1em', textTransform: 'uppercase' }}>Kickback · Strategy and research</p>
+        <h1 data-id="hero-title" data-name="Title" style={{ position: 'relative', flex: '0 0 auto', order: '1', fontFamily: 'Work Sans, -apple-system, BlinkMacSystemFont, sans-serif', color: '#ffffff', fontSize: '56px', lineHeight: '1.04', fontWeight: '800', letterSpacing: '-0.025em' }}>Kickback – <span style={{ color: '#F0C9B4' }}>A 2D Metaverse</span></h1>
+        <div data-id="hero-chips" data-name="Chips" style={{ position: 'relative', flex: '0 0 auto', order: '2', display: 'flex', flexDirection: 'row', gap: '8px', flexWrap: 'wrap' }}>
+          <Link data-id="chip-overview" data-name="Chip" style={{ position: 'relative', flex: '0 0 auto', order: '0', fontFamily: 'Work Sans, -apple-system, BlinkMacSystemFont, sans-serif', fontSize: '14px', lineHeight: '1.4', fontWeight: '500', color: '#ffffff', padding: '8px 14px 8px 14px', borderRadius: '9999px', border: '1px solid rgba(255,255,255,.24)', textDecoration: 'none' }} href="/work/kickback">← Kickback overview</Link>
+          <Link data-id="chip-how" data-name="Chip" style={{ position: 'relative', flex: '0 0 auto', order: '1', fontFamily: 'Work Sans, -apple-system, BlinkMacSystemFont, sans-serif', fontSize: '14px', lineHeight: '1.4', fontWeight: '500', color: '#ffffff', padding: '8px 14px 8px 14px', borderRadius: '9999px', border: '1px solid rgba(255,255,255,.24)', textDecoration: 'none' }} href="#how">How the bubbles work ↓</Link>
+          <Link data-id="chip-mvps" data-name="Chip" style={{ position: 'relative', flex: '0 0 auto', order: '2', fontFamily: 'Work Sans, -apple-system, BlinkMacSystemFont, sans-serif', fontSize: '14px', lineHeight: '1.4', fontWeight: '500', color: '#ffffff', padding: '8px 14px 8px 14px', borderRadius: '9999px', border: '1px solid rgba(255,255,255,.24)', textDecoration: 'none' }} href="#mvps">Three MVPs ↓</Link>
+        </div>
+      </div>
+      <div data-id="hero-art" data-name="Art" style={{ position: 'relative', order: '1', display: 'flex', flexDirection: 'column', justifyContent: 'flex-end', paddingBottom: '0px', marginBottom: '-60px', minWidth: '0px' }}>
+        <div data-id="banner-card" data-name="Banner" style={{ position: 'relative', flex: '0 0 auto', order: '0', display: 'flex', flexDirection: 'column', width: '100%', padding: '10px 10px 10px 10px', backgroundColor: '#ffffff', borderRadius: '22px', boxShadow: '0 30px 60px rgba(5,8,30,.45)', transform: 'rotate(-3deg)', transformBox: 'border-box', transformOrigin: 'center bottom' }}>
+          <div data-id="banner-img" data-name="Image" style={{ position: 'relative', flex: '0 0 auto', order: '0', width: '100%', aspectRatio: '2000 / 1372', backgroundImage: 'url(/assets/kickback-strategy/banner.webp)', backgroundSize: 'cover', backgroundPosition: 'center', backgroundRepeat: 'no-repeat', borderRadius: '14px' }} role="img" aria-label="The Kickback beta landing page: an iPhone showing video bubbles on a dark canvas, with open seats in the first round of beta testing and a grid of face icons" />
+        </div>
       </div>
     </div>
-  <div data-id="banner" data-name="Banner" style={{ position: 'relative', flex: '0 0 auto', order: '2', display: 'flex', flexDirection: 'column', width: '100%', alignItems: 'center', padding: '0px 20px 0px 20px', marginTop: '-112px' }}>
-      <div data-id="banner-card" data-name="Card" style={{ position: 'relative', flex: '0 0 auto', order: '0', display: 'flex', flexDirection: 'column', width: '100%', maxWidth: '1040px', overflow: 'hidden', borderRadius: '20px', backgroundColor: '#4E63E8', boxShadow: '0 1px 2px rgba(20,27,77,.05), 0 8px 28px rgba(20,27,77,.08)' }}>
-        <div data-id="banner-img" data-name="Image" style={{ position: 'relative', flex: '0 0 auto', order: '0', width: '100%', aspectRatio: '2000 / 1372', backgroundImage: 'url(/assets/kickback-strategy/banner.webp)', backgroundSize: 'cover', backgroundPosition: 'center', backgroundRepeat: 'no-repeat' }} role="img" aria-label="The Kickback beta landing page: an iPhone showing video bubbles on a dark canvas, with open seats in the first round of beta testing and a grid of face icons" />
-      </div>
-    </div>
+  </div>
   <div data-id="what" data-name="What is Kickback" style={{ position: 'relative', flex: '0 0 auto', order: '3', display: 'flex', flexDirection: 'column', width: '100%', alignItems: 'center', padding: '72px 20px 0px 20px' }}>
       <div data-id="what-in" data-name="Column" style={{ position: 'relative', flex: '0 0 auto', order: '0', display: 'flex', flexDirection: 'column', width: '100%', maxWidth: '600px', gap: '16px' }}>
         <h2 data-id="what-h" data-name="Heading" style={{ position: 'relative', flex: '0 0 auto', order: '0', fontFamily: 'Work Sans, -apple-system, BlinkMacSystemFont, sans-serif', color: '#4358CD', fontSize: '32px', lineHeight: '1.15', fontWeight: '700', letterSpacing: '-0.01em' }}>What is Kickback?</h2>

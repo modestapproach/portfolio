@@ -44,7 +44,7 @@
     "messages/es.json",
     "messages/fr.json"
   ],
-  "savedAt": "2026-11-08T08:05:50.000Z",
+  "savedAt": "2026-11-08T08:09:53.000Z",
   "hashes": {
     "_meta/agent-chats.json": "85fce6e63832a22933b29f775286d887327f0e21",
     "_meta/chat-history.json": "bf21a9e8fbc5a3846fb05b4fa0859e0917b2202f",
@@ -68,9 +68,9 @@
     "app/providers.tsx": "0e2c90f2e38ad3e79709551ad8a5306eb92be2f5",
     "app/work/gift-app/page.client.tsx": "0e769028ee62cc20086c3ae7921b45e02ff380cc",
     "app/work/gift-app/page.tsx": "4f80599d4b3cf37823f3a0a7249c4d3e2a1bf3b1",
-    "app/work/kickback-strategy/page.client.tsx": "b89d9aabdef4359366181f671c85e8aa87783eff",
+    "app/work/kickback-strategy/page.client.tsx": "f3bef8476dc299a62e2df05bfb95ec5247c0b17c",
     "app/work/kickback-strategy/page.tsx": "5e39e013f9ffd75e2624548d35623902dad7b364",
-    "app/work/kickback/page.client.tsx": "5bbbc6820a231bd9cf4a841c09e6e6e6a910446f",
+    "app/work/kickback/page.client.tsx": "633ea5a70a0f6f47fbdd1836ed4a553269007d05",
     "app/work/kickback/page.tsx": "f584a3bdc911434240186f1bf3ed3c82fcb07673",
     "app/work/supafeed-agent/page.client.tsx": "49f3bbcef71039504a8c19fd5d03e332d8621450",
     "app/work/supafeed-agent/page.tsx": "3adf8e5dfa992175e14baa42c38e1b310b4e893a",

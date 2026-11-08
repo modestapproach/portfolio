@@ -21,21 +21,24 @@ export default function Page() {
 <div data-id="root" data-name="Kickback overview" style={{ position: 'relative', display: 'flex', flexDirection: 'column', width: '100%', alignItems: 'center', backgroundColor: '#ffffff' }}>
   <style>{`
     @media (max-width: 1024px) and (min-width: 430.02px) {
-      [data-id="meta"] { width: calc(100% - 40px) !important; grid-template-columns: repeat(2, minmax(0, 1fr)) !important; }
+      [data-id="hero-in"] { grid-template-columns: minmax(0, 1fr) !important; gap: 0px !important; }
+      [data-id="hero-copy"] { padding-bottom: 48px !important; }
       [data-id="mapnav-grid"] { grid-template-columns: repeat(2, minmax(0, 1fr)) !important; row-gap: 48px !important; }
-      [data-id="hero-title"] { font-size: 44px !important; }
+      [data-id="hero-title"] { font-size: 46px !important; }
     }
     @media (max-width: 430px) {
-      [data-id="meta"] { width: calc(100% - 40px) !important; grid-template-columns: repeat(2, minmax(0, 1fr)) !important; }
+      [data-id="hero-in"] { grid-template-columns: minmax(0, 1fr) !important; gap: 0px !important; }
+      [data-id="hero-copy"] { padding-bottom: 40px !important; gap: 20px !important; }
+      [data-id="hero-art"] { margin-bottom: -32px !important; }
       [data-id="mapnav-grid"] { grid-template-columns: minmax(0, 1fr) !important; gap: 48px !important; }
       [data-id="comm-grid"] { grid-template-columns: minmax(0, 1fr) !important; gap: 48px !important; }
       [data-id="mapx-grid"] { grid-template-columns: minmax(0, 1fr) !important; gap: 48px !important; }
       [data-id="site-nav"] { padding: 16px 20px 16px 20px !important; }
-      [data-id="meta"] { width: calc(100% - 32px) !important; padding: 22px 22px 22px 22px !important; gap: 18px !important; margin-top: 72px !important; }
-      [data-id="hero"] { padding: 64px 16px 0px 16px !important; }
+      [data-id="meta"] { grid-template-columns: minmax(0, 1fr) !important; gap: 16px !important; }
+      [data-id="hero"] { padding: 48px 20px 0px 20px !important; }
       [data-id="hero-title"] { font-size: 32px !important; }
       [data-id="hero-sub"] { font-size: 17px !important; }
-      [data-id="hero-shot"] { margin-bottom: -48px !important; padding: 6px 6px 6px 6px !important; }
+      [data-id="hero-shot"] { padding: 6px 6px 6px 6px !important; }
       [data-id="what-h"], [data-id="hackathon-h"], [data-id="problem-h"], [data-id="solution-h"], [data-id="how-h"], [data-id="initial-h"], [data-id="summary-h"], [data-id="mapnav-h"], [data-id="comm-h"], [data-id="workshops-h"], [data-id="proto4-h"], [data-id="research-h"], [data-id="mapx-h"], [data-id="movex-h"], [data-id="process-h"], [data-id="wireframe-h"], [data-id="mvp1-h"], [data-id="mvp2-h"], [data-id="mvp3-h"] { font-size: 27px !important; }
       [data-id="jubilee-grid"] { grid-template-columns: minmax(0, 1fr) !important; }
       [data-id="step1-posts"] { grid-template-columns: minmax(0, 1fr) !important; }
@@ -56,37 +59,43 @@ export default function Page() {
     <Link data-id="site-nav-blog" data-name="Blog" style={{ position: 'relative', flex: '0 0 auto', order: '3', fontFamily: 'Work Sans, -apple-system, BlinkMacSystemFont, sans-serif', color: '#2A2E33', fontSize: '15px', lineHeight: '1.2', textDecoration: 'none' }} href="/blog">Blog</Link>
   </div>
 </div>
-<div data-id="hero" data-name="Hero" style={{ position: 'relative', flex: '0 0 auto', order: '1', display: 'flex', flexDirection: 'column', width: '100%', alignItems: 'center', padding: '96px 20px 0px 20px', backgroundImage: 'radial-gradient(120% 90% at 50% 0%, #3A4CC0 0%, #1E2A78 46%, #0F1540 100%)' }}>
-<p data-id="hero-kicker" data-name="Kicker" style={{ position: 'relative', flex: '0 0 auto', order: '0', fontFamily: 'Work Sans, -apple-system, BlinkMacSystemFont, sans-serif', color: 'rgba(255,255,255,.72)', fontSize: '15px', lineHeight: '1.4', fontWeight: '600', letterSpacing: '0.06em', textTransform: 'uppercase', marginBottom: '14px' }}>Case study · 2021 – 2022</p>
-<h1 data-id="hero-title" data-name="Title" style={{ position: 'relative', flex: '0 0 auto', order: '1', fontFamily: 'Work Sans, -apple-system, BlinkMacSystemFont, sans-serif', color: '#ffffff', maxWidth: '820px', fontSize: '52px', lineHeight: '1.08', fontWeight: '700', letterSpacing: '-0.02em', textAlign: 'center', marginBottom: '18px' }}>Kickback: a 2D metaverse</h1>
-<p data-id="hero-sub" data-name="Subtitle" style={{ position: 'relative', flex: '0 0 auto', order: '2', fontFamily: 'Work Sans, -apple-system, BlinkMacSystemFont, sans-serif', color: 'rgba(255,255,255,.86)', maxWidth: '640px', fontSize: '19px', lineHeight: '1.5', textAlign: 'center', marginBottom: '22px' }}>Move around a room and talk to whoever you are standing next to, in a way that feels less confined than a Zoom meeting.</p>
-<div data-id="hero-chips" data-name="Chips" style={{ position: 'relative', flex: '0 0 auto', order: '3', display: 'flex', flexDirection: 'row', justifyContent: 'center', gap: '10px', flexWrap: 'wrap', marginBottom: '48px' }}>
-<p data-id="chip-1" data-name="Chip" style={{ position: 'relative', flex: '0 0 auto', order: '0', fontFamily: 'Work Sans, -apple-system, BlinkMacSystemFont, sans-serif', color: '#ffffff', fontSize: '14px', lineHeight: '1.4', padding: '7px 14px 7px 14px', borderRadius: '9999px', backgroundColor: 'rgba(255,255,255,.12)', border: '1px solid rgba(255,255,255,.16)' }}>Hackathon grand prize</p>
-<p data-id="chip-2" data-name="Chip" style={{ position: 'relative', flex: '0 0 auto', order: '1', fontFamily: 'Work Sans, -apple-system, BlinkMacSystemFont, sans-serif', color: '#ffffff', fontSize: '14px', lineHeight: '1.4', padding: '7px 14px 7px 14px', borderRadius: '9999px', backgroundColor: 'rgba(255,255,255,.12)', border: '1px solid rgba(255,255,255,.16)' }}>Hook.vc accelerator</p>
-<p data-id="chip-3" data-name="Chip" style={{ position: 'relative', flex: '0 0 auto', order: '2', fontFamily: 'Work Sans, -apple-system, BlinkMacSystemFont, sans-serif', color: '#ffffff', fontSize: '14px', lineHeight: '1.4', padding: '7px 14px 7px 14px', borderRadius: '9999px', backgroundColor: 'rgba(255,255,255,.12)', border: '1px solid rgba(255,255,255,.16)' }}>Founder and designer</p>
-</div>
-<div data-id="hero-shot" data-name="Banner" style={{ position: 'relative', flex: '0 0 auto', order: '4', display: 'flex', flexDirection: 'column', width: '100%', maxWidth: '1000px', padding: '10px 10px 10px 10px', backgroundColor: '#ffffff', borderRadius: '22px', boxShadow: '0 24px 60px rgba(10,14,40,.35)', marginBottom: '-80px' }}>
-<div data-id="hero-shot-img" data-name="Kickback beta landing page with the app on a phone" style={{ position: 'relative', flex: '0 0 auto', order: '0', width: '100%', aspectRatio: '2000 / 1372', backgroundImage: 'url(/assets/kickback/hero.webp)', backgroundSize: 'cover', backgroundPosition: 'center', backgroundRepeat: 'no-repeat', borderRadius: '14px' }} role="img" aria-label="Kickback beta landing page with the app on a phone" />
-</div>
-</div>
-<div data-id="meta" data-name="Project details" style={{ position: 'relative', flex: '0 0 auto', order: '2', display: 'grid', gridTemplateColumns: 'repeat(4, minmax(0, 1fr))', width: '100%', maxWidth: '900px', marginTop: '120px', gap: '24px', padding: '30px 36px 30px 36px', backgroundColor: '#ffffff', borderRadius: '20px', boxShadow: '0 1px 2px rgba(20,27,77,.05), 0 8px 28px rgba(20,27,77,.08)' }}>
-<div data-id="meta-role" data-name="Role" style={{ position: 'relative', order: '0', display: 'flex', flexDirection: 'column', gap: '6px' }}>
-<h3 data-id="meta-role-k" data-name="Label" style={{ position: 'relative', flex: '0 0 auto', order: '0', fontFamily: 'Work Sans, -apple-system, BlinkMacSystemFont, sans-serif', color: '#4358CD', fontSize: '18px', lineHeight: '1.25', fontWeight: '600' }}>Role</h3>
-<p data-id="meta-role-v" data-name="Value" style={{ position: 'relative', flex: '0 0 auto', order: '1', fontFamily: 'Work Sans, -apple-system, BlinkMacSystemFont, sans-serif', color: '#2A2E33', fontSize: '16px', lineHeight: '1.45' }}>Designer, Founder</p>
-</div>
-<div data-id="meta-duration" data-name="Duration" style={{ position: 'relative', order: '1', display: 'flex', flexDirection: 'column', gap: '6px' }}>
-<h3 data-id="meta-duration-k" data-name="Label" style={{ position: 'relative', flex: '0 0 auto', order: '0', fontFamily: 'Work Sans, -apple-system, BlinkMacSystemFont, sans-serif', color: '#4358CD', fontSize: '18px', lineHeight: '1.25', fontWeight: '600' }}>Duration</h3>
-<p data-id="meta-duration-v" data-name="Value" style={{ position: 'relative', flex: '0 0 auto', order: '1', fontFamily: 'Work Sans, -apple-system, BlinkMacSystemFont, sans-serif', color: '#2A2E33', fontSize: '16px', lineHeight: '1.45' }}>May 2021 – December 2022</p>
-</div>
-<div data-id="meta-tools" data-name="Tools" style={{ position: 'relative', order: '2', display: 'flex', flexDirection: 'column', gap: '6px' }}>
-<h3 data-id="meta-tools-k" data-name="Label" style={{ position: 'relative', flex: '0 0 auto', order: '0', fontFamily: 'Work Sans, -apple-system, BlinkMacSystemFont, sans-serif', color: '#4358CD', fontSize: '18px', lineHeight: '1.25', fontWeight: '600' }}>Tools</h3>
-<p data-id="meta-tools-v" data-name="Value" style={{ position: 'relative', flex: '0 0 auto', order: '1', fontFamily: 'Work Sans, -apple-system, BlinkMacSystemFont, sans-serif', color: '#2A2E33', fontSize: '16px', lineHeight: '1.45' }}>Figma, Webflow, Design Thinking Workshops</p>
-</div>
-<div data-id="meta-scope" data-name="Scope" style={{ position: 'relative', order: '3', display: 'flex', flexDirection: 'column', gap: '6px' }}>
-<h3 data-id="meta-scope-k" data-name="Label" style={{ position: 'relative', flex: '0 0 auto', order: '0', fontFamily: 'Work Sans, -apple-system, BlinkMacSystemFont, sans-serif', color: '#4358CD', fontSize: '18px', lineHeight: '1.25', fontWeight: '600' }}>Scope</h3>
-<p data-id="meta-scope-v" data-name="Value" style={{ position: 'relative', flex: '0 0 auto', order: '1', fontFamily: 'Work Sans, -apple-system, BlinkMacSystemFont, sans-serif', color: '#2A2E33', fontSize: '16px', lineHeight: '1.45' }}>Illustration &amp; Brand, UX/UI, Website</p>
-</div>
-</div>
+<div data-id="hero" data-name="Hero" style={{ position: 'relative', flex: '0 0 auto', order: '1', display: 'flex', flexDirection: 'column', width: '100%', alignItems: 'center', padding: '72px 40px 0px 40px', overflow: 'hidden', backgroundColor: '#141B4D' }}>
+    <div data-id="hero-in" data-name="Columns" style={{ position: 'relative', flex: '0 0 auto', order: '0', display: 'grid', gridTemplateColumns: 'minmax(0, 1fr) minmax(0, 1.1fr)', alignItems: 'end', gap: '48px', width: '100%', maxWidth: '1200px' }}>
+      <div data-id="hero-copy" data-name="Copy" style={{ position: 'relative', order: '0', display: 'flex', flexDirection: 'column', alignItems: 'flex-start', gap: '24px', paddingBottom: '80px', minWidth: '0px' }}>
+        <p data-id="hero-kicker" data-name="Kicker" style={{ position: 'relative', flex: '0 0 auto', order: '0', fontFamily: 'Work Sans, -apple-system, BlinkMacSystemFont, sans-serif', color: '#F0C9B4', fontSize: '13px', lineHeight: '1.3', fontWeight: '700', letterSpacing: '0.1em', textTransform: 'uppercase' }}>Case study · 2021 – 2022</p>
+        <h1 data-id="hero-title" data-name="Title" style={{ position: 'relative', flex: '0 0 auto', order: '1', fontFamily: 'Work Sans, -apple-system, BlinkMacSystemFont, sans-serif', color: '#ffffff', fontSize: '56px', lineHeight: '1.04', fontWeight: '800', letterSpacing: '-0.025em' }}>Kickback: <span style={{ color: '#F0C9B4' }}>a 2D metaverse</span></h1>
+        <p data-id="hero-sub" data-name="Subtitle" style={{ position: 'relative', flex: '0 0 auto', order: '2', fontFamily: 'Work Sans, -apple-system, BlinkMacSystemFont, sans-serif', color: 'rgba(255,255,255,.82)', maxWidth: '520px', fontSize: '19px', lineHeight: '1.5' }}>Move around a room and talk to whoever you are standing next to, in a way that feels less confined than a Zoom meeting.</p>
+        <div data-id="hero-chips" data-name="Chips" style={{ position: 'relative', flex: '0 0 auto', order: '3', display: 'flex', flexDirection: 'row', gap: '8px', flexWrap: 'wrap' }}>
+          <p data-id="chip-1" data-name="Chip" style={{ position: 'relative', flex: '0 0 auto', order: '0', fontFamily: 'Work Sans, -apple-system, BlinkMacSystemFont, sans-serif', fontSize: '14px', lineHeight: '1.4', fontWeight: '500', color: '#ffffff', padding: '8px 14px 8px 14px', borderRadius: '9999px', border: '1px solid rgba(255,255,255,.24)' }}>Hackathon grand prize</p>
+          <p data-id="chip-2" data-name="Chip" style={{ position: 'relative', flex: '0 0 auto', order: '1', fontFamily: 'Work Sans, -apple-system, BlinkMacSystemFont, sans-serif', fontSize: '14px', lineHeight: '1.4', fontWeight: '500', color: '#ffffff', padding: '8px 14px 8px 14px', borderRadius: '9999px', border: '1px solid rgba(255,255,255,.24)' }}>Hook.vc accelerator</p>
+          <p data-id="chip-3" data-name="Chip" style={{ position: 'relative', flex: '0 0 auto', order: '2', fontFamily: 'Work Sans, -apple-system, BlinkMacSystemFont, sans-serif', fontSize: '14px', lineHeight: '1.4', fontWeight: '500', color: '#ffffff', padding: '8px 14px 8px 14px', borderRadius: '9999px', border: '1px solid rgba(255,255,255,.24)' }}>Founder and designer</p>
+        </div>
+        <div data-id="meta" data-name="Project details" style={{ position: 'relative', flex: '0 0 auto', order: '4', display: 'grid', gridTemplateColumns: 'repeat(2, minmax(0, 1fr))', width: '100%', gap: '20px 32px', paddingTop: '24px', borderTop: '1px solid rgba(255,255,255,.16)' }}>
+          <div data-id="meta-role" data-name="Role" style={{ position: 'relative', order: '0', display: 'flex', flexDirection: 'column', gap: '6px', minWidth: '0px' }}>
+            <h3 data-id="meta-role-k" data-name="Label" style={{ position: 'relative', flex: '0 0 auto', order: '0', fontFamily: 'Work Sans, -apple-system, BlinkMacSystemFont, sans-serif', color: '#F0C9B4', fontSize: '12px', lineHeight: '1.3', fontWeight: '700', letterSpacing: '0.08em', textTransform: 'uppercase' }}>Role</h3>
+            <p data-id="meta-role-v" data-name="Value" style={{ position: 'relative', flex: '0 0 auto', order: '1', fontFamily: 'Work Sans, -apple-system, BlinkMacSystemFont, sans-serif', color: 'rgba(255,255,255,.82)', fontSize: '15px', lineHeight: '1.45' }}>Designer, Founder</p>
+          </div>
+          <div data-id="meta-duration" data-name="Duration" style={{ position: 'relative', order: '1', display: 'flex', flexDirection: 'column', gap: '6px', minWidth: '0px' }}>
+            <h3 data-id="meta-duration-k" data-name="Label" style={{ position: 'relative', flex: '0 0 auto', order: '0', fontFamily: 'Work Sans, -apple-system, BlinkMacSystemFont, sans-serif', color: '#F0C9B4', fontSize: '12px', lineHeight: '1.3', fontWeight: '700', letterSpacing: '0.08em', textTransform: 'uppercase' }}>Duration</h3>
+            <p data-id="meta-duration-v" data-name="Value" style={{ position: 'relative', flex: '0 0 auto', order: '1', fontFamily: 'Work Sans, -apple-system, BlinkMacSystemFont, sans-serif', color: 'rgba(255,255,255,.82)', fontSize: '15px', lineHeight: '1.45' }}>May 2021 – December 2022</p>
+          </div>
+          <div data-id="meta-tools" data-name="Tools" style={{ position: 'relative', order: '2', display: 'flex', flexDirection: 'column', gap: '6px', minWidth: '0px' }}>
+            <h3 data-id="meta-tools-k" data-name="Label" style={{ position: 'relative', flex: '0 0 auto', order: '0', fontFamily: 'Work Sans, -apple-system, BlinkMacSystemFont, sans-serif', color: '#F0C9B4', fontSize: '12px', lineHeight: '1.3', fontWeight: '700', letterSpacing: '0.08em', textTransform: 'uppercase' }}>Tools</h3>
+            <p data-id="meta-tools-v" data-name="Value" style={{ position: 'relative', flex: '0 0 auto', order: '1', fontFamily: 'Work Sans, -apple-system, BlinkMacSystemFont, sans-serif', color: 'rgba(255,255,255,.82)', fontSize: '15px', lineHeight: '1.45' }}>Figma, Webflow, Design Thinking Workshops</p>
+          </div>
+          <div data-id="meta-scope" data-name="Scope" style={{ position: 'relative', order: '3', display: 'flex', flexDirection: 'column', gap: '6px', minWidth: '0px' }}>
+            <h3 data-id="meta-scope-k" data-name="Label" style={{ position: 'relative', flex: '0 0 auto', order: '0', fontFamily: 'Work Sans, -apple-system, BlinkMacSystemFont, sans-serif', color: '#F0C9B4', fontSize: '12px', lineHeight: '1.3', fontWeight: '700', letterSpacing: '0.08em', textTransform: 'uppercase' }}>Scope</h3>
+            <p data-id="meta-scope-v" data-name="Value" style={{ position: 'relative', flex: '0 0 auto', order: '1', fontFamily: 'Work Sans, -apple-system, BlinkMacSystemFont, sans-serif', color: 'rgba(255,255,255,.82)', fontSize: '15px', lineHeight: '1.45' }}>Illustration &amp; Brand, UX/UI, Website</p>
+          </div>
+        </div>
+      </div>
+      <div data-id="hero-art" data-name="Art" style={{ position: 'relative', order: '1', display: 'flex', flexDirection: 'column', justifyContent: 'flex-end', paddingBottom: '0px', marginBottom: '-60px', minWidth: '0px' }}>
+        <div data-id="hero-shot" data-name="Banner" style={{ position: 'relative', flex: '0 0 auto', order: '0', display: 'flex', flexDirection: 'column', width: '100%', padding: '10px 10px 10px 10px', backgroundColor: '#ffffff', borderRadius: '22px', boxShadow: '0 30px 60px rgba(5,8,30,.45)', transform: 'rotate(-3deg)', transformBox: 'border-box', transformOrigin: 'center bottom' }}>
+          <div data-id="hero-shot-img" data-name="Kickback beta landing page with the app on a phone" style={{ position: 'relative', flex: '0 0 auto', order: '0', width: '100%', aspectRatio: '2000 / 1372', backgroundImage: 'url(/assets/kickback/hero.webp)', backgroundSize: 'cover', backgroundPosition: 'center', backgroundRepeat: 'no-repeat', borderRadius: '14px' }} role="img" aria-label="Kickback beta landing page with the app on a phone" />
+        </div>
+      </div>
+    </div>
+  </div>
 <div data-id="what" data-name="What is Kickback" style={{ position: 'relative', flex: '0 0 auto', order: '3', display: 'flex', flexDirection: 'column', width: '100%', alignItems: 'center', padding: '72px 20px 0px 20px' }}>
 <div data-id="what-in" data-name="Column" style={{ position: 'relative', flex: '0 0 auto', order: '0', display: 'flex', flexDirection: 'column', width: '100%', gap: '16px', maxWidth: '600px' }}>
 <h2 data-id="what-h" data-name="Heading" style={{ position: 'relative', flex: '0 0 auto', order: '0', fontFamily: 'Work Sans, -apple-system, BlinkMacSystemFont, sans-serif', color: '#4358CD', fontSize: '32px', lineHeight: '1.15', fontWeight: '700', letterSpacing: '-0.01em' }}>What is Kickback?</h2>
