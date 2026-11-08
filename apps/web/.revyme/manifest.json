@@ -44,11 +44,11 @@
     "messages/es.json",
     "messages/fr.json"
   ],
-  "savedAt": "2026-11-08T18:47:44.151218Z",
+  "savedAt": "2026-11-08T18:56:17.595466Z",
   "hashes": {
     "_meta/agent-chats.json": "85fce6e63832a22933b29f775286d887327f0e21",
     "_meta/chat-history.json": "bf21a9e8fbc5a3846fb05b4fa0859e0917b2202f",
-    "_meta/page-camera.json": "576022f7f2873358cbb6a68f67f0d63194a7e74e",
+    "_meta/page-camera.json": "e75c4761ecde324e6316333eb94835fedede5715",
     "app/about/page.client.tsx": "e3bd426d3d8dfba69ce570bccc87a3580d6934ee",
     "app/about/page.tsx": "be33930075c825e095efdc31eb1216f57164c317",
     "app/blog/gpt4-novel/page.client.tsx": "2be94f4e3bf611774267ef3abe7548f744cf6513",
@@ -61,13 +61,15 @@
     "app/blog/portfolio-chatbot/page.tsx": "93d238a01891cf3866a45c996d538675a53faf2c",
     "app/globals.css": "41733e65b02434300b36f5bfda6265806432f968",
     "app/layout.tsx": "971b82876df653c227765a97ed54ad0095e9de6e",
-    "app/page.client.tsx": "4d33b123b9a0237cab3ab42295b86ad7fa408c1c",
+    "app/page.client.tsx": "6867eeef0452815aa22d1b3a953792531d46b941",
     "app/page.tsx": "6b8246d8042620af1ab4a867b78f45ff612f7a53",
     "app/process/page.client.tsx": "4a016a25ae6c18dfcc04aa9c2e277622b75ff7cf",
     "app/process/page.tsx": "965b92f3eece6326884df91964d0eb02095d78e3",
     "app/providers.tsx": "0e2c90f2e38ad3e79709551ad8a5306eb92be2f5",
     "app/work/gift-app/page.client.tsx": "0e769028ee62cc20086c3ae7921b45e02ff380cc",
     "app/work/gift-app/page.tsx": "4f80599d4b3cf37823f3a0a7249c4d3e2a1bf3b1",
+    "app/work/graphic-design/page.client.tsx": "2f046e01b31953ca95721052e4e136e591ce614e",
+    "app/work/graphic-design/page.tsx": "64ca9b6dd141b68bec62138e22b74c5719b5935f",
     "app/work/kickback-strategy/page.client.tsx": "f3bef8476dc299a62e2df05bfb95ec5247c0b17c",
     "app/work/kickback-strategy/page.tsx": "5e39e013f9ffd75e2624548d35623902dad7b364",
     "app/work/kickback/page.client.tsx": "633ea5a70a0f6f47fbdd1836ed4a553269007d05",
@@ -81,12 +83,10 @@
     "app/work/supafeed/page.client.tsx": "238915ba7bedeb050f157c54010a2cf495ceb0db",
     "app/work/supafeed/page.tsx": "8fccfeb04fa10df0b70cb046bfa1578076ac785f",
     "components/VariableName.tsx": "03b58fcc7bb203cb852b8a15e6480d5ed5e1b23c",
+    "components/VideoEmbed.tsx": "4a91a893fa04a2b006605a9a7d6b07b8fa545327",
     "i18n/config.json": "9776a70d3ab8ce0ef47795cffd98cf3ec04aa1c5",
     "messages/en.json": "bf21a9e8fbc5a3846fb05b4fa0859e0917b2202f",
     "messages/es.json": "bf21a9e8fbc5a3846fb05b4fa0859e0917b2202f",
-    "messages/fr.json": "bf21a9e8fbc5a3846fb05b4fa0859e0917b2202f",
-    "app/work/graphic-design/page.tsx": "64ca9b6dd141b68bec62138e22b74c5719b5935f",
-    "app/work/graphic-design/page.client.tsx": "dbaf60a1ad14e7dd0a91691d651243743d681929",
-    "components/VideoEmbed.tsx": "4a91a893fa04a2b006605a9a7d6b07b8fa545327"
+    "messages/fr.json": "bf21a9e8fbc5a3846fb05b4fa0859e0917b2202f"
   }
 }

@@ -12,9 +12,11 @@
     "mobile": { "x": 2528, "y": 0 }
   }
 } */
+
 import React from 'react';
 import Link from 'next/link';
 import VariableName from '../components/VariableName';
+
 export default function Page() {
   return <div data-id="root" data-name="Page" style={{
     position: 'relative',
@@ -729,8 +731,25 @@ export default function Page() {
             backgroundImage: 'url(/assets/home/gift-app-card.webp)',
             backgroundSize: 'cover',
             backgroundPosition: 'center',
-            backgroundRepeat: 'no-repeat'
-          }} />
+            backgroundRepeat: 'no-repeat',
+            display: 'flex',
+            flexDirection: 'column',
+            alignItems: 'center',
+            justifyContent: 'center'
+          }}>
+    <p data-id="text-mw86wpg8-1" data-name="Text" style={{
+              fontSize: '16px',
+              color: '#000000',
+              fontFamily: 'Inter, sans-serif',
+              fontWeight: '400',
+              lineHeight: '1.2',
+              overflowWrap: 'break-word',
+              position: 'relative',
+              flex: '0 0 auto'
+            }}>
+        ​
+      </p>
+  </div>
         <div data-id="gift-app-body" data-name="Body" style={{
             width: 'auto',
             height: 'auto',
