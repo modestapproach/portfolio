@@ -4,7 +4,7 @@ import { Providers } from './providers';
 export const metadata = {
   title: 'Ted Dessert — Product Designer',
   description:
-    'Product designer for ambitious software with weird edges and real constraints. Seven years helping new products become legible, lovable, and ready to ship.',
+    'Product designer taking new technology from first idea to products people love. Seven years helping new products become legible, lovable, and ready to ship.',
 };
 
 export const siteConfig: Record<string, string> = {

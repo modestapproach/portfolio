@@ -1,9 +1,22 @@
 'use client';
 
 /** @label "Variable Name" */
-/** @comment "Variable-font wordmark whose whole word pulses evenly between base and peak weight. Optionally pointer-reactive: the character nearest the cursor peaks in weight, neighbours decay on a gaussian. Fits itself to the width of whatever box it sits in, so it never overflows a phone. Ported from the type experiments' proximity view." */
+/** @comment "Variable-font wordmark with three effects. Sunset bloom: copies of the word stack on top of each other, each in its own sunset colour. Inward (default): each arrives bold on the outside and thins toward the centre, so the name seems to keep sinking into itself. Outward: each is born skinny on top and grows bold. Heartbeat: the whole word rests at base weight and spikes to peak twice (lub-dub). Still: base weight. Optionally pointer-reactive in heartbeat mode. Fits itself to the width of whatever box it sits in, so it never overflows a phone. Ported from the type experiments' proximity view." */
 /** @controls {
   "text": { "type": "text", "label": "Text", "default": "Ted Dessert" },
+  "effect": { "type": "select", "label": "Effect", "default": "bloom", "options": [{"label":"Sunset bloom","value":"bloom"},{"label":"Heartbeat","value":"heartbeat"},{"label":"Still","value":"still"}] },
+  "bloomDirection": { "type": "select", "label": "Bloom direction", "default": "inward", "options": [{"label":"Inward (bold to skinny)","value":"inward"},{"label":"Outward (skinny to bold)","value":"outward"}] },
+  "bloomSeconds": { "type": "slider", "label": "Bloom length (s)", "default": 30, "min": 2, "max": 90, "step": 1, "description": "How long one layer takes to cross from skinny to bold. A new layer starts every length ÷ layers." },
+  "bloomLayers": { "type": "slider", "label": "Bloom layers", "default": 40, "min": 4, "max": 120, "step": 1, "description": "More layers make finer rings." },
+  "colourSpread": { "type": "slider", "label": "Colours at once", "default": 0.15, "min": 0.02, "max": 1, "step": 0.01, "description": "How much of the sunset is on screen at one time. Low shows two or three neighbouring colours that drift through the whole sunset; 1 shows every colour at once." },
+  "bloomFromWeight": { "type": "slider", "label": "Bloom start weight", "default": 100, "min": 100, "max": 700, "step": 10 },
+  "color1": { "type": "color", "label": "Sunset stop 1", "default": "#FFC04D" },
+  "color2": { "type": "color", "label": "Sunset stop 2", "default": "#FFB07C" },
+  "color3": { "type": "color", "label": "Sunset stop 3", "default": "#FF6F61" },
+  "color4": { "type": "color", "label": "Sunset stop 4", "default": "#FF4F81" },
+  "color5": { "type": "color", "label": "Sunset stop 5", "default": "#9A5DBF" },
+  "color6": { "type": "color", "label": "Sunset stop 6", "default": "#8CC8F0" },
+  "color7": { "type": "color", "label": "Sunset stop 7", "default": "#4C7BD0" },
   "baseWeight": { "type": "slider", "label": "Base weight", "default": 300, "min": 100, "max": 700, "step": 10 },
   "peakWeight": { "type": "slider", "label": "Peak weight", "default": 700, "min": 100, "max": 700, "step": 10 },
   "radius": { "type": "slider", "label": "Radius (px)", "default": 180, "min": 40, "max": 600, "step": 10 },
@@ -11,9 +24,9 @@
   "fit": { "type": "toggle", "label": "Fit to width", "default": true, "description": "Shrink below Font size when the box is narrower than the text. Font size becomes the maximum." },
   "minFontSize": { "type": "slider", "label": "Min font size (px)", "default": 20, "min": 8, "max": 120, "step": 1 },
   "color": { "type": "color", "label": "Color", "default": "#222017" },
-  "idleWave": { "type": "toggle", "label": "Pulse", "default": true, "description": "Every letter swells from base to peak weight and back, together." },
-  "pulseSeconds": { "type": "slider", "label": "Pulse length (s)", "default": 2.4, "min": 0.6, "max": 8, "step": 0.1 },
-  "pointerReactive": { "type": "toggle", "label": "Pointer reactive", "default": false, "description": "Letters near the cursor get bolder. Off keeps the weight even across the word." }
+  "idleWave": { "type": "toggle", "label": "Animate", "default": true, "description": "Off holds the chosen effect still." },
+  "pulseSeconds": { "type": "slider", "label": "Beat length (s)", "default": 1.2, "min": 0.5, "max": 4, "step": 0.1, "description": "One full lub-dub-rest cycle. 1.0 is 60 bpm." },
+  "pointerReactive": { "type": "toggle", "label": "Pointer reactive", "default": false, "description": "Heartbeat only: letters near the cursor get bolder. Off keeps the weight even across the word." }
 } */
 
 import React, { useEffect, useLayoutEffect, useRef, useState } from 'react';
@@ -108,8 +121,86 @@ function useFitFontSize(
   return fitPx;
 }
 
+// One heartbeat cycle, t in [0, 1) → 0..1. Shaped on heart sounds: S1 (lub)
+// opens systole, S2 (dub) closes it about 0.3 of the cycle later, a little
+// softer, then diastole is a long rest at 0. Each beat has a fast attack and a
+// slightly slower decay, so the word snaps bold and falls back thin.
+const LUB_AT = 0.06;
+const DUB_AT = 0.3;
+const DUB_STRENGTH = 0.72;
+const ATTACK = 0.035;
+const DECAY = 0.06;
+
+function beat(x: number): number {
+  return x < 0 ? Math.exp(-((x / ATTACK) ** 2)) : Math.exp(-((x / DECAY) ** 1.6));
+}
+
+function heartbeat(t: number): number {
+  return Math.min(1, Math.max(beat(t - LUB_AT), DUB_STRENGTH * beat(t - DUB_AT)));
+}
+
+// Sunset bloom: a layer's life, p in [0, 1). Weight moves at an even speed,
+// so the rings stay evenly spaced and the motion reads as one steady zoom. A
+// layer fades in over its first slot and out over its last (a slot is 1/n of
+// the cycle), so no ring ever pops at either the centre or the edge.
+function bloomGrowth(p: number): number {
+  return p;
+}
+
+function bloomOpacity(p: number, layers: number): number {
+  return Math.max(0, Math.min(1, p * layers, (1 - p) * layers));
+}
+
+// The layer colours. The stops (horizon gold up to the blue overhead) are
+// walked there and back (1 → 7 → 1) so the loop is seamless. A layer takes its
+// colour from where the sunset is at the moment it is born, and the sunset
+// moves slower than the layers do, so only a narrow band of neighbouring
+// colours is on screen at once and the name drifts through the whole sunset.
+function hexToRgb(hex: string): [number, number, number] {
+  const h = hex.replace('#', '');
+  const full = h.length === 3 ? h.split('').map((c) => c + c).join('') : h.slice(0, 6);
+  const n = parseInt(full, 16);
+  return Number.isNaN(n) ? [0, 0, 0] : [(n >> 16) & 255, (n >> 8) & 255, n & 255];
+}
+
+function sunsetPath(stops: string[]): [number, number, number][] {
+  return [...stops, ...stops.slice(1, -1).reverse()].map(hexToRgb);
+}
+
+function sunsetAt(path: [number, number, number][], x: number): string {
+  const t = ((x % 1) + 1) % 1;
+  const pos = t * path.length;
+  const i = Math.floor(pos);
+  const f = pos - i;
+  const a = path[i % path.length];
+  const b = path[(i + 1) % path.length];
+  const c = a.map((v, j) => Math.round(v + (b[j] - v) * f));
+  return `rgb(${c[0]}, ${c[1]}, ${c[2]})`;
+}
+
+// Slot k of n at a given point in the cycle: its life p in [0, 1), and the
+// moment it was born (unique per birth, 1/n apart), which picks its colour.
+function bloomSlot(cycle: number, k: number, n: number): { p: number; born: number } {
+  const q = cycle - k / n;
+  const born = Math.floor(q) + k / n;
+  return { p: q - Math.floor(q), born };
+}
+
 function VariableName({
   text = 'Ted Dessert',
+  effect = 'bloom',
+  bloomDirection = 'inward',
+  bloomSeconds = 30,
+  bloomFromWeight = 100,
+  bloomLayers = 40,
+  colourSpread = 0.15,
+  color1 = '#FFC04D',
+  color2 = '#FFB07C',
+  color3 = '#FF6F61',
+  color4 = '#FF4F81',
+  color5 = '#9A5DBF',
+  color6 = '#8CC8F0',
+  color7 = '#4C7BD0',
   baseWeight = 300,
   peakWeight = 700,
   radius = 180,
@@ -118,11 +209,24 @@ function VariableName({
   minFontSize = 20,
   color = '#222017',
   idleWave = true,
-  pulseSeconds = 2.4,
+  pulseSeconds = 1.2,
   pointerReactive = false,
   ...props
 }: {
   text?: string;
+  effect?: 'bloom' | 'heartbeat' | 'still' | string;
+  bloomDirection?: 'inward' | 'outward' | string;
+  bloomSeconds?: number;
+  bloomFromWeight?: number;
+  bloomLayers?: number;
+  colourSpread?: number;
+  color1?: string;
+  color2?: string;
+  color3?: string;
+  color4?: string;
+  color5?: string;
+  color6?: string;
+  color7?: string;
   baseWeight?: number;
   peakWeight?: number;
   radius?: number;
@@ -142,8 +246,13 @@ function VariableName({
   const pointer = useRef<{ x: number; y: number } | null>(null);
   const weights = useRef<number[]>([]);
   const raf = useRef<number>(0);
+  const layerRefs = useRef<(HTMLSpanElement | null)[]>([]);
 
   const chars = Array.from(text);
+  const bloom = effect === 'bloom';
+  const sunset = sunsetPath([color1, color2, color3, color4, color5, color6, color7]);
+  const layerCount = Math.max(2, Math.round(bloomLayers));
+  const slots = Array.from({ length: layerCount }, (_, k) => k);
 
   const fitPx = useFitFontSize(wrapRef, rowRef, fit, fontSize, minFontSize, text);
   const floorVw = ((FLOOR_VIEWPORT_SHARE * 100) / (Math.max(1, chars.length) * FLOOR_ADVANCE_EM)).toFixed(2);
@@ -164,7 +273,40 @@ function VariableName({
     weights.current = chars.map(() => baseWeight);
     const spans = charRefs.current.slice(0, chars.length);
 
-    if (reduced) {
+    if (bloom) {
+      const layers = layerRefs.current.slice(0, layerCount);
+      const n = layers.length;
+      // Each layer is a fixed slot in the cycle, 1/n apart, so the stack is
+      // already full on the first frame. Newest (skinniest) sits on top.
+      const paint = (cycle: number) => {
+        for (let k = 0; k < n; k++) {
+          const s = layers[k];
+          if (!s) continue;
+          const { p, born } = bloomSlot(cycle, k, n);
+          s.style.color = sunsetAt(sunset, born * colourSpread);
+          const w = bloomFromWeight + (peakWeight - bloomFromWeight) * bloomGrowth(p);
+          s.style.fontVariationSettings = `'wght' ${Math.round(w)}`;
+          s.style.opacity = String(bloomOpacity(p, n));
+          s.style.zIndex = String(Math.round((1 - p) * 1000));
+        }
+      };
+      if (reduced || !idleWave) {
+        paint(0.5 / n);
+        return;
+      }
+      // Inward plays the same cycle backwards: each layer arrives bold on the
+      // outside, thins as it sinks toward the centre, and dissolves there.
+      const direction = bloomDirection === 'outward' ? 1 : -1;
+      const start = performance.now();
+      const tick = (now: number) => {
+        paint((0.5 / n) + direction * ((now - start) / (Math.max(0.5, bloomSeconds) * 1000)));
+        raf.current = requestAnimationFrame(tick);
+      };
+      raf.current = requestAnimationFrame(tick);
+      return () => cancelAnimationFrame(raf.current);
+    }
+
+    if (reduced || effect === 'still') {
       spans.forEach((s) => {
         if (s) s.style.fontVariationSettings = `'wght' ${Math.round(baseWeight)}`;
       });
@@ -184,13 +326,14 @@ function VariableName({
     const start = performance.now();
     const tick = (now: number) => {
       const wrapRect = wrap.getBoundingClientRect();
-      // One phase for the whole word, so every letter swells together.
-      const pulse = 0.5 - 0.5 * Math.cos(((now - start) / (Math.max(0.1, pulseSeconds) * 1000)) * 2 * Math.PI);
+      // One phase for the whole word, so every letter beats together.
+      const pulse = heartbeat(((now - start) / (Math.max(0.1, pulseSeconds) * 1000)) % 1);
+      const following = pointerReactive && pointer.current !== null;
       for (let i = 0; i < spans.length; i++) {
         const s = spans[i];
         if (!s) continue;
         let target = baseWeight;
-        if (pointerReactive && pointer.current) {
+        if (following && pointer.current) {
           // Gaussian falloff on pointer distance — the experiments' curve.
           const cr = s.getBoundingClientRect();
           const cx = cr.left - wrapRect.left + cr.width / 2;
@@ -201,8 +344,9 @@ function VariableName({
         } else if (idleWave) {
           target = baseWeight + (peakWeight - baseWeight) * pulse;
         }
-        // Ease toward the target so weight changes feel damped, not twitchy.
-        const next = weights.current[i] + (target - weights.current[i]) * 0.18;
+        // Ease toward the pointer target so it feels damped, not twitchy. The
+        // heartbeat is applied as is: easing would blunt its sharp beats.
+        const next = following ? weights.current[i] + (target - weights.current[i]) * 0.18 : target;
         weights.current[i] = next;
         s.style.fontVariationSettings = `'wght' ${Math.round(next)}`;
       }
@@ -216,7 +360,7 @@ function VariableName({
       wrap.removeEventListener('pointerleave', onLeave);
     };
     // Re-arm when any tuning knob changes.
-  }, [text, baseWeight, peakWeight, radius, idleWave, pulseSeconds, pointerReactive]);
+  }, [text, effect, bloomDirection, bloomSeconds, bloomLayers, colourSpread, color1, color2, color3, color4, color5, color6, color7, bloomFromWeight, baseWeight, peakWeight, radius, idleWave, pulseSeconds, pointerReactive]);
 
   return (
     // `block`, not `inline-block`: the wrapper must take the width of its
@@ -233,7 +377,15 @@ function VariableName({
       style={{ position: 'relative', display: 'block', cursor: 'default', ...props.style }}
     >
       <style dangerouslySetInnerHTML={{ __html: FONT_CSS }} />
-      <span ref={rowRef} aria-hidden="true" style={{ display: 'inline-block', whiteSpace: 'pre' }}>
+      {/* In bloom mode the per-character row stays in flow, invisible, as the
+          sizing reference the fit measures; the coloured layers sit on top of
+          it. Index's advance is the same at every weight, so the layers line
+          up letter for letter however bold each one is. */}
+      <span
+        ref={rowRef}
+        aria-hidden="true"
+        style={{ display: 'inline-block', whiteSpace: 'pre', visibility: bloom ? 'hidden' : 'visible' }}
+      >
         {chars.map((ch, i) => (
           <span
             key={i}
@@ -254,6 +406,36 @@ function VariableName({
           </span>
         ))}
       </span>
+      {bloom &&
+        slots.map((k) => {
+          // Server and first paint show the still frame the effect would hold.
+          const { p: p0, born } = bloomSlot(0.5 / layerCount, k, layerCount);
+          return (
+          <span
+            key={k}
+            aria-hidden="true"
+            ref={(el) => {
+              layerRefs.current[k] = el;
+            }}
+            style={{
+              position: 'absolute',
+              left: 0,
+              top: 0,
+              display: 'inline-block',
+              whiteSpace: 'pre',
+              fontFamily: "'Index Variable', ui-monospace, monospace",
+              fontSize: appliedFontSize,
+              lineHeight: 1.1,
+              color: sunsetAt(sunset, born * colourSpread),
+              fontVariationSettings: `'wght' ${Math.round(bloomFromWeight + (peakWeight - bloomFromWeight) * bloomGrowth(p0))}`,
+              opacity: bloomOpacity(p0, layerCount),
+              zIndex: Math.round((1 - p0) * 1000),
+            }}
+          >
+            {text}
+          </span>
+          );
+        })}
     </div>
   );
 }

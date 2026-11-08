@@ -72,7 +72,7 @@ export default function Page() {
         letterSpacing: '-0.015em',
         color: '#3a3527',
         maxWidth: '820px'
-      }}>Product designer for ambitious software with weird edges and real constraints.</h2>
+      }}>Product designer taking new technology from first idea to products people love.</h2>
     <p data-id="hero-sub" data-name="Subhead" style={{ width: 'auto', height: 'auto',
         position: 'relative',
         flex: '0 0 auto',
