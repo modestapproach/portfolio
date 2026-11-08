@@ -7,6 +7,8 @@
   "captions": { "type": "text", "label": "Captions", "default": "", "description": "One caption per image, separated by |." },
   "label": { "type": "text", "label": "Accessible label", "default": "Image carousel" },
   "aspectRatio": { "type": "text", "label": "Aspect ratio", "default": "1940 / 1458" },
+  "fit": { "type": "text", "label": "Image fit", "default": "cover", "description": "cover crops to fill; contain shows the whole image." },
+  "background": { "type": "text", "label": "Slide background", "default": "#E5E5E5" },
   "radius": { "type": "slider", "label": "Corner radius (px)", "default": 18, "min": 0, "max": 40, "step": 1 }
 } */
 
@@ -20,6 +22,8 @@ function ImageCarousel({
   captions = '',
   label = 'Image carousel',
   aspectRatio = '1940 / 1458',
+  fit = 'cover',
+  background = '#E5E5E5',
   radius = 18,
   ...props
 }: {
@@ -27,6 +31,8 @@ function ImageCarousel({
   captions?: string;
   label?: string;
   aspectRatio?: string;
+  fit?: string;
+  background?: string;
   radius?: number;
   style?: React.CSSProperties;
   [key: string]: unknown;
@@ -95,7 +101,7 @@ function ImageCarousel({
             if (Math.abs(dx) > 40) go(index + (dx < 0 ? 1 : -1));
             touchX.current = null;
           }}
-          style={{ position: 'relative', width: '100%', aspectRatio, overflow: 'clip', borderRadius: `${Math.max(radius - 8, 0)}px`, backgroundColor: '#E5E5E5' }}
+          style={{ position: 'relative', width: '100%', aspectRatio, overflow: 'clip', borderRadius: `${Math.max(radius - 8, 0)}px`, backgroundColor: background }}
         >
           <div style={{ display: 'flex', height: '100%', transform: `translateX(-${index * 100}%)`, transition: 'transform .45s cubic-bezier(.2,.7,.2,1)' }}>
             {list.map((src, i) => (
@@ -105,7 +111,7 @@ function ImageCarousel({
                 aria-roledescription="slide"
                 aria-label={caps[i] || `Slide ${i + 1} of ${count}`}
                 aria-hidden={i !== index}
-                style={{ flex: '0 0 100%', height: '100%', backgroundImage: `url(${src})`, backgroundSize: 'cover', backgroundPosition: 'center', backgroundRepeat: 'no-repeat' }}
+                style={{ flex: '0 0 100%', height: '100%', backgroundImage: `url(${src})`, backgroundSize: fit === 'contain' ? 'contain' : 'cover', backgroundPosition: 'center', backgroundRepeat: 'no-repeat' }}
               />
             ))}
           </div>
