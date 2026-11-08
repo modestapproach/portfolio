@@ -44,7 +44,7 @@
     "messages/es.json",
     "messages/fr.json"
   ],
-  "savedAt": "2026-11-08T18:31:05.767587Z",
+  "savedAt": "2026-11-08T18:40:53.295039Z",
   "hashes": {
     "_meta/agent-chats.json": "85fce6e63832a22933b29f775286d887327f0e21",
     "_meta/chat-history.json": "bf21a9e8fbc5a3846fb05b4fa0859e0917b2202f",
@@ -86,7 +86,7 @@
     "messages/es.json": "bf21a9e8fbc5a3846fb05b4fa0859e0917b2202f",
     "messages/fr.json": "bf21a9e8fbc5a3846fb05b4fa0859e0917b2202f",
     "app/work/graphic-design/page.tsx": "64ca9b6dd141b68bec62138e22b74c5719b5935f",
-    "app/work/graphic-design/page.client.tsx": "53f4f174aef51afa686ddbe74d3f93dea39c9650",
+    "app/work/graphic-design/page.client.tsx": "ab8e2d0413586cd20e0710b60bb640ed8f371b75",
     "components/VideoEmbed.tsx": "4a91a893fa04a2b006605a9a7d6b07b8fa545327"
   }
 }
