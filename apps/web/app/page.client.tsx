@@ -12,11 +12,9 @@
     "mobile": { "x": 2528, "y": 0 }
   }
 } */
-
 import React from 'react';
 import Link from 'next/link';
 import VariableName from '../components/VariableName';
-
 export default function Page() {
   return <div data-id="root" data-name="Page" style={{
     position: 'relative',
@@ -48,7 +46,9 @@ export default function Page() {
       [data-id="footer"] { flex-direction: column !important; align-items: stretch !important; justify-content: flex-start !important; gap: 6px !important; padding: 20px 24px 28px 24px !important; }
     }
 `}</style>
-  <div data-id="hero" data-name="Hero" style={{ width: 'auto', height: 'auto',
+  <div data-id="hero" data-name="Hero" style={{
+      width: 'auto',
+      height: 'auto',
       position: 'relative',
       flex: '0 0 auto',
       order: '0',
@@ -62,7 +62,9 @@ export default function Page() {
         flex: '0 0 auto',
         order: '0'
       }} />
-    <h2 data-id="hero-title" data-name="Headline" style={{ width: 'auto', height: 'auto',
+    <h2 data-id="hero-title" data-name="Headline" style={{
+        width: 'auto',
+        height: 'auto',
         position: 'relative',
         flex: '0 0 auto',
         order: '1',
@@ -72,8 +74,14 @@ export default function Page() {
         letterSpacing: '-0.015em',
         color: '#222017',
         maxWidth: '820px'
-      }}>A 0 to 1 Product Engineer with a pulse on the latest in Tech and AI.</h2>
-    <p data-id="hero-sub" data-name="Subhead" style={{ width: 'auto', height: 'auto',
+      }}>
+      <span style={{
+          fontWeight: '200'
+        }}>A 0 to 1 Product Engineer with a pulse on the latest in Tech and AI.</span>
+    </h2>
+    <p data-id="hero-sub" data-name="Subhead" style={{
+        width: 'auto',
+        height: 'auto',
         position: 'relative',
         flex: '0 0 auto',
         order: '2',
@@ -82,7 +90,9 @@ export default function Page() {
         color: '#665f4e',
         maxWidth: '640px'
       }}>Seven years helping new products become legible, lovable, and ready to ship. Self-driving cars, IOT, social products, AI — and teaching UX design from scratch.</p>
-    <div data-id="hero-facts" data-name="Fact chips" style={{ width: 'auto', height: 'auto',
+    <div data-id="hero-facts" data-name="Fact chips" style={{
+        width: 'auto',
+        height: 'auto',
         position: 'relative',
         flex: '0 0 auto',
         order: '3',
@@ -92,7 +102,9 @@ export default function Page() {
         flexWrap: 'wrap',
         marginTop: '8px'
       }}>
-      <p data-id="fact-1" data-name="Fact · years" style={{ width: 'auto', height: 'auto',
+      <p data-id="fact-1" data-name="Fact · years" style={{
+          width: 'auto',
+          height: 'auto',
           position: 'relative',
           flex: '0 0 auto',
           order: '0',
@@ -103,7 +115,9 @@ export default function Page() {
           borderRadius: '999px',
           padding: '8px 16px'
         }}>7 years in product design</p>
-      <p data-id="fact-2" data-name="Fact · 0-1" style={{ width: 'auto', height: 'auto',
+      <p data-id="fact-2" data-name="Fact · 0-1" style={{
+          width: 'auto',
+          height: 'auto',
           position: 'relative',
           flex: '0 0 auto',
           order: '1',
@@ -114,7 +128,9 @@ export default function Page() {
           borderRadius: '999px',
           padding: '8px 16px'
         }}>0-1 product work</p>
-      <p data-id="fact-3" data-name="Fact · instructor" style={{ width: 'auto', height: 'auto',
+      <p data-id="fact-3" data-name="Fact · instructor" style={{
+          width: 'auto',
+          height: 'auto',
           position: 'relative',
           flex: '0 0 auto',
           order: '2',
@@ -126,7 +142,9 @@ export default function Page() {
           padding: '8px 16px'
         }}>Former UX instructor</p>
     </div>
-    <div data-id="hero-links" data-name="Page links" style={{ width: 'auto', height: 'auto',
+    <div data-id="hero-links" data-name="Page links" style={{
+        width: 'auto',
+        height: 'auto',
         position: 'relative',
         flex: '0 0 auto',
         order: '4',
@@ -135,7 +153,9 @@ export default function Page() {
         gap: '22px',
         flexWrap: 'wrap'
       }}>
-      <Link data-id="hero-link-about" data-name="About" href="/about" style={{ width: 'auto', height: 'auto',
+      <Link data-id="hero-link-about" data-name="About" href="/about" style={{
+          width: 'auto',
+          height: 'auto',
           position: 'relative',
           flex: '0 0 auto',
           order: '0',
@@ -144,7 +164,9 @@ export default function Page() {
           color: '#4358CD',
           textDecoration: 'none'
         }}>About me →</Link>
-      <Link data-id="hero-link-process" data-name="Process" href="/process" style={{ width: 'auto', height: 'auto',
+      <Link data-id="hero-link-process" data-name="Process" href="/process" style={{
+          width: 'auto',
+          height: 'auto',
           position: 'relative',
           flex: '0 0 auto',
           order: '1',
@@ -153,7 +175,9 @@ export default function Page() {
           color: '#4358CD',
           textDecoration: 'none'
         }}>Design process →</Link>
-      <Link data-id="hero-link-blog" data-name="Blog" href="/blog" style={{ width: 'auto', height: 'auto',
+      <Link data-id="hero-link-blog" data-name="Blog" href="/blog" style={{
+          width: 'auto',
+          height: 'auto',
           position: 'relative',
           flex: '0 0 auto',
           order: '2',
@@ -162,7 +186,9 @@ export default function Page() {
           color: '#4358CD',
           textDecoration: 'none'
         }}>Blog →</Link>
-      <Link data-id="hero-link-resume" data-name="Resumé" href="/about#resume" style={{ width: 'auto', height: 'auto',
+      <Link data-id="hero-link-resume" data-name="Resumé" href="/about#resume" style={{
+          width: 'auto',
+          height: 'auto',
           position: 'relative',
           flex: '0 0 auto',
           order: '3',
@@ -174,7 +200,9 @@ export default function Page() {
     </div>
   </div>
 
-  <div data-id="work" data-name="Selected work" style={{ width: 'auto', height: 'auto',
+  <div data-id="work" data-name="Selected work" style={{
+      width: 'auto',
+      height: 'auto',
       position: 'relative',
       flex: '0 0 auto',
       order: '1',
@@ -183,7 +211,9 @@ export default function Page() {
       padding: '24px 96px 96px 96px',
       gap: '28px'
     }}>
-    <h2 data-id="work-title" data-name="Section title" style={{ width: 'auto', height: 'auto',
+    <h2 data-id="work-title" data-name="Section title" style={{
+        width: 'auto',
+        height: 'auto',
         position: 'relative',
         flex: '0 0 auto',
         order: '0',
@@ -194,7 +224,9 @@ export default function Page() {
         color: '#7d735f'
       }}>Selected work</h2>
 
-    <div data-id="cards" data-name="Project cards" style={{ width: 'auto', height: 'auto',
+    <div data-id="cards" data-name="Project cards" style={{
+        width: 'auto',
+        height: 'auto',
         position: 'relative',
         flex: '0 0 auto',
         order: '1',
@@ -204,7 +236,9 @@ export default function Page() {
         gap: '24px'
       }}>
 
-      <Link data-id="card-supafeed" data-name="Card · Supafeed" href="/work/supafeed" style={{ width: 'auto', height: 'auto',
+      <Link data-id="card-supafeed" data-name="Card · Supafeed" href="/work/supafeed" style={{
+          width: 'auto',
+          height: 'auto',
           position: 'relative',
           flex: '1 1 280px',
           order: '0',
@@ -217,7 +251,8 @@ export default function Page() {
           textDecoration: 'none',
           color: 'inherit'
         }}>
-        <div data-id="supafeed-art" data-name="Art" role="img" aria-label="Supafeed: the Feed, Today and agent chat on iPhone" style={{ width: 'auto',
+        <div data-id="supafeed-art" data-name="Art" role="img" aria-label="Supafeed: the Feed, Today and agent chat on iPhone" style={{
+            width: 'auto',
             position: 'relative',
             flex: '0 0 auto',
             order: '0',
@@ -227,7 +262,9 @@ export default function Page() {
             backgroundPosition: 'center',
             backgroundRepeat: 'no-repeat'
           }} />
-        <div data-id="supafeed-body" data-name="Body" style={{ width: 'auto', height: 'auto',
+        <div data-id="supafeed-body" data-name="Body" style={{
+            width: 'auto',
+            height: 'auto',
             position: 'relative',
             flex: '1 0 auto',
             order: '1',
@@ -236,7 +273,9 @@ export default function Page() {
             gap: '10px',
             padding: '22px 24px 26px 24px'
           }}>
-          <p data-id="supafeed-badge" data-name="Badge" style={{ width: 'auto', height: 'auto',
+          <p data-id="supafeed-badge" data-name="Badge" style={{
+              width: 'auto',
+              height: 'auto',
               position: 'relative',
               flex: '0 0 auto',
               order: '0',
@@ -246,7 +285,9 @@ export default function Page() {
               textTransform: 'uppercase',
               color: '#4358CD'
             }}>Overview · AI agents · iOS + web · 2026</p>
-          <h3 data-id="supafeed-name" data-name="Name" style={{ width: 'auto', height: 'auto',
+          <h3 data-id="supafeed-name" data-name="Name" style={{
+              width: 'auto',
+              height: 'auto',
               position: 'relative',
               flex: '0 0 auto',
               order: '1',
@@ -254,7 +295,9 @@ export default function Page() {
               fontWeight: '700',
               color: '#222017'
             }}>Supafeed: the project</h3>
-          <p data-id="supafeed-desc" data-name="Description" style={{ width: 'auto', height: 'auto',
+          <p data-id="supafeed-desc" data-name="Description" style={{
+              width: 'auto',
+              height: 'auto',
               position: 'relative',
               flex: '0 0 auto',
               order: '2',
@@ -265,7 +308,9 @@ export default function Page() {
         </div>
       </Link>
 
-<Link data-id="card-feed" data-name="Card · Where an agent’s finds go" href="/work/supafeed-feed" style={{ width: 'auto', height: 'auto',
+<Link data-id="card-feed" data-name="Card · Where an agent’s finds go" href="/work/supafeed-feed" style={{
+          width: 'auto',
+          height: 'auto',
           position: 'relative',
           flex: '1 1 280px',
           order: '1',
@@ -278,7 +323,8 @@ export default function Page() {
           textDecoration: 'none',
           color: 'inherit'
         }}>
-        <div data-id="feed-art" data-name="Art" role="img" aria-label="Supafeed feed: typed cards for an event, a place and a product" style={{ width: 'auto',
+        <div data-id="feed-art" data-name="Art" role="img" aria-label="Supafeed feed: typed cards for an event, a place and a product" style={{
+            width: 'auto',
             position: 'relative',
             flex: '0 0 auto',
             order: '0',
@@ -288,7 +334,9 @@ export default function Page() {
             backgroundPosition: 'center 38%',
             backgroundRepeat: 'no-repeat'
           }} />
-        <div data-id="feed-body" data-name="Body" style={{ width: 'auto', height: 'auto',
+        <div data-id="feed-body" data-name="Body" style={{
+            width: 'auto',
+            height: 'auto',
             position: 'relative',
             flex: '1 0 auto',
             order: '1',
@@ -297,7 +345,9 @@ export default function Page() {
             gap: '10px',
             padding: '22px 24px 26px 24px'
           }}>
-          <p data-id="feed-badge" data-name="Badge" style={{ width: 'auto', height: 'auto',
+          <p data-id="feed-badge" data-name="Badge" style={{
+              width: 'auto',
+              height: 'auto',
               position: 'relative',
               flex: '0 0 auto',
               order: '0',
@@ -307,7 +357,9 @@ export default function Page() {
               textTransform: 'uppercase',
               color: '#4358CD'
             }}>Case study 1 · The person’s side</p>
-          <h3 data-id="feed-name" data-name="Name" style={{ width: 'auto', height: 'auto',
+          <h3 data-id="feed-name" data-name="Name" style={{
+              width: 'auto',
+              height: 'auto',
               position: 'relative',
               flex: '0 0 auto',
               order: '1',
@@ -315,7 +367,9 @@ export default function Page() {
               fontWeight: '700',
               color: '#222017'
             }}>Where an agent’s finds go</h3>
-          <p data-id="feed-desc" data-name="Description" style={{ width: 'auto', height: 'auto',
+          <p data-id="feed-desc" data-name="Description" style={{
+              width: 'auto',
+              height: 'auto',
               position: 'relative',
               flex: '0 0 auto',
               order: '2',
@@ -326,7 +380,9 @@ export default function Page() {
         </div>
       </Link>
 
-<Link data-id="card-agent" data-name="Card · Onboarding a user who is a machine" href="/work/supafeed-agent" style={{ width: 'auto', height: 'auto',
+<Link data-id="card-agent" data-name="Card · Onboarding a user who is a machine" href="/work/supafeed-agent" style={{
+          width: 'auto',
+          height: 'auto',
           position: 'relative',
           flex: '1 1 280px',
           order: '2',
@@ -339,7 +395,8 @@ export default function Page() {
           textDecoration: 'none',
           color: 'inherit'
         }}>
-        <div data-id="agent-art" data-name="Art" role="img" aria-label="Supafeed: editing what the agent looks for" style={{ width: 'auto',
+        <div data-id="agent-art" data-name="Art" role="img" aria-label="Supafeed: editing what the agent looks for" style={{
+            width: 'auto',
             position: 'relative',
             flex: '0 0 auto',
             order: '0',
@@ -349,7 +406,9 @@ export default function Page() {
             backgroundPosition: 'center 38%',
             backgroundRepeat: 'no-repeat'
           }} />
-        <div data-id="agent-body" data-name="Body" style={{ width: 'auto', height: 'auto',
+        <div data-id="agent-body" data-name="Body" style={{
+            width: 'auto',
+            height: 'auto',
             position: 'relative',
             flex: '1 0 auto',
             order: '1',
@@ -358,7 +417,9 @@ export default function Page() {
             gap: '10px',
             padding: '22px 24px 26px 24px'
           }}>
-          <p data-id="agent-badge" data-name="Badge" style={{ width: 'auto', height: 'auto',
+          <p data-id="agent-badge" data-name="Badge" style={{
+              width: 'auto',
+              height: 'auto',
               position: 'relative',
               flex: '0 0 auto',
               order: '0',
@@ -368,7 +429,9 @@ export default function Page() {
               textTransform: 'uppercase',
               color: '#4358CD'
             }}>Case study 2 · The agent’s side</p>
-          <h3 data-id="agent-name" data-name="Name" style={{ width: 'auto', height: 'auto',
+          <h3 data-id="agent-name" data-name="Name" style={{
+              width: 'auto',
+              height: 'auto',
               position: 'relative',
               flex: '0 0 auto',
               order: '1',
@@ -376,7 +439,9 @@ export default function Page() {
               fontWeight: '700',
               color: '#222017'
             }}>Onboarding a user who is a machine</h3>
-          <p data-id="agent-desc" data-name="Description" style={{ width: 'auto', height: 'auto',
+          <p data-id="agent-desc" data-name="Description" style={{
+              width: 'auto',
+              height: 'auto',
               position: 'relative',
               flex: '0 0 auto',
               order: '2',
@@ -387,7 +452,9 @@ export default function Page() {
         </div>
       </Link>
 
-<Link data-id="card-chat" data-name="Card · Talking back to your agent" href="/work/supafeed-chat" style={{ width: 'auto', height: 'auto',
+<Link data-id="card-chat" data-name="Card · Talking back to your agent" href="/work/supafeed-chat" style={{
+          width: 'auto',
+          height: 'auto',
           position: 'relative',
           flex: '1 1 280px',
           order: '3',
@@ -400,7 +467,8 @@ export default function Page() {
           textDecoration: 'none',
           color: 'inherit'
         }}>
-        <div data-id="chat-art" data-name="Art" role="img" aria-label="Supafeed: a chat with the agent showing cards and a question" style={{ width: 'auto',
+        <div data-id="chat-art" data-name="Art" role="img" aria-label="Supafeed: a chat with the agent showing cards and a question" style={{
+            width: 'auto',
             position: 'relative',
             flex: '0 0 auto',
             order: '0',
@@ -410,7 +478,9 @@ export default function Page() {
             backgroundPosition: 'center 38%',
             backgroundRepeat: 'no-repeat'
           }} />
-        <div data-id="chat-body" data-name="Body" style={{ width: 'auto', height: 'auto',
+        <div data-id="chat-body" data-name="Body" style={{
+            width: 'auto',
+            height: 'auto',
             position: 'relative',
             flex: '1 0 auto',
             order: '1',
@@ -419,7 +489,9 @@ export default function Page() {
             gap: '10px',
             padding: '22px 24px 26px 24px'
           }}>
-          <p data-id="chat-badge" data-name="Badge" style={{ width: 'auto', height: 'auto',
+          <p data-id="chat-badge" data-name="Badge" style={{
+              width: 'auto',
+              height: 'auto',
               position: 'relative',
               flex: '0 0 auto',
               order: '0',
@@ -429,7 +501,9 @@ export default function Page() {
               textTransform: 'uppercase',
               color: '#4358CD'
             }}>Case study 3 · Where the two meet</p>
-          <h3 data-id="chat-name" data-name="Name" style={{ width: 'auto', height: 'auto',
+          <h3 data-id="chat-name" data-name="Name" style={{
+              width: 'auto',
+              height: 'auto',
               position: 'relative',
               flex: '0 0 auto',
               order: '1',
@@ -437,7 +511,9 @@ export default function Page() {
               fontWeight: '700',
               color: '#222017'
             }}>Talking back to your agent</h3>
-          <p data-id="chat-desc" data-name="Description" style={{ width: 'auto', height: 'auto',
+          <p data-id="chat-desc" data-name="Description" style={{
+              width: 'auto',
+              height: 'auto',
               position: 'relative',
               flex: '0 0 auto',
               order: '2',
@@ -451,7 +527,9 @@ export default function Page() {
     </div>
   </div>
 
-  <div data-id="earlier" data-name="Earlier work" style={{ width: 'auto', height: 'auto',
+  <div data-id="earlier" data-name="Earlier work" style={{
+      width: 'auto',
+      height: 'auto',
       position: 'relative',
       flex: '0 0 auto',
       order: '2',
@@ -460,7 +538,9 @@ export default function Page() {
       padding: '0px 96px 96px 96px',
       gap: '28px'
     }}>
-    <h2 data-id="earlier-title" data-name="Section title" style={{ width: 'auto', height: 'auto',
+    <h2 data-id="earlier-title" data-name="Section title" style={{
+        width: 'auto',
+        height: 'auto',
         position: 'relative',
         flex: '0 0 auto',
         order: '0',
@@ -471,7 +551,9 @@ export default function Page() {
         color: '#7d735f'
       }}>Earlier work</h2>
 
-    <div data-id="earlier-cards" data-name="Project cards" style={{ width: 'auto', height: 'auto',
+    <div data-id="earlier-cards" data-name="Project cards" style={{
+        width: 'auto',
+        height: 'auto',
         position: 'relative',
         flex: '0 0 auto',
         order: '1',
@@ -481,7 +563,9 @@ export default function Page() {
         gap: '24px'
       }}>
 
-      <Link data-id="card-kickback" data-name="Card · Kickback" href="/work/kickback" style={{ width: 'auto', height: 'auto',
+      <Link data-id="card-kickback" data-name="Card · Kickback" href="/work/kickback" style={{
+          width: 'auto',
+          height: 'auto',
           position: 'relative',
           flex: '1 1 280px',
           order: '0',
@@ -494,7 +578,8 @@ export default function Page() {
           textDecoration: 'none',
           color: 'inherit'
         }}>
-        <div data-id="kickback-art" data-name="Art" role="img" aria-label="Kickback: friends' video bubbles floating on a 2D canvas on iPhone" style={{ width: 'auto',
+        <div data-id="kickback-art" data-name="Art" role="img" aria-label="Kickback: friends' video bubbles floating on a 2D canvas on iPhone" style={{
+            width: 'auto',
             position: 'relative',
             flex: '0 0 auto',
             order: '0',
@@ -504,7 +589,9 @@ export default function Page() {
             backgroundPosition: 'center 22%',
             backgroundRepeat: 'no-repeat'
           }} />
-        <div data-id="kickback-body" data-name="Body" style={{ width: 'auto', height: 'auto',
+        <div data-id="kickback-body" data-name="Body" style={{
+            width: 'auto',
+            height: 'auto',
             position: 'relative',
             flex: '1 0 auto',
             order: '1',
@@ -513,7 +600,9 @@ export default function Page() {
             gap: '10px',
             padding: '22px 24px 26px 24px'
           }}>
-          <p data-id="kickback-badge" data-name="Badge" style={{ width: 'auto', height: 'auto',
+          <p data-id="kickback-badge" data-name="Badge" style={{
+              width: 'auto',
+              height: 'auto',
               position: 'relative',
               flex: '0 0 auto',
               order: '0',
@@ -523,7 +612,9 @@ export default function Page() {
               textTransform: 'uppercase',
               color: '#4358CD'
             }}>Overview · 2D metaverse · iOS + web · 3 years</p>
-          <h3 data-id="kickback-name" data-name="Name" style={{ width: 'auto', height: 'auto',
+          <h3 data-id="kickback-name" data-name="Name" style={{
+              width: 'auto',
+              height: 'auto',
               position: 'relative',
               flex: '0 0 auto',
               order: '1',
@@ -531,7 +622,9 @@ export default function Page() {
               fontWeight: '700',
               color: '#222017'
             }}>Kickback</h3>
-          <p data-id="kickback-desc" data-name="Description" style={{ width: 'auto', height: 'auto',
+          <p data-id="kickback-desc" data-name="Description" style={{
+              width: 'auto',
+              height: 'auto',
               position: 'relative',
               flex: '0 0 auto',
               order: '2',
@@ -542,7 +635,9 @@ export default function Page() {
         </div>
       </Link>
 
-      <Link data-id="card-kickback-strategy" data-name="Card · Kickback strategy" href="/work/kickback-strategy" style={{ width: 'auto', height: 'auto',
+      <Link data-id="card-kickback-strategy" data-name="Card · Kickback strategy" href="/work/kickback-strategy" style={{
+          width: 'auto',
+          height: 'auto',
           position: 'relative',
           flex: '1 1 280px',
           order: '1',
@@ -555,7 +650,8 @@ export default function Page() {
           textDecoration: 'none',
           color: 'inherit'
         }}>
-        <div data-id="kickback-strategy-art" data-name="Art" role="img" aria-label="A video call grid where only one person at a time can speak" style={{ width: 'auto',
+        <div data-id="kickback-strategy-art" data-name="Art" role="img" aria-label="A video call grid where only one person at a time can speak" style={{
+            width: 'auto',
             position: 'relative',
             flex: '0 0 auto',
             order: '0',
@@ -565,7 +661,9 @@ export default function Page() {
             backgroundPosition: 'center',
             backgroundRepeat: 'no-repeat'
           }} />
-        <div data-id="kickback-strategy-body" data-name="Body" style={{ width: 'auto', height: 'auto',
+        <div data-id="kickback-strategy-body" data-name="Body" style={{
+            width: 'auto',
+            height: 'auto',
             position: 'relative',
             flex: '1 0 auto',
             order: '1',
@@ -574,7 +672,9 @@ export default function Page() {
             gap: '10px',
             padding: '22px 24px 26px 24px'
           }}>
-          <p data-id="kickback-strategy-badge" data-name="Badge" style={{ width: 'auto', height: 'auto',
+          <p data-id="kickback-strategy-badge" data-name="Badge" style={{
+              width: 'auto',
+              height: 'auto',
               position: 'relative',
               flex: '0 0 auto',
               order: '0',
@@ -584,7 +684,9 @@ export default function Page() {
               textTransform: 'uppercase',
               color: '#4358CD'
             }}>Case study · Research and strategy</p>
-          <h3 data-id="kickback-strategy-name" data-name="Name" style={{ width: 'auto', height: 'auto',
+          <h3 data-id="kickback-strategy-name" data-name="Name" style={{
+              width: 'auto',
+              height: 'auto',
               position: 'relative',
               flex: '0 0 auto',
               order: '1',
@@ -592,7 +694,9 @@ export default function Page() {
               fontWeight: '700',
               color: '#222017'
             }}>Kickback: research to roadmap</h3>
-          <p data-id="kickback-strategy-desc" data-name="Description" style={{ width: 'auto', height: 'auto',
+          <p data-id="kickback-strategy-desc" data-name="Description" style={{
+              width: 'auto',
+              height: 'auto',
               position: 'relative',
               flex: '0 0 auto',
               order: '2',
@@ -603,7 +707,9 @@ export default function Page() {
         </div>
       </Link>
 
-      <Link data-id="card-gift-app" data-name="Card · Gift App" href="/work/gift-app" style={{ width: 'auto', height: 'auto',
+      <Link data-id="card-gift-app" data-name="Card · Gift App" href="/work/gift-app" style={{
+          width: 'auto',
+          height: 'auto',
           position: 'relative',
           flex: '1 1 280px',
           order: '2',
@@ -616,7 +722,8 @@ export default function Page() {
           textDecoration: 'none',
           color: 'inherit'
         }}>
-        <div data-id="gift-app-art" data-name="Art" role="img" aria-label="Handwritten notes and envelopes with wax seals and twine" style={{ width: 'auto',
+        <div data-id="gift-app-art" data-name="Art" role="img" aria-label="Handwritten notes and envelopes with wax seals and twine" style={{
+            width: 'auto',
             position: 'relative',
             flex: '0 0 auto',
             order: '0',
@@ -626,7 +733,9 @@ export default function Page() {
             backgroundPosition: 'center',
             backgroundRepeat: 'no-repeat'
           }} />
-        <div data-id="gift-app-body" data-name="Body" style={{ width: 'auto', height: 'auto',
+        <div data-id="gift-app-body" data-name="Body" style={{
+            width: 'auto',
+            height: 'auto',
             position: 'relative',
             flex: '1 0 auto',
             order: '1',
@@ -635,7 +744,9 @@ export default function Page() {
             gap: '10px',
             padding: '22px 24px 26px 24px'
           }}>
-          <p data-id="gift-app-badge" data-name="Badge" style={{ width: 'auto', height: 'auto',
+          <p data-id="gift-app-badge" data-name="Badge" style={{
+              width: 'auto',
+              height: 'auto',
               position: 'relative',
               flex: '0 0 auto',
               order: '0',
@@ -645,7 +756,9 @@ export default function Page() {
               textTransform: 'uppercase',
               color: '#4358CD'
             }}>Case study · UI design · App design</p>
-          <h3 data-id="gift-app-name" data-name="Name" style={{ width: 'auto', height: 'auto',
+          <h3 data-id="gift-app-name" data-name="Name" style={{
+              width: 'auto',
+              height: 'auto',
               position: 'relative',
               flex: '0 0 auto',
               order: '1',
@@ -653,7 +766,9 @@ export default function Page() {
               fontWeight: '700',
               color: '#222017'
             }}>Gift App</h3>
-          <p data-id="gift-app-desc" data-name="Description" style={{ width: 'auto', height: 'auto',
+          <p data-id="gift-app-desc" data-name="Description" style={{
+              width: 'auto',
+              height: 'auto',
               position: 'relative',
               flex: '0 0 auto',
               order: '2',
@@ -667,7 +782,9 @@ export default function Page() {
     </div>
   </div>
 
-  <div data-id="footer" data-name="Footer" style={{ width: 'auto', height: 'auto',
+  <div data-id="footer" data-name="Footer" style={{
+      width: 'auto',
+      height: 'auto',
       position: 'relative',
       flex: '0 0 auto',
       order: '3',
@@ -678,7 +795,9 @@ export default function Page() {
       padding: '28px 96px 40px 96px',
       borderTop: '1px solid #22201721'
     }}>
-    <p data-id="footer-name" data-name="Footer name" style={{ width: 'auto', height: 'auto',
+    <p data-id="footer-name" data-name="Footer name" style={{
+        width: 'auto',
+        height: 'auto',
         position: 'relative',
         flex: '0 0 auto',
         order: '0',
@@ -686,7 +805,9 @@ export default function Page() {
         fontWeight: '600',
         color: '#222017'
       }}>Ted Dessert</p>
-    <p data-id="footer-note" data-name="Footer note" style={{ width: 'auto', height: 'auto',
+    <p data-id="footer-note" data-name="Footer note" style={{
+        width: 'auto',
+        height: 'auto',
         position: 'relative',
         flex: '0 0 auto',
         order: '1',
@@ -697,6 +818,5 @@ export default function Page() {
 
 </div>;
 }
-
 const canvasNodes = <>
   </>;
