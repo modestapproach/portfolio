@@ -29,6 +29,8 @@
     "app/work/kickback-strategy/page.tsx",
     "app/work/kickback/page.client.tsx",
     "app/work/kickback/page.tsx",
+    "app/work/open-cca/page.client.tsx",
+    "app/work/open-cca/page.tsx",
     "app/work/supafeed-agent/page.client.tsx",
     "app/work/supafeed-agent/page.tsx",
     "app/work/supafeed-chat/page.client.tsx",
@@ -37,6 +39,8 @@
     "app/work/supafeed-feed/page.tsx",
     "app/work/supafeed/page.client.tsx",
     "app/work/supafeed/page.tsx",
+    "components/ImageCarousel.tsx",
+    "components/LocalVideo.tsx",
     "components/VariableName.tsx",
     "components/VideoEmbed.tsx",
     "i18n/config.json",
@@ -44,7 +48,7 @@
     "messages/es.json",
     "messages/fr.json"
   ],
-  "savedAt": "2026-11-12T06:26:20.545141Z",
+  "savedAt": "2026-11-12T08:07:42.877452+00:00",
   "hashes": {
     "_meta/agent-chats.json": "85fce6e63832a22933b29f775286d887327f0e21",
     "_meta/chat-history.json": "bf21a9e8fbc5a3846fb05b4fa0859e0917b2202f",
@@ -61,7 +65,7 @@
     "app/blog/portfolio-chatbot/page.tsx": "93d238a01891cf3866a45c996d538675a53faf2c",
     "app/globals.css": "41733e65b02434300b36f5bfda6265806432f968",
     "app/layout.tsx": "971b82876df653c227765a97ed54ad0095e9de6e",
-    "app/page.client.tsx": "2e926ad60ed649c5d897e4312b9cb257c8762bec",
+    "app/page.client.tsx": "153c849493ee01c146f278a60d20d06a030ac2a8",
     "app/page.tsx": "6b8246d8042620af1ab4a867b78f45ff612f7a53",
     "app/process/page.client.tsx": "4a016a25ae6c18dfcc04aa9c2e277622b75ff7cf",
     "app/process/page.tsx": "965b92f3eece6326884df91964d0eb02095d78e3",
@@ -87,6 +91,10 @@
     "i18n/config.json": "9776a70d3ab8ce0ef47795cffd98cf3ec04aa1c5",
     "messages/en.json": "bf21a9e8fbc5a3846fb05b4fa0859e0917b2202f",
     "messages/es.json": "bf21a9e8fbc5a3846fb05b4fa0859e0917b2202f",
-    "messages/fr.json": "bf21a9e8fbc5a3846fb05b4fa0859e0917b2202f"
+    "messages/fr.json": "bf21a9e8fbc5a3846fb05b4fa0859e0917b2202f",
+    "app/work/open-cca/page.client.tsx": "25a391625bfd163089181de4ea706a5186453e07",
+    "app/work/open-cca/page.tsx": "f2d6087c04032c479e82318fcbdf464cf7c6a7f4",
+    "components/LocalVideo.tsx": "5533284585a8d3f58f5357bfd78b3435bad51e81",
+    "components/ImageCarousel.tsx": "05ed3dcb1ee1cdd76d05bc9d0ded52cdef36b750"
   }
 }
