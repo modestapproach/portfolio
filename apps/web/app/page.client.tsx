@@ -526,7 +526,7 @@ export default function Page() {
       </Link>
 
 
-      <Link data-id="card-dibslist" data-name="Card · Dibslist" href="https://dibslist.app/research-july-2026/" style={{
+      <Link data-id="card-dibslist" data-name="Card · Dibslist" href="https://dibslist.app/research-july-2026/" target="_blank" rel="noopener noreferrer" style={{
           width: 'auto',
           height: 'auto',
           position: 'relative',
