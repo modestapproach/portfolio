@@ -525,6 +525,78 @@ export default function Page() {
         </div>
       </Link>
 
+
+      <Link data-id="card-dibslist" data-name="Card · Dibslist" href="https://dibslist.app/research-july-2026/" style={{
+          width: 'auto',
+          height: 'auto',
+          position: 'relative',
+          flex: '1 1 280px',
+          order: '4',
+          display: 'flex',
+          flexDirection: 'column',
+          backgroundColor: '#ffffff',
+          border: '1px solid #22201721',
+          borderRadius: '18px',
+          overflow: 'hidden',
+          textDecoration: 'none',
+          color: 'inherit'
+        }}>
+        <div data-id="dibslist-art" data-name="Art" role="img" aria-label="Dibslist: research into helping people sell the things they no longer use" style={{
+            width: 'auto',
+            position: 'relative',
+            flex: '0 0 auto',
+            order: '0',
+            height: '180px',
+            backgroundImage: 'url(/assets/dibslist/research-card.webp)',
+            backgroundSize: 'cover',
+            backgroundPosition: 'center',
+            backgroundRepeat: 'no-repeat'
+          }} />
+        <div data-id="dibslist-body" data-name="Body" style={{
+            width: 'auto',
+            height: 'auto',
+            position: 'relative',
+            flex: '1 0 auto',
+            order: '1',
+            display: 'flex',
+            flexDirection: 'column',
+            gap: '10px',
+            padding: '22px 24px 26px 24px'
+          }}>
+          <p data-id="dibslist-badge" data-name="Badge" style={{
+              width: 'auto',
+              height: 'auto',
+              position: 'relative',
+              flex: '0 0 auto',
+              order: '0',
+              fontSize: '12px',
+              fontWeight: '600',
+              letterSpacing: '0.1em',
+              textTransform: 'uppercase',
+              color: '#4358CD'
+            }}>Product research · Resale · 2026</p>
+          <h3 data-id="dibslist-name" data-name="Name" style={{
+              width: 'auto',
+              height: 'auto',
+              position: 'relative',
+              flex: '0 0 auto',
+              order: '1',
+              fontSize: '24px',
+              fontWeight: '700',
+              color: '#222017'
+            }}>Dibslist: the project</h3>
+          <p data-id="dibslist-desc" data-name="Description" style={{
+              width: 'auto',
+              height: 'auto',
+              position: 'relative',
+              flex: '0 0 auto',
+              order: '2',
+              fontSize: '15px',
+              lineHeight: '1.55',
+              color: '#665f4e'
+            }}>Making it easier to sell the things you no longer use. Interviews, product directions, and experiments behind Dibslist — from receipt-based inventory to delegated resale.</p>
+        </div>
+      </Link>
     </div>
   </div>
 

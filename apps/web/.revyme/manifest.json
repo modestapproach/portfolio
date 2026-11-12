@@ -44,7 +44,7 @@
     "messages/es.json",
     "messages/fr.json"
   ],
-  "savedAt": "2026-11-08T19:01:39.568Z",
+  "savedAt": "2026-11-12T06:26:20.545141Z",
   "hashes": {
     "_meta/agent-chats.json": "85fce6e63832a22933b29f775286d887327f0e21",
     "_meta/chat-history.json": "bf21a9e8fbc5a3846fb05b4fa0859e0917b2202f",
@@ -61,7 +61,7 @@
     "app/blog/portfolio-chatbot/page.tsx": "93d238a01891cf3866a45c996d538675a53faf2c",
     "app/globals.css": "41733e65b02434300b36f5bfda6265806432f968",
     "app/layout.tsx": "971b82876df653c227765a97ed54ad0095e9de6e",
-    "app/page.client.tsx": "6867eeef0452815aa22d1b3a953792531d46b941",
+    "app/page.client.tsx": "2e926ad60ed649c5d897e4312b9cb257c8762bec",
     "app/page.tsx": "6b8246d8042620af1ab4a867b78f45ff612f7a53",
     "app/process/page.client.tsx": "4a016a25ae6c18dfcc04aa9c2e277622b75ff7cf",
     "app/process/page.tsx": "965b92f3eece6326884df91964d0eb02095d78e3",
